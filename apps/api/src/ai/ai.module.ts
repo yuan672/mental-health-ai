@@ -9,6 +9,7 @@ import { AiController } from './ai.controller';
 import { AiOrchestrationService } from './ai-orchestration.service';
 import { ConversationContextService } from './context/conversation-context.service';
 import { ConservativeTokenEstimator } from './context/token-estimator';
+import { IncognitoGenerationAdmissionService } from './incognito/incognito-generation-admission.service';
 import { IncognitoRuntimeModule } from './incognito/incognito-runtime.module';
 import { AiOperationalLoggingService } from './logging/ai-operational-logging.service';
 import { LLM_PROVIDER } from './providers/llm-provider';
@@ -44,6 +45,7 @@ import { AiTurnService } from './turns/ai-turn.service';
     AiTurnService,
     ConversationContextService,
     ConservativeTokenEstimator,
+    IncognitoGenerationAdmissionService,
     PassThroughPostGenerationSafetyGate,
     PassThroughPreGenerationSafetyGate,
     PromptRegistry,
@@ -68,6 +70,6 @@ import { AiTurnService } from './turns/ai-turn.service';
           : new UnconfiguredLLMProvider(),
     },
   ],
-  exports: [AiOrchestrationService, AiTurnService],
+  exports: [AiOrchestrationService, AiTurnService, IncognitoGenerationAdmissionService],
 })
 export class AiModule {}

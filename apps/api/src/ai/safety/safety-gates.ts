@@ -6,7 +6,9 @@ export const POST_GENERATION_SAFETY_GATE = Symbol('POST_GENERATION_SAFETY_GATE')
 
 export type PreGenerationSafetyInput = Readonly<{
   userId: string;
-  conversationId: string;
+  target:
+    | Readonly<{ kind: 'conversation'; conversationId: string }>
+    | Readonly<{ kind: 'incognito'; contextId: string }>;
   message: string;
 }>;
 

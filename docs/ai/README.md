@@ -43,6 +43,11 @@ is an internal process-memory TTL capability scoped to user and server session; 
 does not write conversations, messages, or AI turns to PostgreSQL and has no public
 lifecycle API in Phase 3.
 
+An internal admission gate checks the stable PostgreSQL quota ledger before an
+incognito generation may reach a Provider. If volatile context is missing for an
+already-consumed client request, it fails closed without restoring content or
+calling the Provider.
+
 Before a real provider processes production psychological text, provider data
 processing, retention, privacy, security, applicable mainland-China compliance,
 and user-consent wording must be approved. This remains a production-readiness

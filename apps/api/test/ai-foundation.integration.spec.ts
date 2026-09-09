@@ -17,7 +17,11 @@ import { resolve } from 'node:path';
 import request from 'supertest';
 import { AiOrchestrationService } from '../src/ai/ai-orchestration.service';
 import { ConversationContextService } from '../src/ai/context/conversation-context.service';
-import { InMemoryIncognitoContextStore } from '../src/ai/incognito/incognito-context.store';
+import { IncognitoGenerationAdmissionService } from '../src/ai/incognito/incognito-generation-admission.service';
+import {
+  deriveIncognitoQuotaIdempotencyKey,
+  InMemoryIncognitoContextStore,
+} from '../src/ai/incognito/incognito-context.store';
 import {
   LLM_PROVIDER,
   LLMProviderFailure,
@@ -182,6 +186,7 @@ describe('Phase 3 AI foundation integration', () => {
   let sessionsService: SessionsService;
   let turnsService: AiTurnService;
   let incognitoStore: InMemoryIncognitoContextStore;
+  let incognitoAdmission: IncognitoGenerationAdmissionService;
   const provider = new FakeStreamingProvider();
   const postGate = new RecordingPostGenerationGate();
 
@@ -221,6 +226,7 @@ describe('Phase 3 AI foundation integration', () => {
     sessionsService = moduleRef.get(SessionsService);
     turnsService = moduleRef.get(AiTurnService);
     incognitoStore = moduleRef.get(InMemoryIncognitoContextStore);
+    incognitoAdmission = moduleRef.get(IncognitoGenerationAdmissionService);
   }, 60_000);
 
   beforeEach(() => {
@@ -652,25 +658,73 @@ describe('Phase 3 AI foundation integration', () => {
     }
   });
 
-  it('checks current consent and ownership before claiming or calling the provider', async () => {
-    const noConsentUser = await createUser(false);
+  it('rejects missing, withdrawn, and outdated required consent before ownership or provider access', async () => {
+    const missingConsentUser = await createUser(false);
+    const withdrawnConsentUser = await createUser(false);
+    const outdatedConsentUser = await createUser(false);
+
+    await databaseService.database.insert(consents).values([
+      {
+        id: randomUUID(),
+        userId: withdrawnConsentUser,
+        consentType: 'terms_of_service',
+        consentVersion: '1.0',
+        status: 'accepted',
+        acceptedAt: BASE_NOW,
+      },
+      {
+        id: randomUUID(),
+        userId: withdrawnConsentUser,
+        consentType: 'privacy_policy',
+        consentVersion: '1.0',
+        status: 'withdrawn',
+        acceptedAt: BASE_NOW,
+        withdrawnAt: BASE_NOW,
+      },
+      {
+        id: randomUUID(),
+        userId: outdatedConsentUser,
+        consentType: 'terms_of_service',
+        consentVersion: '0.9',
+        status: 'accepted',
+        acceptedAt: BASE_NOW,
+      },
+      {
+        id: randomUUID(),
+        userId: outdatedConsentUser,
+        consentType: 'privacy_policy',
+        consentVersion: '0.9',
+        status: 'accepted',
+        acceptedAt: BASE_NOW,
+      },
+    ]);
+
+    for (const userId of [missingConsentUser, withdrawnConsentUser, outdatedConsentUser]) {
+      await expect(
+        orchestration.preparePersistentTurn(
+          { userId, sessionId: randomUUID() },
+          {
+            clientRequestId: randomUUID(),
+            conversationId: randomUUID(),
+            message: 'must-not-reach-provider',
+          },
+          new AbortController().signal,
+          BASE_NOW,
+        ),
+      ).rejects.toMatchObject({ code: 'CONSENT_REQUIRED' });
+
+      const [turnCount] = await databaseService.database
+        .select({ value: count() })
+        .from(aiTurns)
+        .where(eq(aiTurns.userId, userId));
+      expect(turnCount?.value).toBe(0);
+    }
+    expect(provider.streamCalls).toBe(0);
+  });
+
+  it('checks ownership before claiming an AI turn', async () => {
     const owner = await createUser();
     const conversation = await conversationsService.create(owner, BASE_NOW);
-
-    await expect(
-      orchestration.preparePersistentTurn(
-        { userId: noConsentUser, sessionId: randomUUID() },
-        { clientRequestId: randomUUID(), conversationId: conversation.id, message: 'not-sent' },
-        new AbortController().signal,
-        BASE_NOW,
-      ),
-    ).rejects.toMatchObject({ code: 'CONSENT_REQUIRED' });
-    expect(provider.streamCalls).toBe(0);
-    const [turnCount] = await databaseService.database
-      .select({ value: count() })
-      .from(aiTurns)
-      .where(eq(aiTurns.userId, noConsentUser));
-    expect(turnCount?.value).toBe(0);
 
     const attacker = await createUser();
     await expect(
@@ -742,6 +796,8 @@ describe('Phase 3 AI foundation integration', () => {
     expect(response.text).toContain('event: turn.started');
     expect(response.text).toContain('event: message.segment');
     expect(response.text).toContain('event: turn.completed');
+    expect(response.headers['cache-control']).toBe('no-cache, no-transform');
+    expect(response.headers['x-accel-buffering']).toBe('no');
     expect(response.text).not.toContain('fake-stream-model');
     expect(response.text).not.toContain('safe-fake-trace');
     expect(response.text).not.toContain('promptVersion');
@@ -788,6 +844,46 @@ describe('Phase 3 AI foundation integration', () => {
     });
 
     expect(incognitoStore.get(userId, sessionId, context.id, BASE_NOW)).toBeNull();
+  });
+
+  it('fails closed before provider access when incognito memory is lost after quota consumption', async () => {
+    const userId = await createUser();
+    const sessionId = randomUUID();
+    const clientRequestId = randomUUID();
+    const context = incognitoStore.create(userId, sessionId, BASE_NOW);
+    const quotaIdempotencyKey = deriveIncognitoQuotaIdempotencyKey(
+      userId,
+      sessionId,
+      clientRequestId,
+    );
+
+    await quotaService.consumeQuota(userId, quotaIdempotencyKey, BASE_NOW);
+    expect(incognitoStore.end(userId, sessionId, context.id)).toBe(true);
+
+    await expect(
+      incognitoAdmission.claim({
+        userId,
+        sessionId,
+        contextId: context.id,
+        clientRequestId,
+        message: 'must-not-reach-provider-after-context-loss',
+        signal: new AbortController().signal,
+        now: BASE_NOW,
+      }),
+    ).rejects.toMatchObject({ code: 'AI_INCOGNITO_CONTEXT_LOST', statusCode: 409 });
+
+    expect(provider.streamCalls).toBe(0);
+    expect(await quotaService.getUsage(userId, BASE_NOW)).toMatchObject({ usedCount: 1 });
+    const [ledgerCount] = await databaseService.database
+      .select({ value: count() })
+      .from(quotaConsumptions)
+      .where(
+        and(
+          eq(quotaConsumptions.userId, userId),
+          eq(quotaConsumptions.idempotencyKey, quotaIdempotencyKey),
+        ),
+      );
+    expect(ledgerCount?.value).toBe(1);
   });
 
   it('does not leave duplicate quota ledger entries for one completed turn', async () => {

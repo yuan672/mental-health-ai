@@ -46,6 +46,20 @@ export class QuotaRepository {
     return usage ?? null;
   }
 
+  async hasConsumption(userId: string, idempotencyKey: string): Promise<boolean> {
+    const [consumption] = await this.databaseService.database
+      .select({ id: quotaConsumptions.id })
+      .from(quotaConsumptions)
+      .where(
+        and(
+          eq(quotaConsumptions.userId, userId),
+          eq(quotaConsumptions.idempotencyKey, idempotencyKey),
+        ),
+      )
+      .limit(1);
+    return consumption !== undefined;
+  }
+
   async consume(input: {
     userId: string;
     usageDate: string;

@@ -67,6 +67,12 @@ export class AIChatDisabledError extends AppError {
   }
 }
 
+export class AIIncognitoContextLostError extends AppError {
+  constructor(message = '无痕对话上下文已失效，请重新开始') {
+    super(ERROR_CODES.AI_INCOGNITO_CONTEXT_LOST, 409, message);
+  }
+}
+
 export class AITurnInProgressError extends AppError {
   constructor(message = '该对话已有正在处理的 AI 回复') {
     super(ERROR_CODES.AI_TURN_IN_PROGRESS, 409, message);

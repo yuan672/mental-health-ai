@@ -196,7 +196,7 @@ export class AiOrchestrationService {
       await this.preGenerationSafety.check(
         {
           userId: principal.userId,
-          conversationId: conversation.id,
+          target: { kind: 'conversation', conversationId: conversation.id },
           message: input.message,
         },
         signal,
