@@ -1,8 +1,12 @@
 # Engineering Bootstrap Status
 
-- Status: Local acceptance complete; hosted GitHub Actions run pending repository remote
+- Local validation: Passed
+- GitHub Actions hosted CI: Passed
+- Engineering Bootstrap: Complete
 - Verified: 2026-09-09
 - Branch: `feature/engineering-bootstrap`
+- Pull request: [#1](https://github.com/yuan672/mental-health-ai/pull/1)
+- Hosted CI run: [34316440526](https://github.com/yuan672/mental-health-ai/actions/runs/34316440526)
 
 ## Verified environment
 
@@ -14,32 +18,32 @@
 
 ## Acceptance results
 
-| Check                                  | Result                                                            |
-| -------------------------------------- | ----------------------------------------------------------------- |
-| Workspace dependency installation      | Passed                                                            |
-| `pnpm-lock.yaml` generated             | Passed                                                            |
-| Frozen lockfile installation           | Passed                                                            |
-| PostgreSQL startup and healthcheck     | Passed (`healthy`)                                                |
-| Drizzle schema generation              | Passed; empty Phase 1 schema generated no business migration      |
-| Drizzle migration execution            | Passed; migration registry initialized                            |
-| API development startup                | Passed                                                            |
-| `GET /health` real HTTP request        | Passed (`200`)                                                    |
-| Structured request logging             | Passed                                                            |
-| Authorization/Cookie redaction         | Passed with marker values                                         |
-| Request body excluded from normal logs | Passed                                                            |
-| Web development startup                | Passed                                                            |
-| Web real HTTP request                  | Passed (`200`)                                                    |
-| `pnpm format:check`                    | Passed                                                            |
-| `pnpm lint`                            | Passed                                                            |
-| `pnpm typecheck`                       | Passed                                                            |
-| `pnpm test`                            | Passed                                                            |
-| `pnpm build`                           | Passed                                                            |
-| CI frozen lockfile configuration       | Passed                                                            |
-| Hosted GitHub Actions run              | Pending: handoff package contained no `.git` remote configuration |
+| Check                                  | Result                                                       |
+| -------------------------------------- | ------------------------------------------------------------ |
+| Workspace dependency installation      | Passed                                                       |
+| `pnpm-lock.yaml` generated             | Passed                                                       |
+| Frozen lockfile installation           | Passed                                                       |
+| PostgreSQL startup and healthcheck     | Passed (`healthy`)                                           |
+| Drizzle schema generation              | Passed; empty Phase 1 schema generated no business migration |
+| Drizzle migration execution            | Passed; migration registry initialized                       |
+| API development startup                | Passed                                                       |
+| `GET /health` real HTTP request        | Passed (`200`)                                               |
+| Structured request logging             | Passed                                                       |
+| Authorization/Cookie redaction         | Passed with marker values                                    |
+| Request body excluded from normal logs | Passed                                                       |
+| Web development startup                | Passed                                                       |
+| Web real HTTP request                  | Passed (`200`)                                               |
+| `pnpm format:check`                    | Passed                                                       |
+| `pnpm lint`                            | Passed                                                       |
+| `pnpm typecheck`                       | Passed                                                       |
+| `pnpm test`                            | Passed                                                       |
+| `pnpm build`                           | Passed                                                       |
+| CI frozen lockfile configuration       | Passed                                                       |
+| Hosted GitHub Actions run              | Passed                                                       |
 
-The CI steps have been executed locally with the committed lockfile and all
-quality commands pass. A hosted run can only be observed after a GitHub remote is
-attached and the feature branch is pushed.
+The CI steps passed locally and in the GitHub-hosted `quality` job. The hosted
+run verified frozen lockfile installation, formatting, linting, type checking,
+unit tests and all workspace builds.
 
 ## Bootstrap fixes
 
