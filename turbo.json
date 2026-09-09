@@ -17,7 +17,18 @@
     },
     "test": {
       "dependsOn": ["^build"],
-      "outputs": ["coverage/**"]
+      "outputs": ["coverage/**"],
+      "env": [
+        "AGE_VERIFICATION_PROVIDER",
+        "APP_ENV",
+        "DATABASE_URL",
+        "LOG_LEVEL",
+        "REQUIRED_PRIVACY_VERSION",
+        "REQUIRED_TERMS_VERSION",
+        "SESSION_TTL_SECONDS",
+        "TEST_DATABASE_URL",
+        "WEB_ORIGINS"
+      ]
     }
   }
 }
