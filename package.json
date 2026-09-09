@@ -1,0 +1,32 @@
+{
+  "name": "mental-health-ai",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@12.4.0",
+  "engines": {
+    "node": ">=24 <25",
+    "pnpm": ">=12 <13"
+  },
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "dev:web": "pnpm --filter @mental-health/web dev",
+    "dev:api": "pnpm --filter @mental-health/api dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:generate": "pnpm --filter @mental-health/database db:generate",
+    "db:migrate": "pnpm --filter @mental-health/database db:migrate"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.10.0",
+    "eslint": "10.10.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "prettier": "3.9.6",
+    "turbo": "2.10.12",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.70.0"
+  }
+}
