@@ -40,6 +40,7 @@ import { AiTurnService } from '../src/ai/turns/ai-turn.service';
 import { AppModule } from '../src/app.module';
 import { hashSessionToken, SessionsService } from '../src/auth/sessions.service';
 import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
+import { env } from '../src/config/env';
 import { ConversationService } from '../src/conversations/conversation.service';
 import { DatabaseService } from '../src/database/database.service';
 import { MessageService } from '../src/messages/message.service';
@@ -51,7 +52,13 @@ const PROVIDER_METADATA = {
   model: 'fake-stream-model',
   requestId: 'safe-fake-trace',
 } as const;
-type FakeMode = 'success' | 'fail-before-segment' | 'fail-after-segment' | 'wait-for-abort';
+type FakeMode =
+  | 'success'
+  | 'fail-before-segment'
+  | 'fail-after-segment'
+  | 'wait-for-abort'
+  | 'wait-after-segment'
+  | 'stream-until-abort';
 
 class FakeStreamingProvider implements LLMProvider {
   mode: FakeMode = 'success';
@@ -96,6 +103,34 @@ class FakeStreamingProvider implements LLMProvider {
     }
 
     yield { type: 'text_delta', text: '已批准的第一句。' };
+    if (this.mode === 'wait-after-segment') {
+      await new Promise<never>((_resolve, reject) => {
+        const rejectAbort = (): void =>
+          reject(new LLMProviderFailure('aborted', false, PROVIDER_METADATA.requestId));
+        if (options.signal.aborted) {
+          rejectAbort();
+          return;
+        }
+        options.signal.addEventListener('abort', rejectAbort, { once: true });
+      });
+    }
+    if (this.mode === 'stream-until-abort') {
+      while (!options.signal.aborted) {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            options.signal.removeEventListener('abort', rejectAbort);
+            resolve();
+          }, 10);
+          const rejectAbort = (): void => {
+            clearTimeout(timer);
+            reject(new LLMProviderFailure('aborted', false, PROVIDER_METADATA.requestId));
+          };
+          options.signal.addEventListener('abort', rejectAbort, { once: true });
+        });
+        yield { type: 'text_delta', text: '续' };
+      }
+      throw new LLMProviderFailure('aborted', false, PROVIDER_METADATA.requestId);
+    }
     if (this.mode === 'fail-after-segment') {
       throw new LLMProviderFailure('network', true, PROVIDER_METADATA.requestId);
     }
@@ -553,6 +588,68 @@ describe('Phase 3 AI foundation integration', () => {
       statusCode: 504,
     });
     expect(await quotaService.getUsage(userId, BASE_NOW)).toMatchObject({ usedCount: 0 });
+  });
+
+  it('maps stream idle timeout to 504 and keeps the charge after an approved segment', async () => {
+    provider.reset('wait-after-segment');
+    const userId = await createUser();
+    const conversation = await conversationsService.create(userId, BASE_NOW);
+    const prepared = await orchestration.preparePersistentTurn(
+      { userId, sessionId: randomUUID() },
+      {
+        clientRequestId: randomUUID(),
+        conversationId: conversation.id,
+        message: 'synthetic-idle-timeout',
+      },
+      new AbortController().signal,
+      BASE_NOW,
+    );
+
+    await expect(collect(prepared)).rejects.toMatchObject({
+      code: 'AI_PROVIDER_TIMEOUT',
+      statusCode: 504,
+    });
+    expect(await quotaService.getUsage(userId, BASE_NOW)).toMatchObject({ usedCount: 1 });
+    if (prepared.kind !== 'ready') throw new Error('Expected ready');
+    const persisted = await turnsService.findByClientRequestId(
+      userId,
+      prepared.turn.clientRequestId,
+    );
+    expect(persisted).toMatchObject({ status: 'failed', assistantMessageId: null });
+  });
+
+  it('enforces total timeout while deltas continue and never completes a partial response', async () => {
+    provider.reset('stream-until-abort');
+    const originalTotalTimeout = env.LLM_TOTAL_TIMEOUT_MS;
+    env.LLM_TOTAL_TIMEOUT_MS = 100;
+    try {
+      const userId = await createUser();
+      const conversation = await conversationsService.create(userId, BASE_NOW);
+      const prepared = await orchestration.preparePersistentTurn(
+        { userId, sessionId: randomUUID() },
+        {
+          clientRequestId: randomUUID(),
+          conversationId: conversation.id,
+          message: 'synthetic-total-timeout',
+        },
+        new AbortController().signal,
+        BASE_NOW,
+      );
+
+      await expect(collect(prepared)).rejects.toMatchObject({
+        code: 'AI_PROVIDER_TIMEOUT',
+        statusCode: 504,
+      });
+      expect(await quotaService.getUsage(userId, BASE_NOW)).toMatchObject({ usedCount: 1 });
+      if (prepared.kind !== 'ready') throw new Error('Expected ready');
+      const persisted = await turnsService.findByClientRequestId(
+        userId,
+        prepared.turn.clientRequestId,
+      );
+      expect(persisted).toMatchObject({ status: 'failed', assistantMessageId: null });
+    } finally {
+      env.LLM_TOTAL_TIMEOUT_MS = originalTotalTimeout;
+    }
   });
 
   it('checks current consent and ownership before claiming or calling the provider', async () => {
