@@ -12,5 +12,6 @@ Accepted decisions:
 8. ADR-008 Testing Strategy
 9. ADR-009 Environment Configuration Strategy
 10. ADR-010 Docker / Local Development Strategy
+11. ADR-011 Identity and Access Lifecycle
 
 New decisions should use the next sequential ADR number. Existing accepted ADRs should not be silently rewritten; supersede them with a new ADR when the decision materially changes.
