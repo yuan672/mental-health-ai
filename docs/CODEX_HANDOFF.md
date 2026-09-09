@@ -879,32 +879,32 @@ Codex 接手后不要：
 
 # 13. 当前验收状态
 
-| 项目 | 状态 |
-|---|---|
-| 原 HANDOFF 基线 | ✅ 已保留 |
-| ADR-001 ～ ADR-010 | ✅ 已接受并生成 |
-| Monorepo skeleton | ✅ 已生成 |
-| Web skeleton | ✅ 已生成 |
-| API skeleton | ✅ 已生成 |
-| `/health` | ✅ 已实现 |
-| Unified Errors | ✅ 已实现 |
-| Structured Logging | ✅ 已实现 |
-| `.env.example` | ✅ 已实现 |
-| Env Validation | ✅ 已实现 |
-| PostgreSQL Compose | ✅ 已生成 |
-| Migration mechanism | ✅ 已生成 |
-| Test foundations | ✅ 已生成 |
-| CI definition | ✅ 已生成 |
-| `pnpm-lock.yaml` | ❌ 尚未生成 |
-| 真实 Dependency Install | ❌ 尚未验证 |
-| Docker PostgreSQL startup | ❌ 尚未验证 |
-| lint | ❌ 尚未真实运行 |
-| typecheck | ❌ 尚未真实运行 |
-| test | ❌ 尚未真实运行 |
-| build | ❌ 尚未真实运行 |
-| Web runtime | ❌ 尚未真实运行 |
-| API runtime | ❌ 尚未真实运行 |
-| `/health` runtime request | ❌ 尚未真实验证 |
+| 项目                       | 状态                |
+| -------------------------- | ------------------- |
+| 原 HANDOFF 基线            | ✅ 已保留           |
+| ADR-001 ～ ADR-010         | ✅ 已接受并生成     |
+| Monorepo skeleton          | ✅ 已生成           |
+| Web skeleton               | ✅ 已生成           |
+| API skeleton               | ✅ 已生成           |
+| `/health`                  | ✅ 已实现           |
+| Unified Errors             | ✅ 已实现           |
+| Structured Logging         | ✅ 已实现           |
+| `.env.example`             | ✅ 已实现           |
+| Env Validation             | ✅ 已实现           |
+| PostgreSQL Compose         | ✅ 已生成           |
+| Migration mechanism        | ✅ 已生成           |
+| Test foundations           | ✅ 已生成           |
+| CI definition              | ✅ 已生成           |
+| `pnpm-lock.yaml`           | ❌ 尚未生成         |
+| 真实 Dependency Install    | ❌ 尚未验证         |
+| Docker PostgreSQL startup  | ❌ 尚未验证         |
+| lint                       | ❌ 尚未真实运行     |
+| typecheck                  | ❌ 尚未真实运行     |
+| test                       | ❌ 尚未真实运行     |
+| build                      | ❌ 尚未真实运行     |
+| Web runtime                | ❌ 尚未真实运行     |
+| API runtime                | ❌ 尚未真实运行     |
+| `/health` runtime request  | ❌ 尚未真实验证     |
 | Engineering Bootstrap 完成 | ❌ **尚未完成验收** |
 
 ---

@@ -13,9 +13,7 @@ const envSchema = z.object({
     .refine((value) => value.startsWith('postgresql://') || value.startsWith('postgres://'), {
       message: 'DATABASE_URL must be a PostgreSQL connection string',
     }),
-  LOG_LEVEL: z
-    .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
-    .default('info'),
+  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
 });
 

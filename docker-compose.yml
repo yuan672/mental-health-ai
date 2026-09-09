@@ -7,14 +7,14 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-mental_health}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - '${POSTGRES_PORT:-5432}:5432'
     volumes:
-      - mental_health_postgres_data:/var/lib/postgresql/data
+      - mental_health_postgres_data:/var/lib/postgresql
     healthcheck:
       test:
         [
-          "CMD-SHELL",
-          "pg_isready -U ${POSTGRES_USER:-mental_health} -d ${POSTGRES_DB:-mental_health_dev}",
+          'CMD-SHELL',
+          'pg_isready -U ${POSTGRES_USER:-mental_health} -d ${POSTGRES_DB:-mental_health_dev}',
         ]
       interval: 5s
       timeout: 5s

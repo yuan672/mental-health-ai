@@ -29,7 +29,7 @@ See `docs/architecture/adr/` for decision records. `docs/HANDOFF.md` remains the
 ```bash
 git clone <repository>
 cd mental-health-ai
-pnpm install
+pnpm install --frozen-lockfile
 cp .env.example .env
 ```
 
@@ -102,6 +102,10 @@ pnpm build
 ```
 
 Pull requests are expected to pass these checks before merge.
+
+The Engineering Bootstrap was verified locally on 2026-09-09 with Node.js 24,
+pnpm 12 and Docker Desktop. The CI workflow uses the same frozen lockfile and
+quality commands.
 
 ## Git Workflow
 
