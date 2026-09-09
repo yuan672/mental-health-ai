@@ -1,4 +1,8 @@
 packages:
-  - "apps/*"
-  - "packages/*"
-  - "database"
+  - 'apps/*'
+  - 'packages/*'
+  - 'database'
+
+allowBuilds:
+  '@nestjs/core': true
+  esbuild: true

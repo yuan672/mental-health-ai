@@ -41,8 +41,7 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        # Bootstrap sandbox cannot generate a lockfile; switch to --frozen-lockfile once pnpm-lock.yaml is committed.
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Format check
         run: pnpm format:check

@@ -21,7 +21,7 @@
     "db:migrate": "pnpm --filter @mental-health/database db:migrate"
   },
   "devDependencies": {
-    "@eslint/js": "10.10.0",
+    "@eslint/js": "10.0.1",
     "eslint": "10.10.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "prettier": "3.9.6",

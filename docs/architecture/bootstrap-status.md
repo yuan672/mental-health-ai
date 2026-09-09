@@ -1,6 +1,57 @@
 # Engineering Bootstrap Status
 
-## Implemented in first batch
+- Status: Local acceptance complete; hosted GitHub Actions run pending repository remote
+- Verified: 2026-09-09
+- Branch: `feature/engineering-bootstrap`
+
+## Verified environment
+
+- Node.js 24.14.1
+- pnpm 12.4.0
+- Docker 29.5.3
+- Docker Compose 5.1.4
+- PostgreSQL 18.6 Alpine
+
+## Acceptance results
+
+| Check                                  | Result                                                            |
+| -------------------------------------- | ----------------------------------------------------------------- |
+| Workspace dependency installation      | Passed                                                            |
+| `pnpm-lock.yaml` generated             | Passed                                                            |
+| Frozen lockfile installation           | Passed                                                            |
+| PostgreSQL startup and healthcheck     | Passed (`healthy`)                                                |
+| Drizzle schema generation              | Passed; empty Phase 1 schema generated no business migration      |
+| Drizzle migration execution            | Passed; migration registry initialized                            |
+| API development startup                | Passed                                                            |
+| `GET /health` real HTTP request        | Passed (`200`)                                                    |
+| Structured request logging             | Passed                                                            |
+| Authorization/Cookie redaction         | Passed with marker values                                         |
+| Request body excluded from normal logs | Passed                                                            |
+| Web development startup                | Passed                                                            |
+| Web real HTTP request                  | Passed (`200`)                                                    |
+| `pnpm format:check`                    | Passed                                                            |
+| `pnpm lint`                            | Passed                                                            |
+| `pnpm typecheck`                       | Passed                                                            |
+| `pnpm test`                            | Passed                                                            |
+| `pnpm build`                           | Passed                                                            |
+| CI frozen lockfile configuration       | Passed                                                            |
+| Hosted GitHub Actions run              | Pending: handoff package contained no `.git` remote configuration |
+
+The CI steps have been executed locally with the committed lockfile and all
+quality commands pass. A hosted run can only be observed after a GitHub remote is
+attached and the feature branch is pushed.
+
+## Bootstrap fixes
+
+- Replaced the unavailable `@eslint/js` version with the published compatible
+  ESLint 10 release.
+- Added pnpm 12 build-script allowlisting for NestJS and esbuild.
+- Added the missing Vite client type declaration to the Web TypeScript project.
+- Corrected API TypeScript module interoperability for the Jest/Supertest test.
+- Updated the PostgreSQL 18 volume target to `/var/lib/postgresql`.
+- Switched GitHub Actions dependency installation to `--frozen-lockfile`.
+
+## Implemented foundation
 
 - Monorepo directory structure
 - pnpm workspace + Turborepo configuration
@@ -33,9 +84,3 @@ These belong to later phases and must not be pulled into Bootstrap:
 - Admin/Human Review features
 - Redis dependency
 - payment/subscription/community/native-app features
-
-## Environment limitation during this handoff
-
-The execution sandbox has Node.js 22 installed, but the accepted runtime baseline is Node.js 24 LTS. It also has no Docker executable and cannot resolve the npm registry, so this sandbox cannot generate `pnpm-lock.yaml`, install dependencies, start PostgreSQL, or execute the real lint/typecheck/test/build pipeline.
-
-The repository must generate and commit `pnpm-lock.yaml` in the first network-enabled Node.js 24 environment. After that, CI should change `pnpm install --no-frozen-lockfile` to `pnpm install --frozen-lockfile`.
