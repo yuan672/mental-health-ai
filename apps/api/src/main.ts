@@ -10,7 +10,7 @@ async function bootstrap(): Promise<void> {
   app.useLogger(app.get(Logger));
   app.useGlobalFilters(new AppExceptionFilter());
   app.enableCors({
-    origin: env.WEB_ORIGIN,
+    origin: env.WEB_ORIGINS,
     credentials: true,
   });
   app.enableShutdownHooks();

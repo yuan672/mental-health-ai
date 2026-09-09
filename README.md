@@ -1,6 +1,6 @@
 # 心理健康 AI 支持系统
 
-面向中国大陆 18 岁及以上成年用户的 Web AI 心理健康支持系统工程项目。当前阶段是 **技术栈确定 + Engineering Bootstrap**，尚未进入大规模 AI Chat、Mood Tracking 或 Admin 业务开发。
+面向中国大陆 18 岁及以上成年用户的 Web AI 心理健康支持系统工程项目。Engineering Bootstrap 已完成；当前实现范围是 **Phase 2A — Identity & Access Foundation**，尚未进入 AI Chat、Risk Detection、Mood Tracking 或 Admin 业务开发。
 
 > 本产品定位为心理健康支持工具，不是心理医生、精神科医生、医疗诊断系统、药物处方系统或真人心理咨询师的替代品。
 
@@ -69,9 +69,14 @@ At minimum, configure:
 
 - `APP_ENV`
 - `APP_PORT`
-- `WEB_ORIGIN`
+- `WEB_ORIGINS`（逗号分隔的可信 Web Origin allowlist）
 - `VITE_API_BASE_URL`
 - `DATABASE_URL`
+- `TEST_DATABASE_URL`（必须使用以 `_test` 结尾的独立测试数据库）
+- `SESSION_TTL_SECONDS`（Phase 2A 固定为 `604800`）
+- `AGE_VERIFICATION_PROVIDER`（`mock` 仅允许 Development/Test）
+- `REQUIRED_TERMS_VERSION`
+- `REQUIRED_PRIVACY_VERSION`
 - `LOG_LEVEL`
 - local PostgreSQL variables used by Docker Compose
 
@@ -163,4 +168,4 @@ Staging and Production must use independent secrets, databases and logs. Product
 
 ## Current Scope Boundary
 
-Bootstrap does **not** implement payment, subscriptions, ordinary human counseling, enterprise features, native apps, WeChat mini-programs, medical diagnosis, medication recommendations or social/community features.
+Phase 2A only implements user identity, password authentication, server-side sessions, internal age-verification abstraction and consent records. It does **not** implement AI Chat, Risk Detection, UsageQuota, Conversation/Message, Mood Tracking, Admin, payment, subscriptions, enterprise features, native apps, WeChat mini-programs, medical diagnosis, medication recommendations or social/community features.

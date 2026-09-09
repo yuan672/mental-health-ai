@@ -1,8 +1,40 @@
 import { randomUUID } from 'node:crypto';
 import { Module } from '@nestjs/common';
 import { LoggerModule } from 'nestjs-pino';
+import { AuthModule } from './auth/auth.module';
+import { DatabaseModule } from './database/database.module';
 import { env } from './config/env';
 import { HealthModule } from './health/health.module';
+import { SecurityModule } from './security/security.module';
+
+export const LOG_REDACT_PATHS = [
+  'req.headers.authorization',
+  'req.headers.proxy-authorization',
+  'req.headers.cookie',
+  'req.headers.referer',
+  'req.headers.x-csrf-token',
+  'req.headers["x-csrf-token"]',
+  'req.headers.x-api-key',
+  'req.headers["x-api-key"]',
+  'req.body',
+  'res.headers["set-cookie"]',
+  'email',
+  'password',
+  'token',
+  'rawToken',
+  'csrfToken',
+  'evidenceToken',
+  'apiKey',
+  'api_key',
+  '*.email',
+  '*.password',
+  '*.token',
+  '*.rawToken',
+  '*.csrfToken',
+  '*.evidenceToken',
+  '*.apiKey',
+  '*.api_key',
+] as const;
 
 @Module({
   imports: [
@@ -17,15 +49,7 @@ import { HealthModule } from './health/health.module';
           return requestId;
         },
         redact: {
-          paths: [
-            'req.headers.authorization',
-            'req.headers.cookie',
-            'res.headers["set-cookie"]',
-            '*.password',
-            '*.token',
-            '*.apiKey',
-            '*.api_key',
-          ],
+          paths: [...LOG_REDACT_PATHS],
           remove: true,
         },
         customProps: () => ({
@@ -33,7 +57,10 @@ import { HealthModule } from './health/health.module';
         }),
       },
     }),
+    DatabaseModule,
+    SecurityModule,
     HealthModule,
+    AuthModule,
   ],
 })
 export class AppModule {}

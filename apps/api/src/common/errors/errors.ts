@@ -13,6 +13,12 @@ export class AuthenticationError extends AppError {
   }
 }
 
+export class InvalidCredentialsError extends AppError {
+  constructor() {
+    super(ERROR_CODES.INVALID_CREDENTIALS, 401, '邮箱或密码错误');
+  }
+}
+
 export class AuthorizationError extends AppError {
   constructor(message = '无权执行此操作') {
     super(ERROR_CODES.FORBIDDEN, 403, message);
@@ -46,6 +52,24 @@ export class QuotaExceededError extends AppError {
 export class AIProviderError extends AppError {
   constructor(message = 'AI 服务暂时不可用') {
     super(ERROR_CODES.AI_PROVIDER_UNAVAILABLE, 503, message);
+  }
+}
+
+export class AgeVerificationFailedError extends AppError {
+  constructor(message = '仅支持已完成 18 岁及以上验证的用户注册') {
+    super(ERROR_CODES.AGE_VERIFICATION_FAILED, 403, message);
+  }
+}
+
+export class AgeVerificationUnavailableError extends AppError {
+  constructor(message = '年龄验证服务暂时不可用') {
+    super(ERROR_CODES.AGE_VERIFICATION_UNAVAILABLE, 503, message);
+  }
+}
+
+export class ConsentRequiredError extends AppError {
+  constructor(message = '请接受当前版本的必要条款') {
+    super(ERROR_CODES.CONSENT_REQUIRED, 400, message);
   }
 }
 
