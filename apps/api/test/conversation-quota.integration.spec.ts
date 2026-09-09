@@ -171,6 +171,32 @@ describe('Phase 2B conversation and quota integration', () => {
     expect(ledgerCount?.value).toBe(1);
   });
 
+  it('refunds one consumption transactionally and never decrements twice or below zero', async () => {
+    const refundUserId = randomUUID();
+    const idempotencyKey = randomUUID();
+    await databaseService.database.insert(users).values({ id: refundUserId });
+    await quotaService.consumeQuota(refundUserId, idempotencyKey, BASE_NOW);
+
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () =>
+        quotaService.refundQuota(refundUserId, idempotencyKey, BASE_NOW),
+      ),
+    );
+
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(await quotaService.refundQuota(refundUserId, idempotencyKey, BASE_NOW)).toBe(false);
+    expect(await quotaService.getUsage(refundUserId, BASE_NOW)).toMatchObject({
+      usedCount: 0,
+      remaining: 20,
+    });
+
+    const [ledgerCount] = await databaseService.database
+      .select({ value: count() })
+      .from(quotaConsumptions)
+      .where(eq(quotaConsumptions.userId, refundUserId));
+    expect(ledgerCount?.value).toBe(0);
+  });
+
   it('uses the Asia/Shanghai calendar-day boundary and isolates users', async () => {
     const beforeMidnight = new Date('2026-09-09T15:59:59.000Z');
     const afterMidnight = new Date('2026-09-09T16:00:00.000Z');

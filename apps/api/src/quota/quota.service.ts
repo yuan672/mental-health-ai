@@ -78,4 +78,17 @@ export class QuotaService {
 
     return snapshot(result.usage);
   }
+
+  async refundQuota(userId: string, idempotencyKey: string, now = new Date()): Promise<boolean> {
+    if (idempotencyKey.length < 1 || idempotencyKey.length > 128) {
+      throw new ValidationError('额度消费幂等键无效');
+    }
+
+    try {
+      const result = await this.repository.refund(userId, idempotencyKey, now);
+      return result.status === 'refunded';
+    } catch {
+      throw new DatabaseError();
+    }
+  }
 }

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { IncognitoRuntimeModule } from '../ai/incognito/incognito-runtime.module';
 import { AgeVerificationModule } from '../age-verification/age-verification.module';
 import { ConsentsController } from '../consents/consents.controller';
 import { ConsentsModule } from '../consents/consents.module';
@@ -12,7 +13,7 @@ import { SessionsService } from './sessions.service';
 import { TrustedOriginGuard } from './trusted-origin.guard';
 
 @Module({
-  imports: [AgeVerificationModule, ConsentsModule, UsersModule],
+  imports: [AgeVerificationModule, ConsentsModule, IncognitoRuntimeModule, UsersModule],
   controllers: [AuthController, ConsentsController],
   providers: [
     AuthService,
@@ -22,5 +23,6 @@ import { TrustedOriginGuard } from './trusted-origin.guard';
     SessionsService,
     TrustedOriginGuard,
   ],
+  exports: [AuthenticatedSessionGuard, CsrfGuard, SessionsService, TrustedOriginGuard],
 })
 export class AuthModule {}

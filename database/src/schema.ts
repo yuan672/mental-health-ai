@@ -18,6 +18,13 @@ import {
 
 export const consentStatus = pgEnum('consent_status', ['accepted', 'withdrawn']);
 export const messageRole = pgEnum('message_role', ['user', 'assistant']);
+export const aiTurnStatus = pgEnum('ai_turn_status', [
+  'claimed',
+  'streaming',
+  'completed',
+  'failed',
+  'cancelled',
+]);
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey(),
@@ -185,8 +192,48 @@ export const messages = pgTable(
   ],
 );
 
+export const aiTurns = pgTable(
+  'ai_turns',
+  {
+    id: uuid('id').primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    clientRequestId: uuid('client_request_id').notNull(),
+    status: aiTurnStatus('status').notNull(),
+    promptKey: varchar('prompt_key', { length: 64 }).notNull(),
+    promptVersion: varchar('prompt_version', { length: 64 }).notNull(),
+    userMessageId: uuid('user_message_id').references(() => messages.id, {
+      onDelete: 'set null',
+    }),
+    assistantMessageId: uuid('assistant_message_id').references(() => messages.id, {
+      onDelete: 'set null',
+    }),
+    failureCode: varchar('failure_code', { length: 64 }),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true, mode: 'date' }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true, mode: 'date' }).notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true, mode: 'date' }),
+  },
+  (table) => [
+    uniqueIndex('ai_turns_user_client_request_unique').on(table.userId, table.clientRequestId),
+    uniqueIndex('ai_turns_user_message_unique').on(table.userMessageId),
+    uniqueIndex('ai_turns_assistant_message_unique').on(table.assistantMessageId),
+    uniqueIndex('ai_turns_conversation_active_unique')
+      .on(table.conversationId)
+      .where(sql`${table.status} IN ('claimed', 'streaming')`),
+    index('ai_turns_user_status_idx').on(table.userId, table.status),
+    index('ai_turns_conversation_idx').on(table.conversationId),
+    index('ai_turns_lease_expires_at_idx').on(table.leaseExpiresAt),
+  ],
+);
+
 export const schema = {
   ageVerifications,
+  aiTurns,
   consents,
   conversations,
   dailyUsageQuotas,
@@ -198,4 +245,5 @@ export const schema = {
 };
 
 export type ConsentStatus = (typeof consentStatus.enumValues)[number];
+export type AiTurnStatus = (typeof aiTurnStatus.enumValues)[number];
 export type MessageRole = (typeof messageRole.enumValues)[number];

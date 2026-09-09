@@ -55,6 +55,24 @@ export class AIProviderError extends AppError {
   }
 }
 
+export class AIProviderTimeoutError extends AppError {
+  constructor(message = 'AI 服务响应超时，请稍后重试') {
+    super(ERROR_CODES.AI_PROVIDER_TIMEOUT, 504, message);
+  }
+}
+
+export class AIChatDisabledError extends AppError {
+  constructor(message = 'AI 对话服务当前未启用') {
+    super(ERROR_CODES.AI_CHAT_DISABLED, 503, message);
+  }
+}
+
+export class AITurnInProgressError extends AppError {
+  constructor(message = '该对话已有正在处理的 AI 回复') {
+    super(ERROR_CODES.AI_TURN_IN_PROGRESS, 409, message);
+  }
+}
+
 export class AgeVerificationFailedError extends AppError {
   constructor(message = '仅支持已完成 18 岁及以上验证的用户注册') {
     super(ERROR_CODES.AGE_VERIFICATION_FAILED, 403, message);

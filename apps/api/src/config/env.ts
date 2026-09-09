@@ -45,6 +45,25 @@ const environmentSchema = z
     QUOTA_TIME_ZONE: z.string().min(1).refine(isSupportedTimeZone, {
       message: 'QUOTA_TIME_ZONE must be a supported IANA time zone',
     }),
+    AI_CHAT_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+    LLM_PROVIDER: z.enum(['none', 'siliconflow']).default('none'),
+    LLM_API_KEY: z.string().default(''),
+    LLM_BASE_URL: z.string().url().default('https://api.siliconflow.cn/v1'),
+    LLM_MODEL: z.string().default(''),
+    LLM_FIRST_TOKEN_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+    LLM_STREAM_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
+    LLM_TOTAL_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+    LLM_LEASE_SAFETY_MARGIN_MS: z.coerce.number().int().min(1_000).default(5_000),
+    LLM_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(1_024),
+    LLM_CONTEXT_TOKEN_BUDGET: z.coerce.number().int().positive().default(6_000),
+    AI_CONTEXT_MAX_MESSAGES: z.coerce.number().int().positive().max(100).default(20),
+    AI_MESSAGE_MAX_CHARACTERS: z.coerce.number().int().positive().default(4_000),
+    AI_SEGMENT_MAX_CHARACTERS: z.coerce.number().int().positive().default(200),
+    AI_SEGMENT_MAX_WAIT_MS: z.coerce.number().int().positive().default(500),
+    INCOGNITO_CONTEXT_TTL_SECONDS: z.coerce.number().int().positive().default(1_800),
   })
   .superRefine((value, context) => {
     if (
@@ -56,6 +75,38 @@ const environmentSchema = z
         code: 'custom',
         path: ['AGE_VERIFICATION_PROVIDER'],
         message: 'Mock age verification is restricted to development and test',
+      });
+    }
+
+    if (value.LLM_PROVIDER === 'siliconflow') {
+      if (value.LLM_API_KEY.length === 0) {
+        context.addIssue({
+          code: 'custom',
+          path: ['LLM_API_KEY'],
+          message: 'LLM_API_KEY is required for the SiliconFlow provider',
+        });
+      }
+      if (value.LLM_MODEL.length === 0) {
+        context.addIssue({
+          code: 'custom',
+          path: ['LLM_MODEL'],
+          message: 'LLM_MODEL is required for the SiliconFlow provider',
+        });
+      }
+    }
+
+    if (value.LLM_FIRST_TOKEN_TIMEOUT_MS > value.LLM_TOTAL_TIMEOUT_MS) {
+      context.addIssue({
+        code: 'custom',
+        path: ['LLM_FIRST_TOKEN_TIMEOUT_MS'],
+        message: 'First-token timeout cannot exceed total timeout',
+      });
+    }
+    if (value.LLM_STREAM_IDLE_TIMEOUT_MS > value.LLM_TOTAL_TIMEOUT_MS) {
+      context.addIssue({
+        code: 'custom',
+        path: ['LLM_STREAM_IDLE_TIMEOUT_MS'],
+        message: 'Stream idle timeout cannot exceed total timeout',
       });
     }
   });
