@@ -29,6 +29,10 @@ describe('sensitive logging redaction', () => {
       'cookie-secret',
       'api-key-secret',
       'provider-evidence-secret',
+      'message-content-secret',
+      'nested-message-content-secret',
+      'conversation-content-secret',
+      'prompt-secret',
     ];
     logger.info({
       req: {
@@ -46,6 +50,10 @@ describe('sensitive logging redaction', () => {
         csrfToken: sensitiveValues[3],
         evidenceToken: sensitiveValues[6],
       },
+      content: sensitiveValues[7],
+      message: { content: sensitiveValues[8] },
+      conversationContent: sensitiveValues[9],
+      prompt: sensitiveValues[10],
     });
 
     for (const sensitiveValue of [...sensitiveValues, 'sensitive body']) {

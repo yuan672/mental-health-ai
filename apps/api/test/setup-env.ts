@@ -10,4 +10,6 @@ process.env.SESSION_TTL_SECONDS ??= '604800';
 process.env.AGE_VERIFICATION_PROVIDER = 'mock';
 process.env.REQUIRED_TERMS_VERSION ??= '1.0';
 process.env.REQUIRED_PRIVACY_VERSION ??= '1.0';
+process.env.FREE_DAILY_AI_LIMIT ??= '20';
+process.env.QUOTA_TIME_ZONE ??= 'Asia/Shanghai';
 process.env.LOG_LEVEL = 'silent';

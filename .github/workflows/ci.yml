@@ -41,6 +41,8 @@ jobs:
       AGE_VERIFICATION_PROVIDER: mock
       REQUIRED_TERMS_VERSION: '1.0'
       REQUIRED_PRIVACY_VERSION: '1.0'
+      FREE_DAILY_AI_LIMIT: 20
+      QUOTA_TIME_ZONE: Asia/Shanghai
       LOG_LEVEL: silent
 
     steps:

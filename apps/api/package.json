@@ -9,7 +9,8 @@
     "lint": "eslint src test",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pretest": "pnpm --filter @mental-health/database build",
-    "test": "jest --runInBand"
+    "test": "jest --runInBand",
+    "cleanup:conversations": "pnpm run build && node dist/src/commands/purge-conversations.js"
   },
   "dependencies": {
     "@mental-health/database": "workspace:*",

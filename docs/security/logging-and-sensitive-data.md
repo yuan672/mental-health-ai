@@ -37,3 +37,14 @@ evidence. Phase 2A does not add an audit-log table or separate logging service.
 HTTP logging removes request bodies, `Authorization`, `Cookie`, `Referer`,
 `x-csrf-token`, `x-api-key`, and response `Set-Cookie` values. Known secret
 field names are redacted at both root and one nested object level.
+
+## Phase 2B conversation boundary
+
+Conversation and message services log only fixed event names and identifiers such as
+`userId`, `conversationId`, `messageId`, and message role. Repository records and
+message content are never passed to the logger. Explicit Pino paths for common
+conversation-content field names provide defense in depth; they do not replace the
+typed logging boundary.
+
+Incognito metadata and content are not stored in PostgreSQL. The runtime temporary
+context design is deferred to Phase 3 and must preserve this persistence boundary.

@@ -8,6 +8,13 @@
       "when": 1788935491413,
       "tag": "0000_secret_photon",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788943366375,
+      "tag": "0001_fat_paper_doll",
+      "breakpoints": true
     }
   ]
 }
