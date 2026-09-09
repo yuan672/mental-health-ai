@@ -6,6 +6,8 @@ const baseEnvironment: NodeJS.ProcessEnv = {
   WEB_ORIGINS: 'http://localhost:5173',
   REQUIRED_TERMS_VERSION: '1.0',
   REQUIRED_PRIVACY_VERSION: '1.0',
+  FREE_DAILY_AI_LIMIT: '20',
+  QUOTA_TIME_ZONE: 'Asia/Shanghai',
 };
 
 describe('identity environment validation', () => {
@@ -41,5 +43,27 @@ describe('identity environment validation', () => {
         SESSION_TTL_SECONDS: '3600',
       }),
     ).toThrow('SESSION_TTL_SECONDS must be 604800');
+  });
+
+  it('requires a positive configured daily AI limit', () => {
+    expect(() =>
+      parseEnvironment({
+        ...baseEnvironment,
+        APP_ENV: 'test',
+        AGE_VERIFICATION_PROVIDER: 'mock',
+        FREE_DAILY_AI_LIMIT: '',
+      }),
+    ).toThrow();
+  });
+
+  it('rejects an unsupported quota time zone', () => {
+    expect(() =>
+      parseEnvironment({
+        ...baseEnvironment,
+        APP_ENV: 'test',
+        AGE_VERIFICATION_PROVIDER: 'mock',
+        QUOTA_TIME_ZONE: 'Not/A-Time-Zone',
+      }),
+    ).toThrow('QUOTA_TIME_ZONE must be a supported IANA time zone');
   });
 });

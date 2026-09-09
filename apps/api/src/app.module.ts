@@ -2,9 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { Module } from '@nestjs/common';
 import { LoggerModule } from 'nestjs-pino';
 import { AuthModule } from './auth/auth.module';
+import { ConversationModule } from './conversations/conversation.module';
 import { DatabaseModule } from './database/database.module';
 import { env } from './config/env';
 import { HealthModule } from './health/health.module';
+import { MessageModule } from './messages/message.module';
+import { QuotaModule } from './quota/quota.module';
 import { SecurityModule } from './security/security.module';
 
 export const LOG_REDACT_PATHS = [
@@ -34,6 +37,15 @@ export const LOG_REDACT_PATHS = [
   '*.evidenceToken',
   '*.apiKey',
   '*.api_key',
+  'content',
+  'message.content',
+  '*.message.content',
+  'messageContent',
+  '*.messageContent',
+  'conversationContent',
+  '*.conversationContent',
+  'prompt',
+  '*.prompt',
 ] as const;
 
 @Module({
@@ -61,6 +73,9 @@ export const LOG_REDACT_PATHS = [
     SecurityModule,
     HealthModule,
     AuthModule,
+    ConversationModule,
+    MessageModule,
+    QuotaModule,
   ],
 })
 export class AppModule {}

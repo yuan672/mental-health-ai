@@ -18,7 +18,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "db:generate": "pnpm --filter @mental-health/database db:generate",
-    "db:migrate": "pnpm --filter @mental-health/database db:migrate"
+    "db:migrate": "pnpm --filter @mental-health/database db:migrate",
+    "data:purge-conversations": "pnpm --filter @mental-health/api cleanup:conversations"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

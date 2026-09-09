@@ -4,6 +4,15 @@ import { z } from 'zod';
 
 loadDotEnv({ path: resolve(process.cwd(), '../../.env'), quiet: true });
 
+function isSupportedTimeZone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const environmentSchema = z
   .object({
     APP_ENV: z.enum(['development', 'test', 'staging', 'production']).default('development'),
@@ -32,6 +41,10 @@ const environmentSchema = z
     AGE_VERIFICATION_PROVIDER: z.enum(['mock', 'unconfigured']).default('mock'),
     REQUIRED_TERMS_VERSION: z.string().min(1).max(64).default('1.0'),
     REQUIRED_PRIVACY_VERSION: z.string().min(1).max(64).default('1.0'),
+    FREE_DAILY_AI_LIMIT: z.coerce.number().int().positive(),
+    QUOTA_TIME_ZONE: z.string().min(1).refine(isSupportedTimeZone, {
+      message: 'QUOTA_TIME_ZONE must be a supported IANA time zone',
+    }),
   })
   .superRefine((value, context) => {
     if (
