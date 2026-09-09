@@ -1,5 +1,9 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
+import {
+  INCOGNITO_CONTEXT_STORE,
+  type IncognitoContextStore,
+} from '../ai/incognito/incognito-context.store';
 import { AuthenticationError, DatabaseError } from '../common/errors';
 import { env } from '../config/env';
 import { UsersRepository, type SessionRecord } from '../users/users.repository';
@@ -15,7 +19,11 @@ export function hashSessionToken(rawToken: string): string {
 
 @Injectable()
 export class SessionsService {
-  constructor(private readonly usersRepository: UsersRepository) {}
+  constructor(
+    @Inject(INCOGNITO_CONTEXT_STORE)
+    private readonly incognitoContexts: IncognitoContextStore,
+    private readonly usersRepository: UsersRepository,
+  ) {}
 
   async create(userId: string): Promise<CreatedSession> {
     const rawToken = randomBytes(32).toString('base64url');
@@ -65,5 +73,6 @@ export class SessionsService {
     } catch {
       throw new DatabaseError();
     }
+    this.incognitoContexts.clearSession(session.userId, session.id);
   }
 }

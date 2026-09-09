@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@mental-health/types": "workspace:*",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "zod": "^4.5.0"

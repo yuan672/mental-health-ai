@@ -66,4 +66,39 @@ describe('identity environment validation', () => {
       }),
     ).toThrow('QUOTA_TIME_ZONE must be a supported IANA time zone');
   });
+
+  it('requires backend-only credentials and a model for SiliconFlow', () => {
+    expect(() =>
+      parseEnvironment({
+        ...baseEnvironment,
+        APP_ENV: 'test',
+        AGE_VERIFICATION_PROVIDER: 'mock',
+        LLM_PROVIDER: 'siliconflow',
+        LLM_API_KEY: '',
+        LLM_MODEL: '',
+      }),
+    ).toThrow('LLM_API_KEY is required for the SiliconFlow provider');
+
+    const parsed = parseEnvironment({
+      ...baseEnvironment,
+      APP_ENV: 'test',
+      AGE_VERIFICATION_PROVIDER: 'mock',
+      LLM_PROVIDER: 'siliconflow',
+      LLM_API_KEY: 'synthetic-test-key',
+      LLM_MODEL: 'synthetic-test-model',
+    });
+    expect(parsed.LLM_PROVIDER).toBe('siliconflow');
+  });
+
+  it('rejects stream phase timeouts longer than the total timeout', () => {
+    expect(() =>
+      parseEnvironment({
+        ...baseEnvironment,
+        APP_ENV: 'test',
+        AGE_VERIFICATION_PROVIDER: 'mock',
+        LLM_FIRST_TOKEN_TIMEOUT_MS: '2000',
+        LLM_TOTAL_TIMEOUT_MS: '1000',
+      }),
+    ).toThrow('First-token timeout cannot exceed total timeout');
+  });
 });

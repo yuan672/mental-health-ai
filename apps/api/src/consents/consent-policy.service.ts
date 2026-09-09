@@ -51,4 +51,11 @@ export class ConsentPolicyService {
       acceptedAt,
     }));
   }
+
+  getRequiredPolicies(): readonly Readonly<{
+    consentType: string;
+    consentVersion: string;
+  }>[] {
+    return this.requiredPolicies;
+  }
 }

@@ -7,6 +7,11 @@ export type QuotaSnapshot = DailyUsageRecord & {
   remaining: number;
 };
 
+export type QuotaConsumeOutcome = Readonly<{
+  status: 'consumed' | 'already_consumed';
+  usage: QuotaSnapshot;
+}>;
+
 function snapshot(usage: DailyUsageRecord): QuotaSnapshot {
   return {
     ...usage,
@@ -49,14 +54,30 @@ export class QuotaService {
     return usage.usedCount < usage.dailyLimit;
   }
 
+  async hasConsumption(userId: string, idempotencyKey: string): Promise<boolean> {
+    this.validateIdempotencyKey(idempotencyKey);
+    try {
+      return await this.repository.hasConsumption(userId, idempotencyKey);
+    } catch {
+      throw new DatabaseError();
+    }
+  }
+
   async consumeQuota(
     userId: string,
     idempotencyKey: string,
     now = new Date(),
   ): Promise<QuotaSnapshot> {
-    if (idempotencyKey.length < 1 || idempotencyKey.length > 128) {
-      throw new ValidationError('额度消费幂等键无效');
-    }
+    const outcome = await this.consumeQuotaOnce(userId, idempotencyKey, now);
+    return outcome.usage;
+  }
+
+  async consumeQuotaOnce(
+    userId: string,
+    idempotencyKey: string,
+    now = new Date(),
+  ): Promise<QuotaConsumeOutcome> {
+    this.validateIdempotencyKey(idempotencyKey);
 
     const usageDate = this.policy.getUsageDate(now);
     let result;
@@ -76,6 +97,23 @@ export class QuotaService {
       throw new QuotaExceededError();
     }
 
-    return snapshot(result.usage);
+    return { status: result.status, usage: snapshot(result.usage) };
+  }
+
+  async refundQuota(userId: string, idempotencyKey: string, now = new Date()): Promise<boolean> {
+    this.validateIdempotencyKey(idempotencyKey);
+
+    try {
+      const result = await this.repository.refund(userId, idempotencyKey, now);
+      return result.status === 'refunded';
+    } catch {
+      throw new DatabaseError();
+    }
+  }
+
+  private validateIdempotencyKey(idempotencyKey: string): void {
+    if (idempotencyKey.length < 1 || idempotencyKey.length > 128) {
+      throw new ValidationError('额度消费幂等键无效');
+    }
   }
 }

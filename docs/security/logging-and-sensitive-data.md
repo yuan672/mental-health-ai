@@ -46,5 +46,23 @@ message content are never passed to the logger. Explicit Pino paths for common
 conversation-content field names provide defense in depth; they do not replace the
 typed logging boundary.
 
-Incognito metadata and content are not stored in PostgreSQL. The runtime temporary
-context design is deferred to Phase 3 and must preserve this persistence boundary.
+Incognito metadata and content are not stored in PostgreSQL. Phase 3 preserves this
+boundary with an internal process-memory TTL store.
+
+## Phase 3 AI operational boundary
+
+AI operational events use a typed, allowlisted Pino wrapper. They may include
+internal user/conversation/turn IDs, provider/model identifiers, a safe provider
+trace ID, latency/TTFT, normalized token counts, finish reason, fixed failure
+category, and cancellation source. The wrapper does not accept messages, prompts,
+request DTOs, raw provider responses, arbitrary errors, credentials, cookies, or
+CSRF tokens.
+
+SiliconFlow parsing discards provider-specific `reasoning_content` and raw payloads.
+Only normalized deltas cross the provider port. HTTP body redaction remains defense
+in depth; code must still never pass psychological content to a logger.
+
+Incognito Phase 3 context is held only in API process memory with TTL and is scoped
+by user ID, session ID, and opaque context ID. Logout clears that session's entries;
+process restart removes all entries. PostgreSQL contains no incognito context or
+message data.

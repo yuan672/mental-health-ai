@@ -1,6 +1,6 @@
 # 心理健康 AI 支持系统
 
-面向中国大陆 18 岁及以上成年用户的 Web AI 心理健康支持系统工程项目。Engineering Bootstrap 和 Phase 2A 已完成；当前实现范围包含 **Phase 2B — Conversation & Quota Foundation** 的内部领域能力，尚未进入 AI Chat、用户聊天历史、Risk Detection、Mood Tracking 或 Admin 业务开发。
+面向中国大陆 18 岁及以上成年用户的 Web AI 心理健康支持系统工程项目。Engineering Bootstrap 和 Phase 2 已完成；当前实现范围包含 **Phase 3 — AI Foundation**，尚未进入完整 AI Safety、用户聊天历史、Mood Tracking 或 Admin 业务开发。
 
 > 本产品定位为心理健康支持工具，不是心理医生、精神科医生、医疗诊断系统、药物处方系统或真人心理咨询师的替代品。
 
@@ -79,6 +79,15 @@ At minimum, configure:
 - `REQUIRED_PRIVACY_VERSION`
 - `FREE_DAILY_AI_LIMIT`（必填正整数；示例值由本地/测试决定，不代表产品政策）
 - `QUOTA_TIME_ZONE`（当前使用 `Asia/Shanghai`）
+- `AI_CHAT_ENABLED`（Staging/Production 当前会因仅有占位 Safety Gate 而 fail closed）
+- `LLM_PROVIDER`（`none` 或 `siliconflow`）
+- `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL`（只允许后端配置）
+- `LLM_FIRST_TOKEN_TIMEOUT_MS` / `LLM_STREAM_IDLE_TIMEOUT_MS` / `LLM_TOTAL_TIMEOUT_MS`
+- `LLM_LEASE_SAFETY_MARGIN_MS`
+- `LLM_MAX_OUTPUT_TOKENS` / `LLM_CONTEXT_TOKEN_BUDGET`
+- `AI_CONTEXT_MAX_MESSAGES` / `AI_MESSAGE_MAX_CHARACTERS`
+- `AI_SEGMENT_MAX_CHARACTERS` / `AI_SEGMENT_MAX_WAIT_MS`
+- `INCOGNITO_CONTEXT_TTL_SECONDS`
 - `LOG_LEVEL`
 - local PostgreSQL variables used by Docker Compose
 
@@ -187,9 +196,15 @@ Phase 2A implements identity, password authentication, server-side sessions,
 age-verification abstraction and consent records. Phase 2B adds internal PostgreSQL
 quota, ordinary-conversation, message-ordering, ownership and retention primitives.
 
-Phase 2B exposes no Conversation, Message, Incognito or Quota HTTP API. It does
-**not** implement LLM providers, AI Chat, streaming, runtime incognito context,
-Risk Detection, user-facing conversation history/save/delete, Mood Tracking, Admin,
-Redis, payment, subscriptions, enterprise features, native apps, WeChat
+Phase 3 adds the provider abstraction, SiliconFlow adapter, AI-turn orchestration,
+prompt/context services, true HTTP streaming, quota compensation, internal
+incognito runtime storage, and a minimal Web stream client. The public AI surface is
+limited to `POST /ai/chat/stream`; Phase 5 conversation-history/save/delete and
+incognito lifecycle APIs are not exposed.
+
+Phase 3 deliberately does **not** implement real Risk Detection, RiskEvent, Crisis
+Flow, Human Review, complete Output Safety, Mood Tracking, Knowledge Base, Admin,
+Redis, queues, payment, subscriptions, enterprise features, native apps, WeChat
 mini-programs, medical diagnosis, medication recommendations or social/community
-features.
+features. AI chat remains locked out of Staging/Production until Phase 4 supplies
+production-safe gates and third-party privacy/compliance prerequisites are met.

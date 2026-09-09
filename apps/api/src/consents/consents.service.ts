@@ -1,15 +1,40 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
-import { ConflictError, DatabaseError } from '../common/errors';
+import { ConflictError, ConsentRequiredError, DatabaseError } from '../common/errors';
 import { isPostgresUniqueViolation } from '../common/errors/postgres-error';
 import { UsersRepository, type ConsentRecord } from '../users/users.repository';
+import { ConsentPolicyService } from './consent-policy.service';
 
 @Injectable()
 export class ConsentsService {
-  constructor(private readonly usersRepository: UsersRepository) {}
+  constructor(
+    private readonly consentPolicy: ConsentPolicyService,
+    private readonly usersRepository: UsersRepository,
+  ) {}
 
   list(userId: string): Promise<ConsentRecord[]> {
     return this.usersRepository.listConsents(userId);
+  }
+
+  async ensureRequiredConsentsActive(userId: string): Promise<void> {
+    let records: ConsentRecord[];
+    try {
+      records = await this.usersRepository.listConsents(userId);
+    } catch {
+      throw new DatabaseError();
+    }
+
+    const active = new Set(
+      records
+        .filter((record) => record.status === 'accepted')
+        .map((record) => `${record.consentType}:${record.consentVersion}`),
+    );
+    const allRequired = this.consentPolicy
+      .getRequiredPolicies()
+      .every((policy) => active.has(`${policy.consentType}:${policy.consentVersion}`));
+    if (!allRequired) {
+      throw new ConsentRequiredError('请先接受当前版本的必要条款后再使用 AI 对话');
+    }
   }
 
   async accept(
