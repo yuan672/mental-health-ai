@@ -78,6 +78,10 @@ export class LlmRiskClassifier implements RiskClassifier {
         },
         { signal: combinedSignal },
       );
+      if (signal.aborted) throw signal.reason;
+      if (timeoutSignal.aborted) {
+        throw new RiskClassifierUnavailableError('timeout');
+      }
       return {
         candidateLevel: riskLevelSchema.parse(candidate.candidateLevel),
         harmSubject: harmSubjectSchema.parse(candidate.harmSubject),

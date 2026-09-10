@@ -111,12 +111,14 @@ export class RealPreGenerationSafetyGate implements PreGenerationSafetyGate {
   ) {}
 
   async check(input: PreGenerationSafetyInput, signal: AbortSignal): Promise<RiskDecision> {
+    if (signal.aborted) throw signal.reason;
     const context = await this.contextBuilder.build(
       input.userId,
       input.target,
       input.message,
       input.now,
     );
+    if (signal.aborted) throw signal.reason;
     return this.riskDetection.assess(input.turnId, context, signal);
   }
 }
@@ -136,6 +138,7 @@ export class RealPostGenerationSafetyGate implements PostGenerationSafetyGate {
     input: PostGenerationSafetyInput,
     signal: AbortSignal,
   ): Promise<PostGenerationSafetyResult> {
+    if (signal.aborted) throw signal.reason;
     const startedAt = Date.now();
     const decision = await this.outputSafety.evaluate(
       {

@@ -1,13 +1,16 @@
+import { randomUUID } from 'node:crypto';
 import {
   and,
   eq,
   humanReviewQueueItems,
+  riskEvents,
   type ReviewPriority,
   type ReviewState,
 } from '@mental-health/database';
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service';
 import { AuditLogRepository } from '../audit/audit-log.repository';
+import type { RiskEventRecord } from '../persistence/risk-event.repository';
 
 export type HumanReviewQueueRecord = Readonly<{
   id: string;
@@ -19,6 +22,11 @@ export type HumanReviewQueueRecord = Readonly<{
   startedAt: Date | null;
   reviewedAt: Date | null;
   resolutionCode: string | null;
+}>;
+
+export type HumanReviewContext = Readonly<{
+  queueItem: HumanReviewQueueRecord;
+  riskEvent: RiskEventRecord;
 }>;
 
 @Injectable()
@@ -35,6 +43,33 @@ export class HumanReviewQueueRepository {
       .where(eq(humanReviewQueueItems.riskEventId, riskEventId))
       .limit(1);
     return item ?? null;
+  }
+
+  async findContextByRiskEventIdForReviewer(
+    riskEventId: string,
+    reviewerId: string,
+    now: Date,
+  ): Promise<HumanReviewContext | null> {
+    return this.database.database.transaction(async (transaction) => {
+      const [context] = await transaction
+        .select({ queueItem: humanReviewQueueItems, riskEvent: riskEvents })
+        .from(humanReviewQueueItems)
+        .innerJoin(riskEvents, eq(riskEvents.id, humanReviewQueueItems.riskEventId))
+        .where(eq(humanReviewQueueItems.riskEventId, riskEventId))
+        .limit(1);
+      if (!context) return null;
+      await this.audits.appendWithinTransaction(transaction, {
+        actorType: 'human_reviewer',
+        actorId: reviewerId,
+        action: 'risk_event_viewed',
+        resourceType: 'risk_event',
+        resourceId: riskEventId,
+        idempotencyKey: `risk-event-viewed:${riskEventId}:${reviewerId}:${randomUUID()}`,
+        safeMetadata: {},
+        occurredAt: now,
+      });
+      return context;
+    });
   }
 
   async claim(

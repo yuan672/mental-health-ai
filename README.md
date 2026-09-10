@@ -1,6 +1,6 @@
 # 心理健康 AI 支持系统
 
-面向中国大陆 18 岁及以上成年用户的 Web AI 心理健康支持系统工程项目。Engineering Bootstrap 和 Phase 2 已完成；当前实现范围包含 **Phase 3 — AI Foundation**，尚未进入完整 AI Safety、用户聊天历史、Mood Tracking 或 Admin 业务开发。
+面向中国大陆 18 岁及以上成年用户的 Web AI 心理健康支持系统工程项目。Engineering Bootstrap、Phase 2 和 Phase 3 已完成；当前功能分支实现 **Phase 4 — AI Safety** 后端基础，尚未进入用户聊天历史、Mood Tracking 或 Admin UI 业务开发。Production Safety Lock 仍然生效，生产 AI Chat 仍然禁用。
 
 > 本产品定位为心理健康支持工具，不是心理医生、精神科医生、医疗诊断系统、药物处方系统或真人心理咨询师的替代品。
 
@@ -212,9 +212,11 @@ incognito runtime storage, and a minimal Web stream client. The public AI surfac
 limited to `POST /ai/chat/stream`; Phase 5 conversation-history/save/delete and
 incognito lifecycle APIs are not exposed.
 
-Phase 3 deliberately does **not** implement real Risk Detection, RiskEvent, Crisis
-Flow, Human Review, complete Output Safety, Mood Tracking, Knowledge Base, Admin,
-Redis, queues, payment, subscriptions, enterprise features, native apps, WeChat
-mini-programs, medical diagnosis, medication recommendations or social/community
-features. AI chat remains locked out of Staging/Production until Phase 4 supplies
-production-safe gates and third-party privacy/compliance prerequisites are met.
+Phase 4 adds hybrid risk detection, deterministic Crisis Flow, isolated Risk Event
+retention, an internal Human Review Queue boundary, restricted Audit Log, and
+fail-closed output safety. It does not add Reviewer/Admin UI, real-time human
+takeover, Mood Tracking, Knowledge Base, Redis, queues, payment, subscriptions,
+enterprise features, native apps, WeChat mini-programs, medical diagnosis,
+medication recommendations, or social/community features. AI chat remains locked
+out of Staging/Production while verified crisis resources, reviewer identity,
+real-model evaluation, and privacy/compliance prerequisites are incomplete.

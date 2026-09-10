@@ -26,11 +26,13 @@ export class RiskDetectionService {
     context: SafetyAssessmentContext,
     signal: AbortSignal,
   ): Promise<RiskDecision> {
+    if (signal.aborted) throw signal.reason;
     const startedAt = Date.now();
     const deterministicSignals = this.deterministic.detect(context);
     const classifierStartedAt = Date.now();
     try {
       const candidate = await this.classifier.classify(turnId, context, signal);
+      if (signal.aborted) throw signal.reason;
       const classifierDuration = Date.now() - classifierStartedAt;
       const decision = this.policy.decide(deterministicSignals, candidate);
       this.logging.riskDetectionCompleted(

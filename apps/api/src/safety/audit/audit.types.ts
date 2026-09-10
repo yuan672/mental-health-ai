@@ -5,6 +5,7 @@ export const auditActorTypeSchema = z.enum(['system', 'human_reviewer']);
 export const auditResourceTypeSchema = z.enum(['ai_turn', 'risk_event', 'review_queue_item']);
 export const auditActionSchema = z.enum([
   'risk_event_created',
+  'risk_event_viewed',
   'crisis_flow_triggered',
   'review_queue_created',
   'review_started',

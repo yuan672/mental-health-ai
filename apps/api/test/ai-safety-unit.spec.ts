@@ -316,33 +316,186 @@ describe('safety classifier timeouts', () => {
       env.SAFETY_CLASSIFIER_TIMEOUT_MS = previous;
     }
   });
+
+  it('rejects non-cooperative classifier results that arrive after their bounded timeout', async () => {
+    const previous = env.SAFETY_CLASSIFIER_TIMEOUT_MS;
+    env.SAFETY_CLASSIFIER_TIMEOUT_MS = 5;
+    const metadata = { provider: 'fake', model: 'fake', requestId: null };
+    const provider = {
+      classifyRisk: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return {
+          candidateLevel: 'LOW' as const,
+          harmSubject: 'UNKNOWN' as const,
+          harmTargets: [],
+          temporality: 'UNKNOWN' as const,
+          ideation: 'NONE' as const,
+          intent: 'ABSENT' as const,
+          plan: 'ABSENT' as const,
+          means: 'ABSENT' as const,
+          immediacy: 'NONE' as const,
+          confidence: 1,
+          reasonCodes: [],
+          metadata,
+        };
+      },
+      chat: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return {
+          content: JSON.stringify({ decision: 'ALLOW', reasonCodes: [] }),
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          metadata,
+        };
+      },
+    } as unknown as LLMProvider;
+    try {
+      await expect(
+        new LlmRiskClassifier(provider, prompts).classify(
+          'late-risk-result',
+          context('普通压力表达'),
+          new AbortController().signal,
+        ),
+      ).rejects.toMatchObject({ category: 'timeout' });
+      await expect(
+        new LlmOutputSafetyClassifier(provider, prompts).classify(
+          { candidate: '候选内容', previouslyApprovedText: '', inputRiskLevel: 'LOW' },
+          new AbortController().signal,
+        ),
+      ).rejects.toMatchObject({ category: 'timeout' });
+    } finally {
+      env.SAFETY_CLASSIFIER_TIMEOUT_MS = previous;
+    }
+  });
+});
+
+describe('SSE transport backpressure', () => {
+  it('does not resolve a write until a slow client drains the bounded frame', async () => {
+    const response = new EventEmitter() as EventEmitter & {
+      destroyed: boolean;
+      writableEnded: boolean;
+      write: jest.Mock<boolean, [string]>;
+    };
+    response.destroyed = false;
+    response.writableEnded = false;
+    response.write = jest.fn<boolean, [string]>(() => false);
+    let resolved = false;
+    const pending = writeSse(
+      response as unknown as Response,
+      {
+        type: 'message.segment',
+        data: {
+          turnId: '11111111-1111-4111-8111-111111111111',
+          sequence: 1,
+          text: '合成安全片段',
+        },
+      },
+      1,
+      new AbortController().signal,
+    ).then(() => {
+      resolved = true;
+    });
+
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+    expect(response.write).toHaveBeenCalledTimes(1);
+    response.emit('drain');
+    await pending;
+    expect(resolved).toBe(true);
+  });
+
+  it('does not write a late frame after cancellation or deadline abort', async () => {
+    const response = new EventEmitter() as EventEmitter & {
+      destroyed: boolean;
+      writableEnded: boolean;
+      write: jest.Mock<boolean, [string]>;
+    };
+    response.destroyed = false;
+    response.writableEnded = false;
+    response.write = jest.fn<boolean, [string]>(() => true);
+    const controller = new AbortController();
+    controller.abort(new Error('synthetic deadline'));
+
+    await expect(
+      writeSse(
+        response as unknown as Response,
+        {
+          type: 'message.segment',
+          data: {
+            turnId: '11111111-1111-4111-8111-111111111111',
+            sequence: 1,
+            text: '不得迟到发送',
+          },
+        },
+        1,
+        controller.signal,
+      ),
+    ).rejects.toThrow('synthetic deadline');
+    expect(response.write).not.toHaveBeenCalled();
+  });
 });
 
 describe('Phase 4 production safety lock', () => {
-  it('allows Production startup with AI disabled and rejects incomplete readiness when enabled', () => {
+  it.each(['staging', 'production'] as const)(
+    'allows %s startup with AI disabled and rejects incomplete readiness when enabled',
+    (appEnvironment) => {
+      const previousEnvironment = env.APP_ENV;
+      const previousEnabled = env.AI_CHAT_ENABLED;
+      const pre = new PassThroughPreGenerationSafetyGate();
+      const post = new PassThroughPostGenerationSafetyGate();
+      const readiness = {
+        evaluate: () => ({
+          productionSafe: false,
+          checks: [{ key: 'verified_crisis_resources', ready: false }],
+        }),
+      } as unknown as SafetyProductionReadinessService;
+
+      try {
+        env.APP_ENV = appEnvironment;
+        env.AI_CHAT_ENABLED = false;
+        expect(() => new AiSafetyConfigurationGuard(pre, post, readiness)).not.toThrow();
+
+        env.AI_CHAT_ENABLED = true;
+        expect(() => new AiSafetyConfigurationGuard(pre, post, readiness)).toThrow(
+          'AI chat safety readiness failed: verified_crisis_resources',
+        );
+      } finally {
+        env.APP_ENV = previousEnvironment;
+        env.AI_CHAT_ENABLED = previousEnabled;
+      }
+    },
+  );
+
+  it('does not unlock production merely because gates identify as real implementations', () => {
     const previousEnvironment = env.APP_ENV;
     const previousEnabled = env.AI_CHAT_ENABLED;
-    const pre = new PassThroughPreGenerationSafetyGate();
-    const post = new PassThroughPostGenerationSafetyGate();
+    const realButNotReady = {
+      productionSafe: false,
+      implementation: 'real' as const,
+    };
     const readiness = {
       evaluate: () => ({
         productionSafe: false,
         checks: [{ key: 'verified_crisis_resources', ready: false }],
       }),
     } as unknown as SafetyProductionReadinessService;
-
     try {
       env.APP_ENV = 'production';
-      env.AI_CHAT_ENABLED = false;
-      expect(() => new AiSafetyConfigurationGuard(pre, post, readiness)).not.toThrow();
-
       env.AI_CHAT_ENABLED = true;
-      expect(() => new AiSafetyConfigurationGuard(pre, post, readiness)).toThrow(
-        'AI chat safety readiness failed: verified_crisis_resources',
-      );
+      expect(
+        () =>
+          new AiSafetyConfigurationGuard(
+            realButNotReady as unknown as PassThroughPreGenerationSafetyGate,
+            realButNotReady as unknown as PassThroughPostGenerationSafetyGate,
+            readiness,
+          ),
+      ).toThrow('verified_crisis_resources');
     } finally {
       env.APP_ENV = previousEnvironment;
       env.AI_CHAT_ENABLED = previousEnabled;
     }
   });
 });
+import { EventEmitter } from 'node:events';
+import type { Response } from 'express';
+import { writeSse } from '../src/ai/ai.controller';

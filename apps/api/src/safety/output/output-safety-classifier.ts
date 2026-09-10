@@ -103,6 +103,10 @@ export class LlmOutputSafetyClassifier implements OutputSafetyClassifier {
         },
         { signal: combinedSignal },
       );
+      if (signal.aborted) throw signal.reason;
+      if (timeoutSignal.aborted) {
+        throw new OutputSafetyClassifierUnavailableError('timeout');
+      }
       return {
         ...resultSchema.parse(JSON.parse(result.content)),
         classifierKey: prompt.key,

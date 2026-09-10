@@ -34,6 +34,7 @@ export class OutputSafetyCheck {
     }>,
     signal: AbortSignal,
   ): Promise<OutputSafetyDecision> {
+    if (signal.aborted) throw signal.reason;
     const deterministicCodes = this.deterministic.detect(
       `${input.previouslyApprovedText}${input.candidate}`,
       input.inputRiskLevel === 'HIGH',
@@ -44,6 +45,7 @@ export class OutputSafetyCheck {
 
     try {
       const result = await this.classifier.classify(input, signal);
+      if (signal.aborted) throw signal.reason;
       return result.decision === 'ALLOW'
         ? { status: 'approved' }
         : { status: 'blocked', reasonCodes: result.reasonCodes };

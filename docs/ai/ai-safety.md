@@ -64,3 +64,45 @@ AI Chat remains fail-closed while readiness is incomplete.
 
 No Admin/Reviewer UI, live human takeover, SLA, notification system, Redis/queue,
 or field-level encryption framework is implemented in Phase 4.
+
+## Final merge-readiness audit (pre-merge)
+
+The 2026-09-10 engineering audit validates the feature branch before PR #5 is
+merged. It does not claim that the pull request is already merged or that
+production AI is ready. The audit covers transactional crisis fallback failures,
+reviewer authorization plus mandatory access audit, whole-turn deadlines,
+classifier cancellation and late-result rejection, SSE backpressure, retention,
+idempotency, and empty-database migrations. The complete local suite contains
+168 API tests and 8 Web tests; the Phase 4-focused subset contains 80 API tests.
+
+The 28 table-driven Simplified Chinese corpus rows are engineering fixtures:
+
+- 16 input rows exercise deterministic signal extraction.
+- 12 output rows exercise deterministic output-safety signals.
+- Separate tests exercise `RiskDecisionPolicy`, fake-classifier orchestration,
+  transactional side effects, and the SiliconFlow HTTP/JSON adapter contract.
+
+All orchestration tests use fake classifiers/providers or a local synthetic HTTP
+server. They do not call a real model and do not measure model accuracy, recall,
+clinical effectiveness, or overall safety. Real-model evaluation and human review
+of the corpus and trusted templates remain production-readiness work. No real user
+psychological text is sent to a third party by these tests.
+
+Risk Event `ON DELETE SET NULL` references are a technical retention boundary; they
+do not constitute complete anonymization or a legal conclusion. Automatic safety
+retention scheduling, production account-deletion policy, and deployment-layer SSE
+buffering validation also remain pending.
+
+Current production state is intentionally:
+
+- **Production Safety Lock: Enforced**
+- **Production AI Chat: Disabled**
+- **productionSafe: false**
+
+The remaining blockers include authoritative verification of mainland-China crisis
+resources, provider privacy/security/retention and applicable compliance review,
+consent wording review, real least-privilege reviewer identity/RBAC, formal corpus
+and trusted-template review, real-model evaluation, production retention and
+account-deletion policy, database encryption and tested backups, automatic cleanup
+scheduling, complete production configuration, and deployment-layer streaming
+buffering verification.

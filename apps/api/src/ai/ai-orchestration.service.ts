@@ -52,6 +52,11 @@ export type AuthenticatedAiPrincipal = Readonly<{
   sessionId: string;
 }>;
 
+export type AiTurnExecutionDeadline = Readonly<{
+  signal: AbortSignal;
+  dispose: () => void;
+}>;
+
 export type PreparedAiTurn =
   | Readonly<{ kind: 'existing'; turn: AiTurnRecord }>
   | Readonly<{
@@ -59,16 +64,19 @@ export type PreparedAiTurn =
       turn: AiTurnRecord;
       context: ConversationContext;
       riskDecision: RiskDecision;
+      execution: AiTurnExecutionDeadline;
     }>
   | Readonly<{
       kind: 'trusted';
       turn: AiTurnRecord & { assistantMessageId: string };
       response: TrustedSafetyResponse;
+      execution: AiTurnExecutionDeadline;
     }>
   | Readonly<{
       kind: 'unpersisted_trusted';
       turn: AiTurnRecord;
       response: TrustedSafetyResponse;
+      execution: AiTurnExecutionDeadline;
     }>;
 
 class OutputSafetyReplacement extends Error {
@@ -87,6 +95,37 @@ class ProviderEventTimeout extends Error {
   constructor(public readonly phase: ProviderTimeoutPhase) {
     super(`Provider stream timed out: ${phase}`);
     this.name = ProviderEventTimeout.name;
+  }
+}
+
+function createTurnExecutionDeadline(clientSignal: AbortSignal): AiTurnExecutionDeadline {
+  const controller = new AbortController();
+  const onClientAbort = (): void =>
+    controller.abort(clientSignal.reason ?? new Error('client_disconnect'));
+  clientSignal.addEventListener('abort', onClientAbort, { once: true });
+  if (clientSignal.aborted) {
+    onClientAbort();
+  }
+  const timer = setTimeout(
+    () => controller.abort(new ProviderEventTimeout('total')),
+    env.LLM_TOTAL_TIMEOUT_MS,
+  );
+  timer.unref();
+  let disposed = false;
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      clearTimeout(timer);
+      clientSignal.removeEventListener('abort', onClientAbort);
+    },
+  };
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw signal.reason ?? new Error('AI turn aborted');
   }
 }
 
@@ -162,6 +201,8 @@ const EMPTY_METADATA: LLMProviderMetadata = {
   requestId: null,
 };
 
+const MAX_OUTPUT_CHARACTERS_PER_REQUESTED_TOKEN = 16;
+
 @Injectable()
 export class AiOrchestrationService {
   constructor(
@@ -219,11 +260,11 @@ export class AiOrchestrationService {
       return { kind: 'existing', turn: claimed.turn };
     }
 
+    const execution = createTurnExecutionDeadline(signal);
+
     try {
       const quotaAvailable = await this.quota.canUseAI(principal.userId, now);
-      if (signal.aborted) {
-        throw signal.reason;
-      }
+      throwIfAborted(execution.signal);
       const riskDecision = await this.preGenerationSafety.check(
         {
           turnId: claimed.turn.id,
@@ -232,8 +273,9 @@ export class AiOrchestrationService {
           message: input.message,
           now,
         },
-        signal,
+        execution.signal,
       );
+      throwIfAborted(execution.signal);
 
       const trustedResponse = this.trustedResponseFor(riskDecision, quotaAvailable);
       if (trustedResponse) {
@@ -251,8 +293,12 @@ export class AiOrchestrationService {
             },
             now,
           );
-          return { kind: 'trusted', turn: completed, response: trustedResponse };
-        } catch {
+          throwIfAborted(execution.signal);
+          return { kind: 'trusted', turn: completed, response: trustedResponse, execution };
+        } catch (error) {
+          if (execution.signal.aborted) {
+            throw execution.signal.reason ?? error;
+          }
           this.safetyLogging.crisisPersistenceFailed({ turnId: claimed.turn.id });
           try {
             await this.aiTurns.finish(
@@ -264,7 +310,12 @@ export class AiOrchestrationService {
           } catch {
             // The trusted response remains deliverable even when persistence is unavailable.
           }
-          return { kind: 'unpersisted_trusted', turn: claimed.turn, response: trustedResponse };
+          return {
+            kind: 'unpersisted_trusted',
+            turn: claimed.turn,
+            response: trustedResponse,
+            execution,
+          };
         }
       }
 
@@ -286,9 +337,7 @@ export class AiOrchestrationService {
         now,
         prompt.key as 'supportive-chat' | 'supportive-chat-safety' | 'high-risk-support',
       );
-      if (signal.aborted) {
-        throw signal.reason;
-      }
+      throwIfAborted(execution.signal);
       const started = await this.aiTurns.start(
         claimed.turn,
         input.message,
@@ -296,15 +345,28 @@ export class AiOrchestrationService {
         riskDecision,
         now,
       );
-      return { kind: 'ready', turn: started, context, riskDecision };
+      throwIfAborted(execution.signal);
+      return { kind: 'ready', turn: started, context, riskDecision, execution };
     } catch (error) {
-      const cancelled = signal.aborted;
-      await this.aiTurns.finish(
-        claimed.turn,
-        cancelled ? 'cancelled' : 'failed',
-        cancelled ? 'CANCELLED_BEFORE_PROVIDER' : this.safeFailureCode(error),
-        new Date(),
-      );
+      const timedOut = execution.signal.reason instanceof ProviderEventTimeout;
+      const cancelled = execution.signal.aborted && !timedOut;
+      try {
+        await this.aiTurns.finish(
+          claimed.turn,
+          cancelled ? 'cancelled' : 'failed',
+          cancelled
+            ? 'CANCELLED_BEFORE_PROVIDER'
+            : timedOut
+              ? 'TOTAL_TIMEOUT_BEFORE_PROVIDER'
+              : this.safeFailureCode(error),
+          new Date(),
+        );
+      } finally {
+        execution.dispose();
+      }
+      if (timedOut) {
+        throw new AIProviderTimeoutError();
+      }
       throw error;
     }
   }
@@ -360,17 +422,18 @@ export class AiOrchestrationService {
     const metadata = { userId: turn.userId, conversationId: turn.conversationId, turnId: turn.id };
     const generationStartedAt = Date.now();
     const generationController = new AbortController();
+    const onExecutionAbort = (): void =>
+      generationController.abort(prepared.execution.signal.reason ?? new Error('turn_aborted'));
     const onClientAbort = (): void =>
       generationController.abort(clientSignal.reason ?? new Error('client_disconnect'));
+    prepared.execution.signal.addEventListener('abort', onExecutionAbort, { once: true });
     clientSignal.addEventListener('abort', onClientAbort, { once: true });
+    if (prepared.execution.signal.aborted) {
+      onExecutionAbort();
+    }
     if (clientSignal.aborted) {
       onClientAbort();
     }
-    const totalTimer = setTimeout(
-      () => generationController.abort(new ProviderEventTimeout('total')),
-      env.LLM_TOTAL_TIMEOUT_MS,
-    );
-    totalTimer.unref();
 
     const buffer = new SentenceSegmentBuffer(
       env.AI_SEGMENT_MAX_CHARACTERS,
@@ -387,6 +450,7 @@ export class AiOrchestrationService {
     let completedReason: LLMFinishReason | null = null;
     let providerInvoked = false;
     let providerIterator: AsyncIterator<LLMProviderStreamEvent> | null = null;
+    let receivedOutputCharacters = 0;
 
     yield {
       type: 'turn.started',
@@ -474,6 +538,13 @@ export class AiOrchestrationService {
             this.logging.firstSegment(metadata, timeToFirstTokenMs);
           }
           providerDeadline = Date.now() + env.LLM_STREAM_IDLE_TIMEOUT_MS;
+          receivedOutputCharacters += Array.from(event.text).length;
+          if (
+            receivedOutputCharacters >
+            env.LLM_MAX_OUTPUT_TOKENS * MAX_OUTPUT_CHARACTERS_PER_REQUESTED_TOKEN
+          ) {
+            throw new LLMProviderFailure('malformed_stream', true, providerMetadata.requestId);
+          }
           if (useFullBuffer) {
             fullBufferedText += event.text;
             pending = iterator.next();
@@ -529,7 +600,9 @@ export class AiOrchestrationService {
       if (approvedText.length === 0) {
         throw new LLMProviderFailure('malformed_stream', true, providerMetadata.requestId);
       }
+      throwIfAborted(generationController.signal);
       const completed = await this.aiTurns.complete(turn, approvedText, new Date());
+      throwIfAborted(generationController.signal);
       this.logging.turnCompleted(metadata, {
         provider: providerMetadata.provider,
         model: providerMetadata.model,
@@ -577,6 +650,8 @@ export class AiOrchestrationService {
         } catch (sideEffectFailure) {
           sideEffectError = sideEffectFailure;
         }
+        throwIfAborted(prepared.execution.signal);
+        throwIfAborted(clientSignal);
         approvedText += error.text;
         segmentSequence += 1;
         yield {
@@ -589,6 +664,8 @@ export class AiOrchestrationService {
         }
         let completed;
         try {
+          throwIfAborted(prepared.execution.signal);
+          throwIfAborted(clientSignal);
           completed = await this.aiTurns.complete(turn, approvedText, new Date());
         } catch (persistenceError) {
           await this.finishAfterSafetyPersistenceFailure(turn);
@@ -614,7 +691,8 @@ export class AiOrchestrationService {
         riskDecision.status === 'assessed' &&
         riskDecision.level === 'HIGH' &&
         !clientCancelled &&
-        deliveredSegments === 0
+        deliveredSegments === 0 &&
+        !prepared.execution.signal.aborted
       ) {
         const fallback = this.templates.get('high-generation-fallback');
         let fallbackFailure: unknown = null;
@@ -633,6 +711,8 @@ export class AiOrchestrationService {
         } catch (sideEffectError) {
           fallbackFailure = sideEffectError;
         }
+        throwIfAborted(prepared.execution.signal);
+        throwIfAborted(clientSignal);
         yield {
           type: 'message.segment',
           data: { turnId: turn.id, sequence: 1, text: fallback.content },
@@ -642,6 +722,8 @@ export class AiOrchestrationService {
           throw fallbackFailure;
         }
         try {
+          throwIfAborted(prepared.execution.signal);
+          throwIfAborted(clientSignal);
           const completed = await this.aiTurns.complete(turn, fallback.content, new Date());
           yield {
             type: 'turn.completed',
@@ -682,7 +764,8 @@ export class AiOrchestrationService {
       }
       throw new AIProviderError();
     } finally {
-      clearTimeout(totalTimer);
+      prepared.execution.dispose();
+      prepared.execution.signal.removeEventListener('abort', onExecutionAbort);
       clientSignal.removeEventListener('abort', onClientAbort);
       if (!generationController.signal.aborted) {
         generationController.abort(new Error('stream_cleanup'));
@@ -718,6 +801,7 @@ export class AiOrchestrationService {
       },
       signal,
     );
+    throwIfAborted(signal);
     if (result.status === 'replacement') {
       throw new OutputSafetyReplacement(result.text, result.cause);
     }

@@ -8,6 +8,7 @@ import {
 } from './safety-reviewer-authorizer';
 import {
   HumanReviewQueueRepository,
+  type HumanReviewContext,
   type HumanReviewQueueRecord,
 } from './human-review-queue.repository';
 
@@ -29,10 +30,15 @@ export class HumanReviewQueueService {
   async get(
     principal: ReviewerPrincipal,
     riskEventId: string,
-  ): Promise<HumanReviewQueueRecord | null> {
+    now = new Date(),
+  ): Promise<HumanReviewContext | null> {
     await this.authorizer.authorize(principal, 'risk_event:read');
     try {
-      return await this.repository.findByRiskEventId(riskEventId);
+      return await this.repository.findContextByRiskEventIdForReviewer(
+        riskEventId,
+        principal.id,
+        now,
+      );
     } catch {
       throw new DatabaseError();
     }
