@@ -43,6 +43,7 @@ import {
   type PreGenerationSafetyGate,
 } from '../src/ai/safety/safety-gates';
 import { AiTurnService } from '../src/ai/turns/ai-turn.service';
+import { ConsentExecutionCoordinator } from '../src/consents/runtime/consent-execution.coordinator';
 import { AppModule } from '../src/app.module';
 import { hashSessionToken } from '../src/auth/sessions.service';
 import { AuthorizationError, DatabaseError } from '../src/common/errors';
@@ -266,6 +267,7 @@ describe('Phase 4 AI safety integration', () => {
   let orchestration: AiOrchestrationService;
   let quota: QuotaService;
   let incognito: IncognitoGenerationAdmissionService;
+  let consentExecutions: ConsentExecutionCoordinator;
   let incognitoStore: InMemoryIncognitoContextStore;
   let riskEventService: RiskEventService;
   let reviewQueue: HumanReviewQueueService;
@@ -309,6 +311,7 @@ describe('Phase 4 AI safety integration', () => {
     orchestration = moduleRef.get(AiOrchestrationService);
     quota = moduleRef.get(QuotaService);
     incognito = moduleRef.get(IncognitoGenerationAdmissionService);
+    consentExecutions = moduleRef.get(ConsentExecutionCoordinator);
     incognitoStore = moduleRef.get(InMemoryIncognitoContextStore);
     riskEventService = moduleRef.get(RiskEventService);
     reviewQueue = moduleRef.get(HumanReviewQueueService);
@@ -1033,27 +1036,40 @@ describe('Phase 4 AI safety integration', () => {
   it('deduplicates 20 concurrent Incognito CRITICAL events without persisting content', async () => {
     const userId = await createUser();
     const sessionId = randomUUID();
-    const runtimeContext = incognitoStore.create(
+    const runtimeContext = await consentExecutions.createIncognitoContext({
       userId,
       sessionId,
-      new Date(NOW.getTime() + 60_000),
-      NOW,
-    );
+      sessionExpiresAt: new Date(Date.now() + 60_000),
+      signal: new AbortController().signal,
+      deadlineAt: new Date(Date.now() + 30_000),
+      now: NOW,
+    });
     const clientRequestId = randomUUID();
     riskClassifier.reset('CRITICAL');
 
     const results = await Promise.allSettled(
-      Array.from({ length: 20 }, () =>
-        incognito.claim({
+      Array.from({ length: 20 }, async () => {
+        const pending = consentExecutions.registerPending({
           userId,
           sessionId,
-          contextId: runtimeContext.id,
-          clientRequestId,
-          message: '合成的紧急风险测试表达。',
-          signal: new AbortController().signal,
-          now: NOW,
-        }),
-      ),
+          clientSignal: new AbortController().signal,
+        });
+        const execution = await consentExecutions.bindRequired(pending);
+        try {
+          return await incognito.claim({
+            userId,
+            sessionId,
+            contextId: runtimeContext.id,
+            clientRequestId,
+            message: '合成的紧急风险测试表达。',
+            signal: execution.signal,
+            execution,
+            now: NOW,
+          });
+        } finally {
+          execution.dispose();
+        }
+      }),
     );
     const fulfilled = results.filter(
       (result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof incognito.claim>>> =>

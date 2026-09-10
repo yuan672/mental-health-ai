@@ -17,7 +17,12 @@ export type LLMChatRequest = Readonly<{
 
 export type LLMCallOptions = Readonly<{
   signal: AbortSignal;
+  startTransport: <T>(
+    startTransport: (signal: AbortSignal) => T,
+  ) => Promise<{ readonly transport: T }>;
 }>;
+
+export type LLMHealthCheckOptions = Readonly<{ signal: AbortSignal }>;
 
 export type LLMFinishReason = 'stop' | 'length' | 'content_filter' | 'tool_call' | 'unknown';
 
@@ -129,5 +134,5 @@ export interface LLMProvider {
     options: LLMCallOptions,
   ): Promise<LLMRiskClassificationCandidate>;
   embed(request: LLMEmbeddingRequest, options: LLMCallOptions): Promise<LLMEmbeddingResult>;
-  healthCheck(options: LLMCallOptions): Promise<LLMHealthStatus>;
+  healthCheck(options: LLMHealthCheckOptions): Promise<LLMHealthStatus>;
 }

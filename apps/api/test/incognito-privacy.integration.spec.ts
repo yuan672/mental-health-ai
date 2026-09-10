@@ -42,6 +42,7 @@ import { hashSessionToken } from '../src/auth/sessions.service';
 import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
 import { env } from '../src/config/env';
 import { ConsentsService } from '../src/consents/consents.service';
+import { ConsentExecutionCoordinator } from '../src/consents/runtime/consent-execution.coordinator';
 import { DatabaseService } from '../src/database/database.service';
 import { QuotaService } from '../src/quota/quota.service';
 import {
@@ -236,6 +237,7 @@ describe('Phase 5C Incognito and privacy API integration', () => {
   let orchestration: AiOrchestrationService;
   let contexts: InMemoryIncognitoContextStore;
   let consentsService: ConsentsService;
+  let consentExecutions: ConsentExecutionCoordinator;
   let quota: QuotaService;
   const provider = new ControlledGenerationProvider();
   const riskClassifier = new ControlledRiskClassifier();
@@ -274,6 +276,7 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     orchestration = moduleRef.get(AiOrchestrationService);
     contexts = moduleRef.get(InMemoryIncognitoContextStore);
     consentsService = moduleRef.get(ConsentsService);
+    consentExecutions = moduleRef.get(ConsentExecutionCoordinator);
     quota = moduleRef.get(QuotaService);
   }, 60_000);
 
@@ -601,12 +604,14 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     const auth = await createAuth();
     const beforeMidnight = new Date('2026-09-09T15:59:59.999Z');
     const afterMidnight = new Date('2026-09-09T16:00:00.000Z');
-    const context = contexts.create(
-      auth.userId,
-      auth.sessionId,
-      new Date('2026-09-10T16:00:00.000Z'),
-      beforeMidnight,
-    );
+    const context = await consentExecutions.createIncognitoContext({
+      userId: auth.userId,
+      sessionId: auth.sessionId,
+      sessionExpiresAt: new Date('2026-09-10T16:00:00.000Z'),
+      signal: new AbortController().signal,
+      deadlineAt: new Date(Date.now() + 30_000),
+      now: beforeMidnight,
+    });
     const clientRequestId = randomUUID();
     const key = deriveIncognitoQuotaIdempotencyKey(auth.userId, auth.sessionId, clientRequestId);
     await quota.consumeQuota(auth.userId, key, beforeMidnight);
@@ -675,12 +680,14 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     provider.reset('wait-for-release');
     const auth = await createAuth();
     const now = new Date();
-    const context = contexts.create(
-      auth.userId,
-      auth.sessionId,
-      new Date(now.getTime() + 100),
+    const context = await consentExecutions.createIncognitoContext({
+      userId: auth.userId,
+      sessionId: auth.sessionId,
+      sessionExpiresAt: new Date(now.getTime() + 100),
+      signal: new AbortController().signal,
+      deadlineAt: new Date(Date.now() + 30_000),
       now,
-    );
+    });
     const prepared = await orchestration.prepareIncognitoTurn(
       { userId: auth.userId, sessionId: auth.sessionId },
       {

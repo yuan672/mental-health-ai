@@ -7,7 +7,7 @@ import {
   QuotaExceededError,
 } from '../../common/errors';
 import { env } from '../../config/env';
-import { ConsentsService } from '../../consents/consents.service';
+import { ConsentExecutionCoordinator } from '../../consents/runtime/consent-execution.coordinator';
 import { QuotaService } from '../../quota/quota.service';
 import {
   CrisisFlowService,
@@ -17,6 +17,7 @@ import { RiskEventService } from '../../safety/persistence/risk-event.service';
 import type { RiskDecision } from '../../safety/safety.types';
 import { TrustedSafetyTemplateRegistry } from '../../safety/templates/trusted-safety-template.registry';
 import { PRE_GENERATION_SAFETY_GATE, type PreGenerationSafetyGate } from '../safety/safety-gates';
+import type { ConsentBoundExecution } from '../runtime/active-ai-execution.registry';
 import {
   deriveIncognitoQuotaIdempotencyKey,
   INCOGNITO_CONTEXT_STORE,
@@ -47,7 +48,7 @@ export type IncognitoGenerationAdmission =
 @Injectable()
 export class IncognitoGenerationAdmissionService {
   constructor(
-    private readonly consents: ConsentsService,
+    private readonly consentExecutions: ConsentExecutionCoordinator,
     @Inject(INCOGNITO_CONTEXT_STORE)
     private readonly contexts: IncognitoContextStore,
     private readonly crisisFlow: CrisisFlowService,
@@ -65,6 +66,7 @@ export class IncognitoGenerationAdmissionService {
     clientRequestId: string;
     message: string;
     signal: AbortSignal;
+    execution: ConsentBoundExecution;
     now?: Date;
   }): Promise<IncognitoGenerationAdmission> {
     const now = input.now ?? new Date();
@@ -95,7 +97,7 @@ export class IncognitoGenerationAdmissionService {
     if (!generation) throw new AIIncognitoContextLostError();
 
     try {
-      await this.consents.ensureRequiredConsentsActive(input.userId);
+      await this.consentExecutions.assertStillUsable(input.execution);
       if (generation.signal.aborted) throw generation.signal.reason;
 
       const quotaIdempotencyKey = deriveIncognitoQuotaIdempotencyKey(
@@ -108,6 +110,7 @@ export class IncognitoGenerationAdmissionService {
       }
       const context = this.contexts.get(input.userId, input.sessionId, input.contextId, now);
       if (!context) throw new AIIncognitoContextLostError();
+      await this.consentExecutions.assertIncognitoDependencies(input.execution, context);
       if (generation.signal.aborted) throw generation.signal.reason;
 
       const quotaAvailable = await this.quota.canUseAI(input.userId, now);
@@ -124,6 +127,7 @@ export class IncognitoGenerationAdmissionService {
           now,
         },
         generation.signal,
+        input.execution,
       );
 
       const trusted = await this.resolveTrustedResponse(

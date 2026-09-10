@@ -21,6 +21,7 @@ import request from 'supertest';
 import { AiOrchestrationService } from '../src/ai/ai-orchestration.service';
 import { ConversationContextService } from '../src/ai/context/conversation-context.service';
 import { IncognitoGenerationAdmissionService } from '../src/ai/incognito/incognito-generation-admission.service';
+import { ConsentExecutionCoordinator } from '../src/consents/runtime/consent-execution.coordinator';
 import {
   deriveIncognitoQuotaIdempotencyKey,
   InMemoryIncognitoContextStore,
@@ -235,6 +236,7 @@ describe('Phase 3 AI foundation integration', () => {
   let turnsService: AiTurnService;
   let incognitoStore: InMemoryIncognitoContextStore;
   let incognitoAdmission: IncognitoGenerationAdmissionService;
+  let consentExecutions: ConsentExecutionCoordinator;
   const provider = new FakeStreamingProvider();
   const postGate = new RecordingPostGenerationGate();
   const preGate = new AllowingPreGenerationGate();
@@ -278,6 +280,7 @@ describe('Phase 3 AI foundation integration', () => {
     turnsService = moduleRef.get(AiTurnService);
     incognitoStore = moduleRef.get(InMemoryIncognitoContextStore);
     incognitoAdmission = moduleRef.get(IncognitoGenerationAdmissionService);
+    consentExecutions = moduleRef.get(ConsentExecutionCoordinator);
   }, 60_000);
 
   beforeEach(() => {
@@ -1029,6 +1032,12 @@ describe('Phase 3 AI foundation integration', () => {
     await quotaService.consumeQuota(userId, quotaIdempotencyKey, BASE_NOW);
     expect(incognitoStore.end(userId, sessionId, context.id)).toBe(true);
 
+    const pendingExecution = consentExecutions.registerPending({
+      userId,
+      sessionId,
+      clientSignal: new AbortController().signal,
+    });
+    const execution = await consentExecutions.bindRequired(pendingExecution);
     await expect(
       incognitoAdmission.claim({
         userId,
@@ -1037,9 +1046,11 @@ describe('Phase 3 AI foundation integration', () => {
         clientRequestId,
         message: 'must-not-reach-provider-after-context-loss',
         signal: new AbortController().signal,
+        execution,
         now: BASE_NOW,
       }),
     ).rejects.toMatchObject({ code: 'AI_INCOGNITO_CONTEXT_LOST', statusCode: 409 });
+    execution.dispose();
 
     expect(provider.streamCalls).toBe(0);
     expect(await quotaService.getUsage(userId, BASE_NOW)).toMatchObject({ usedCount: 1 });

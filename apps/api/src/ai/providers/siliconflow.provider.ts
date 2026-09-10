@@ -9,6 +9,7 @@ import {
   type LLMEmbeddingResult,
   type LLMFinishReason,
   type LLMHealthStatus,
+  type LLMHealthCheckOptions,
   type LLMProvider,
   type LLMProviderMetadata,
   type LLMProviderStreamEvent,
@@ -155,7 +156,7 @@ export class SiliconFlowProvider implements LLMProvider {
   ) {}
 
   async chat(request: LLMChatRequest, options: LLMCallOptions): Promise<LLMChatResult> {
-    const response = await this.fetchCompletion(request, options.signal, false);
+    const response = await this.fetchCompletion(request, options, false);
     let parsed: z.infer<typeof chatResponseSchema>;
     try {
       parsed = chatResponseSchema.parse(await response.json());
@@ -184,7 +185,7 @@ export class SiliconFlowProvider implements LLMProvider {
     request: LLMChatRequest,
     options: LLMCallOptions,
   ): AsyncIterable<LLMProviderStreamEvent> {
-    const response = await this.fetchCompletion(request, options.signal, true);
+    const response = await this.fetchCompletion(request, options, true);
     if (!response.body) {
       throw new LLMProviderFailure(
         'malformed_stream',
@@ -280,7 +281,7 @@ export class SiliconFlowProvider implements LLMProvider {
         temperature: 0,
         responseFormat: 'json',
       },
-      options.signal,
+      options,
       false,
     );
     let parsed: z.infer<typeof chatResponseSchema>;
@@ -309,7 +310,7 @@ export class SiliconFlowProvider implements LLMProvider {
     return Promise.reject(new LLMUnsupportedCapabilityError('embed'));
   }
 
-  async healthCheck(options: LLMCallOptions): Promise<LLMHealthStatus> {
+  async healthCheck(options: LLMHealthCheckOptions): Promise<LLMHealthStatus> {
     const startedAt = Date.now();
     try {
       const response = await this.fetcher(new URL('models', this.normalizedBaseUrl()), {
@@ -337,32 +338,50 @@ export class SiliconFlowProvider implements LLMProvider {
 
   private async fetchCompletion(
     request: LLMChatRequest,
-    signal: AbortSignal,
+    options: LLMCallOptions,
     stream: boolean,
   ): Promise<Response> {
+    const guarded = await options.startTransport((signal) => {
+      try {
+        return this.fetcher(new URL('chat/completions', this.normalizedBaseUrl()), {
+          method: 'POST',
+          headers: {
+            Accept: stream ? 'text/event-stream' : 'application/json',
+            Authorization: `Bearer ${this.config.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: this.config.model,
+            messages: request.messages,
+            max_tokens: request.maxOutputTokens,
+            stream,
+            ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
+            ...(request.responseFormat === 'json'
+              ? { response_format: { type: 'json_object' } }
+              : {}),
+          }),
+          signal,
+        });
+      } catch {
+        return Promise.reject(
+          new LLMProviderFailure(
+            options.signal.aborted ? 'aborted' : 'network',
+            !options.signal.aborted,
+          ),
+        );
+      }
+    });
+    const responsePromise = guarded.transport;
+
     let response: Response;
     try {
-      response = await this.fetcher(new URL('chat/completions', this.normalizedBaseUrl()), {
-        method: 'POST',
-        headers: {
-          Accept: stream ? 'text/event-stream' : 'application/json',
-          Authorization: `Bearer ${this.config.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: this.config.model,
-          messages: request.messages,
-          max_tokens: request.maxOutputTokens,
-          stream,
-          ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
-          ...(request.responseFormat === 'json'
-            ? { response_format: { type: 'json_object' } }
-            : {}),
-        }),
-        signal,
-      });
-    } catch {
-      throw new LLMProviderFailure(signal.aborted ? 'aborted' : 'network', !signal.aborted);
+      response = await responsePromise;
+    } catch (error) {
+      if (error instanceof LLMProviderFailure) throw error;
+      throw new LLMProviderFailure(
+        options.signal.aborted ? 'aborted' : 'network',
+        !options.signal.aborted,
+      );
     }
 
     if (!response.ok) {

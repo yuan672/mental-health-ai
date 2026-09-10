@@ -8,6 +8,7 @@ import {
   type RiskClassifier,
 } from './risk-classifier';
 import { RiskDecisionPolicy } from './risk-decision.policy';
+import type { ConsentBoundExecution } from '../../ai/runtime/active-ai-execution.registry';
 
 @Injectable()
 export class RiskDetectionService {
@@ -25,13 +26,14 @@ export class RiskDetectionService {
     turnId: string,
     context: SafetyAssessmentContext,
     signal: AbortSignal,
+    execution: ConsentBoundExecution,
   ): Promise<RiskDecision> {
     if (signal.aborted) throw signal.reason;
     const startedAt = Date.now();
     const deterministicSignals = this.deterministic.detect(context);
     const classifierStartedAt = Date.now();
     try {
-      const candidate = await this.classifier.classify(turnId, context, signal);
+      const candidate = await this.classifier.classify(turnId, context, signal, execution);
       if (signal.aborted) throw signal.reason;
       const classifierDuration = Date.now() - classifierStartedAt;
       const decision = this.policy.decide(deterministicSignals, candidate);

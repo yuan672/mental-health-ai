@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Injectable, type OnModuleDestroy } from '@nestjs/common';
 import { env } from '../../config/env';
+import type { ConsentDependency } from '../../consents/runtime/consent-execution.types';
 
 export const INCOGNITO_CONTEXT_STORE = Symbol('INCOGNITO_CONTEXT_STORE');
 
@@ -28,6 +29,7 @@ export type IncognitoContext = Readonly<{
   userId: string;
   sessionId: string;
   messages: readonly IncognitoContextMessage[];
+  consentDependencies: readonly ConsentDependency[];
   expiresAt: Date;
 }>;
 
@@ -69,7 +71,12 @@ export class IncognitoSessionExpiredError extends Error {
 }
 
 export type IncognitoContextTerminationReason =
-  'expired' | 'ended' | 'session_cleared' | 'user_cleared' | 'module_destroyed';
+  | 'expired'
+  | 'ended'
+  | 'session_cleared'
+  | 'user_cleared'
+  | 'consent_withdrawn'
+  | 'module_destroyed';
 
 export class IncognitoContextTerminatedError extends Error {
   constructor(public readonly reason: IncognitoContextTerminationReason) {
@@ -87,6 +94,13 @@ export type IncognitoGenerationClaim = Readonly<{
 
 export interface IncognitoContextStore {
   create(userId: string, sessionId: string, sessionExpiresAt: Date, now?: Date): IncognitoContext;
+  create(
+    userId: string,
+    sessionId: string,
+    sessionExpiresAt: Date,
+    consentDependencies: readonly ConsentDependency[],
+    now?: Date,
+  ): IncognitoContext;
   get(userId: string, sessionId: string, contextId: string, now?: Date): IncognitoContext | null;
   claimGeneration(
     userId: string,
@@ -113,6 +127,8 @@ export interface IncognitoContextStore {
   end(userId: string, sessionId: string, contextId: string): boolean;
   clearSession(userId: string, sessionId: string): number;
   clearUser(userId: string): number;
+  clearDependency(userId: string, acceptanceDecisionId: string): number;
+  hasDependency(acceptanceDecisionId: string): boolean;
   purgeExpired(now?: Date): number;
 }
 
@@ -130,6 +146,7 @@ type MutableContext = {
   sessionId: string;
   sessionExpiresAt: Date;
   messages: IncognitoContextMessage[];
+  consentDependencies: ConsentDependency[];
   characterCount: number;
   usedClientRequestIds: Set<string>;
   expiresAt: Date;
@@ -149,12 +166,24 @@ export class InMemoryIncognitoContextStore implements IncognitoContextStore, OnM
     this.cleanupTimer.unref();
   }
 
+  create(userId: string, sessionId: string, sessionExpiresAt: Date, now?: Date): IncognitoContext;
   create(
     userId: string,
     sessionId: string,
     sessionExpiresAt: Date,
-    now = new Date(),
+    consentDependencies: readonly ConsentDependency[],
+    now?: Date,
+  ): IncognitoContext;
+  create(
+    userId: string,
+    sessionId: string,
+    sessionExpiresAt: Date,
+    dependenciesOrNow: readonly ConsentDependency[] | Date = [],
+    explicitNow?: Date,
   ): IncognitoContext {
+    const dependencies: readonly ConsentDependency[] =
+      dependenciesOrNow instanceof Date ? [] : dependenciesOrNow;
+    const now = dependenciesOrNow instanceof Date ? dependenciesOrNow : (explicitNow ?? new Date());
     if (sessionExpiresAt.getTime() <= now.getTime()) {
       throw new IncognitoSessionExpiredError();
     }
@@ -168,6 +197,7 @@ export class InMemoryIncognitoContextStore implements IncognitoContextStore, OnM
       sessionId,
       sessionExpiresAt: new Date(sessionExpiresAt),
       messages: [],
+      consentDependencies: dependencies.map((dependency) => ({ ...dependency })),
       characterCount: 0,
       usedClientRequestIds: new Set(),
       expiresAt: this.nextExpiry(now, sessionExpiresAt),
@@ -290,6 +320,25 @@ export class InMemoryIncognitoContextStore implements IncognitoContextStore, OnM
     return this.clearMatching((context) => context.userId === userId, 'user_cleared');
   }
 
+  clearDependency(userId: string, acceptanceDecisionId: string): number {
+    return this.clearMatching(
+      (context) =>
+        context.userId === userId &&
+        context.consentDependencies.some(
+          (dependency) => dependency.acceptanceDecisionId === acceptanceDecisionId,
+        ),
+      'consent_withdrawn',
+    );
+  }
+
+  hasDependency(acceptanceDecisionId: string): boolean {
+    return [...this.contexts.values()].some((context) =>
+      context.consentDependencies.some(
+        (dependency) => dependency.acceptanceDecisionId === acceptanceDecisionId,
+      ),
+    );
+  }
+
   purgeExpired(now = new Date()): number {
     let removed = 0;
     for (const [contextId, context] of this.contexts) {
@@ -361,6 +410,7 @@ export class InMemoryIncognitoContextStore implements IncognitoContextStore, OnM
       active.controller.abort(new IncognitoContextTerminatedError(reason));
     }
     context.messages.length = 0;
+    context.consentDependencies.length = 0;
     context.characterCount = 0;
     context.usedClientRequestIds.clear();
     return true;
@@ -399,6 +449,7 @@ export class InMemoryIncognitoContextStore implements IncognitoContextStore, OnM
       userId: context.userId,
       sessionId: context.sessionId,
       messages: context.messages.map((message) => ({ ...message })),
+      consentDependencies: context.consentDependencies.map((dependency) => ({ ...dependency })),
       expiresAt: new Date(context.expiresAt),
     };
   }

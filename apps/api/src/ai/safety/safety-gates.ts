@@ -7,6 +7,7 @@ import { RiskDetectionService } from '../../safety/risk/risk-detection.service';
 import type { RiskDecision, SafetyTarget } from '../../safety/safety.types';
 import { TrustedSafetyTemplateRegistry } from '../../safety/templates/trusted-safety-template.registry';
 import { SafetyProductionReadinessService } from '../../safety/readiness/safety-production-readiness.service';
+import type { ConsentBoundExecution } from '../runtime/active-ai-execution.registry';
 
 export const PRE_GENERATION_SAFETY_GATE = Symbol('PRE_GENERATION_SAFETY_GATE');
 export const POST_GENERATION_SAFETY_GATE = Symbol('POST_GENERATION_SAFETY_GATE');
@@ -39,7 +40,11 @@ export type PostGenerationSafetyResult =
 export interface PreGenerationSafetyGate {
   readonly productionSafe: boolean;
   readonly implementation?: 'pass-through' | 'real';
-  check(input: PreGenerationSafetyInput, signal: AbortSignal): Promise<RiskDecision>;
+  check(
+    input: PreGenerationSafetyInput,
+    signal: AbortSignal,
+    execution: ConsentBoundExecution,
+  ): Promise<RiskDecision>;
 }
 
 export interface PostGenerationSafetyGate {
@@ -48,6 +53,7 @@ export interface PostGenerationSafetyGate {
   approve(
     input: PostGenerationSafetyInput,
     signal: AbortSignal,
+    execution: ConsentBoundExecution,
   ): Promise<PostGenerationSafetyResult>;
 }
 
@@ -72,7 +78,14 @@ export class PassThroughPreGenerationSafetyGate implements PreGenerationSafetyGa
   readonly productionSafe = false;
   readonly implementation = 'pass-through' as const;
 
-  async check(): Promise<RiskDecision> {
+  async check(
+    input: PreGenerationSafetyInput,
+    signal: AbortSignal,
+    execution: ConsentBoundExecution,
+  ): Promise<RiskDecision> {
+    void input;
+    void signal;
+    void execution;
     return {
       status: 'assessed',
       level: 'LOW',
@@ -95,7 +108,13 @@ export class PassThroughPostGenerationSafetyGate implements PostGenerationSafety
   readonly productionSafe = false;
   readonly implementation = 'pass-through' as const;
 
-  async approve(input: PostGenerationSafetyInput): Promise<PostGenerationSafetyResult> {
+  async approve(
+    input: PostGenerationSafetyInput,
+    signal: AbortSignal,
+    execution: ConsentBoundExecution,
+  ): Promise<PostGenerationSafetyResult> {
+    void signal;
+    void execution;
     return { status: 'approved', text: input.candidateSegment };
   }
 }
@@ -110,7 +129,11 @@ export class RealPreGenerationSafetyGate implements PreGenerationSafetyGate {
     private readonly riskDetection: RiskDetectionService,
   ) {}
 
-  async check(input: PreGenerationSafetyInput, signal: AbortSignal): Promise<RiskDecision> {
+  async check(
+    input: PreGenerationSafetyInput,
+    signal: AbortSignal,
+    execution: ConsentBoundExecution,
+  ): Promise<RiskDecision> {
     if (signal.aborted) throw signal.reason;
     const context = await this.contextBuilder.build(
       input.userId,
@@ -119,7 +142,7 @@ export class RealPreGenerationSafetyGate implements PreGenerationSafetyGate {
       input.now,
     );
     if (signal.aborted) throw signal.reason;
-    return this.riskDetection.assess(input.turnId, context, signal);
+    return this.riskDetection.assess(input.turnId, context, signal, execution);
   }
 }
 
@@ -137,6 +160,7 @@ export class RealPostGenerationSafetyGate implements PostGenerationSafetyGate {
   async approve(
     input: PostGenerationSafetyInput,
     signal: AbortSignal,
+    execution: ConsentBoundExecution,
   ): Promise<PostGenerationSafetyResult> {
     if (signal.aborted) throw signal.reason;
     const startedAt = Date.now();
@@ -148,6 +172,7 @@ export class RealPostGenerationSafetyGate implements PostGenerationSafetyGate {
           input.riskDecision.status === 'assessed' ? input.riskDecision.level : 'HIGH',
       },
       signal,
+      execution,
     );
     if (decision.status === 'approved') {
       return { status: 'approved', text: input.candidateSegment };

@@ -6,6 +6,7 @@ import {
   OutputSafetyClassifierUnavailableError,
   type OutputSafetyClassifier,
 } from './output-safety-classifier';
+import type { ConsentBoundExecution } from '../../ai/runtime/active-ai-execution.registry';
 
 export type OutputSafetyDecision =
   | Readonly<{ status: 'approved' }>
@@ -33,6 +34,7 @@ export class OutputSafetyCheck {
       inputRiskLevel: RiskLevel;
     }>,
     signal: AbortSignal,
+    execution: ConsentBoundExecution,
   ): Promise<OutputSafetyDecision> {
     if (signal.aborted) throw signal.reason;
     const deterministicCodes = this.deterministic.detect(
@@ -44,7 +46,7 @@ export class OutputSafetyCheck {
     }
 
     try {
-      const result = await this.classifier.classify(input, signal);
+      const result = await this.classifier.classify(input, signal, execution);
       if (signal.aborted) throw signal.reason;
       return result.decision === 'ALLOW'
         ? { status: 'approved' }
