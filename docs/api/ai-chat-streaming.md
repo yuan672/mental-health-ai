@@ -56,8 +56,12 @@ prompt version are not part of the public event schema. Errors before streaming
 starts use the standard JSON API error contract.
 
 The client cancels through `AbortController`. Phase 3 does not automatically retry
-a generation or reconnect an SSE stream. A retry for the same logical turn must
-reuse its `clientRequestId`.
+a generation or reconnect an SSE stream. For persistent chat, a network-uncertain
+reconciliation attempt reuses its `clientRequestId` to retrieve the existing turn
+state without starting another generation. An Incognito `clientRequestId` is
+single-use within its live context: reuse is rejected, and an ended, expired, or
+lost context cannot be recovered or restarted with that identifier. A deliberate
+new attempt after a definite failure uses a new `clientRequestId`.
 
 ## Incognito context lifecycle
 
