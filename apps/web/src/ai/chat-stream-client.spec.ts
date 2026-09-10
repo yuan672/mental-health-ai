@@ -24,8 +24,8 @@ describe('AI fetch stream client', () => {
 
   it('parses SSE frames split across network chunks', async () => {
     const source = [
-      `event: turn.started\ndata: {"turnId":"${TURN_ID}",`,
-      `"conversationId":"${CONVERSATION_ID}"}\n\nevent: message.segment\ndata: {"turnId":"${TURN_ID}","sequence":1,"text":"你好。"}\n\n`,
+      `event: turn.started\ndata: {"mode":"persistent","turnId":"${TURN_ID}",`,
+      `"conversationId":"${CONVERSATION_ID}"}\n\nevent: message.segment\ndata: {"mode":"persistent","turnId":"${TURN_ID}","sequence":1,"text":"你好。"}\n\n`,
     ];
 
     const events = [];
@@ -36,13 +36,97 @@ describe('AI fetch stream client', () => {
     expect(events).toEqual([
       {
         type: 'turn.started',
-        data: { turnId: TURN_ID, conversationId: CONVERSATION_ID },
+        data: { mode: 'persistent', turnId: TURN_ID, conversationId: CONVERSATION_ID },
       },
       {
         type: 'message.segment',
-        data: { turnId: TURN_ID, sequence: 1, text: '你好。' },
+        data: { mode: 'persistent', turnId: TURN_ID, sequence: 1, text: '你好。' },
       },
     ]);
+  });
+
+  it('parses strict Incognito events without fabricated persistent identifiers', async () => {
+    const generationId = '44444444-4444-4444-8444-444444444444';
+    const events = [];
+    for await (const event of parseAiEventStream(
+      chunkedStream([
+        `event: turn.started\ndata: {"mode":"incognito","generationId":"${generationId}"}\n\n`,
+        `event: message.segment\ndata: {"mode":"incognito","generationId":"${generationId}","sequence":1,"text":"临时回复。"}\n\n`,
+        `event: turn.completed\ndata: {"mode":"incognito","generationId":"${generationId}","finishReason":"stop"}\n\n`,
+      ]),
+    )) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(3);
+    expect(JSON.stringify(events)).not.toMatch(/conversationId|assistantMessageId/u);
+  });
+
+  it('rejects a response mode that does not match the Incognito request', async () => {
+    document.cookie = 'mh_csrf=csrf-test-token; Path=/';
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(
+          `event: turn.started\ndata: {"mode":"persistent","turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\n`,
+          { headers: { 'content-type': 'text/event-stream' } },
+        ),
+      );
+    const result = await startAiChatStream(
+      {
+        mode: 'incognito',
+        clientRequestId: TURN_ID,
+        contextId: CONVERSATION_ID,
+        message: 'synthetic-test',
+      },
+      new AbortController().signal,
+      fetcher,
+    );
+    expect(result.kind).toBe('stream');
+    if (result.kind !== 'stream') throw new Error('Expected stream response');
+    const events = result.events[Symbol.asyncIterator]();
+    await expect(events.next()).rejects.toMatchObject({
+      code: 'INVALID_STREAM_RESPONSE',
+      status: 502,
+    });
+  });
+
+  it('rejects a stream that closes without a terminal event', async () => {
+    document.cookie = 'mh_csrf=csrf-test-token; Path=/';
+    const generationId = '44444444-4444-4444-8444-444444444444';
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(
+          [
+            `event: turn.started\ndata: {"mode":"incognito","generationId":"${generationId}"}\n\n`,
+            `event: message.segment\ndata: {"mode":"incognito","generationId":"${generationId}","sequence":1,"text":"已审核片段。"}\n\n`,
+          ].join(''),
+          { headers: { 'content-type': 'text/event-stream' } },
+        ),
+      );
+    const result = await startAiChatStream(
+      {
+        mode: 'incognito',
+        clientRequestId: TURN_ID,
+        contextId: CONVERSATION_ID,
+        message: 'synthetic-test',
+      },
+      new AbortController().signal,
+      fetcher,
+    );
+    if (result.kind !== 'stream') throw new Error('Expected stream response');
+
+    const consume = async () => {
+      for await (const event of result.events) {
+        // Consume the complete response to verify a clean EOF is not treated as completion.
+        void event;
+      }
+    };
+    await expect(consume()).rejects.toMatchObject({
+      code: 'INVALID_STREAM_RESPONSE',
+      status: 502,
+    });
   });
 
   it('uses POST, cookies, CSRF, body, and AbortSignal without EventSource', async () => {
@@ -52,13 +136,18 @@ describe('AI fetch stream client', () => {
       .fn<typeof fetch>()
       .mockResolvedValue(
         new Response(
-          `event: turn.started\ndata: {"turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\n`,
+          `event: turn.started\ndata: {"mode":"persistent","turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\n`,
           { headers: { 'content-type': 'text/event-stream' } },
         ),
       );
 
     const result = await startAiChatStream(
-      { clientRequestId: TURN_ID, conversationId: CONVERSATION_ID, message: 'synthetic-test' },
+      {
+        mode: 'persistent',
+        clientRequestId: TURN_ID,
+        conversationId: CONVERSATION_ID,
+        message: 'synthetic-test',
+      },
       signal,
       fetcher,
     );
@@ -74,6 +163,7 @@ describe('AI fetch stream client', () => {
       }),
     );
     expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
+      mode: 'persistent',
       clientRequestId: TURN_ID,
       conversationId: CONVERSATION_ID,
       message: 'synthetic-test',
@@ -101,7 +191,7 @@ describe('AI fetch stream client', () => {
 
     await expect(
       startAiChatStream(
-        { clientRequestId: TURN_ID, message: 'synthetic-test' },
+        { mode: 'persistent', clientRequestId: TURN_ID, message: 'synthetic-test' },
         new AbortController().signal,
         fetcher,
       ),
@@ -131,7 +221,7 @@ describe('AI fetch stream client', () => {
 
     await expect(
       startAiChatStream(
-        { clientRequestId: TURN_ID, message: 'synthetic-test' },
+        { mode: 'persistent', clientRequestId: TURN_ID, message: 'synthetic-test' },
         new AbortController().signal,
         fetcher,
       ),

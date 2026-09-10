@@ -2,8 +2,10 @@ import type { AiPublicFinishReason, AiStreamEvent } from '@mental-health/types';
 
 export type ChatStreamState = Readonly<{
   status: 'idle' | 'submitting' | 'streaming' | 'completed' | 'failed' | 'cancelled';
-  persistence: 'uncommitted' | 'committed' | 'persistence-failed';
+  persistence: 'uncommitted' | 'committed' | 'ephemeral' | 'persistence-failed';
+  mode: 'persistent' | 'incognito' | null;
   turnId: string | null;
+  generationId: string | null;
   conversationId: string | null;
   assistantMessageId: string | null;
   text: string;
@@ -15,7 +17,9 @@ export type ChatStreamState = Readonly<{
 export const initialChatStreamState: ChatStreamState = {
   status: 'idle',
   persistence: 'uncommitted',
+  mode: null,
   turnId: null,
+  generationId: null,
   conversationId: null,
   assistantMessageId: null,
   text: '',
@@ -26,6 +30,14 @@ export const initialChatStreamState: ChatStreamState = {
 
 export function beginChatStream(): ChatStreamState {
   return { ...initialChatStreamState, status: 'submitting' };
+}
+
+function eventOperationId(event: AiStreamEvent): string {
+  return event.data.mode === 'persistent' ? event.data.turnId : event.data.generationId;
+}
+
+function stateOperationId(state: ChatStreamState): string | null {
+  return state.mode === 'incognito' ? state.generationId : state.turnId;
 }
 
 export function cancelChatStream(state: ChatStreamState): ChatStreamState {
@@ -56,17 +68,23 @@ export function reduceChatStreamEvent(
 ): ChatStreamState {
   switch (event.type) {
     case 'turn.started':
+      if (state.status !== 'submitting') {
+        throw new Error('AI stream start is duplicated or out of order');
+      }
       return {
         ...initialChatStreamState,
         status: 'streaming',
         persistence: 'uncommitted',
-        turnId: event.data.turnId,
-        conversationId: event.data.conversationId,
+        mode: event.data.mode,
+        turnId: event.data.mode === 'persistent' ? event.data.turnId : null,
+        generationId: event.data.mode === 'incognito' ? event.data.generationId : null,
+        conversationId: event.data.mode === 'persistent' ? event.data.conversationId : null,
       };
     case 'message.segment':
       if (
         state.status !== 'streaming' ||
-        state.turnId !== event.data.turnId ||
+        state.mode !== event.data.mode ||
+        stateOperationId(state) !== eventOperationId(event) ||
         event.data.sequence !== state.lastSequence + 1
       ) {
         throw new Error('AI stream segment sequence is invalid');
@@ -77,25 +95,34 @@ export function reduceChatStreamEvent(
         lastSequence: event.data.sequence,
       };
     case 'turn.completed':
-      if (state.status !== 'streaming' || state.turnId !== event.data.turnId) {
+      if (
+        state.status !== 'streaming' ||
+        state.mode !== event.data.mode ||
+        stateOperationId(state) !== eventOperationId(event)
+      ) {
         throw new Error('AI stream completion does not match the active turn');
       }
       return {
         ...state,
         status: 'completed',
-        persistence: 'committed',
-        assistantMessageId: event.data.assistantMessageId,
+        persistence: event.data.mode === 'persistent' ? 'committed' : 'ephemeral',
+        assistantMessageId: event.data.mode === 'persistent' ? event.data.assistantMessageId : null,
         finishReason: event.data.finishReason,
       };
     case 'turn.failed':
-      if (state.turnId && state.turnId !== event.data.turnId) {
+      if (
+        stateOperationId(state) &&
+        (state.mode !== event.data.mode || stateOperationId(state) !== eventOperationId(event))
+      ) {
         throw new Error('AI stream failure does not match the active turn');
       }
       return {
         ...state,
         status: 'failed',
         persistence: state.text ? 'persistence-failed' : 'uncommitted',
-        turnId: event.data.turnId,
+        mode: event.data.mode,
+        turnId: event.data.mode === 'persistent' ? event.data.turnId : null,
+        generationId: event.data.mode === 'incognito' ? event.data.generationId : null,
         error: { code: event.data.code, message: event.data.message },
       };
   }

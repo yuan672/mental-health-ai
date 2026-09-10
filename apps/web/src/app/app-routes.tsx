@@ -1,9 +1,11 @@
 import { Navigate, Route, Routes } from 'react-router';
 import { ChatPage } from '../features/chat/chat-page';
+import { IncognitoChatPage } from '../features/chat/incognito-chat-page';
 import { LandingPage } from '../routes/landing-page';
 import { LoginPage } from '../routes/login-page';
 import { NotFoundPage } from '../routes/not-found-page';
 import { RegisterPage } from '../routes/register-page';
+import { PrivacyPage } from '../routes/privacy-page';
 import { AppShell } from './app-shell';
 import { ProtectedLayout } from './protected-layout';
 
@@ -16,7 +18,9 @@ export function AppRoutes() {
       <Route element={<ProtectedLayout />}>
         <Route path="/app" element={<AppShell />}>
           <Route index element={<Navigate replace to="chat" />} />
+          <Route path="chat/incognito" element={<IncognitoChatPage />} />
           <Route path="chat/:conversationId?" element={<ChatPage />} />
+          <Route path="privacy" element={<PrivacyPage />} />
         </Route>
       </Route>
       <Route path="*" element={<NotFoundPage />} />

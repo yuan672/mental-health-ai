@@ -1,4 +1,4 @@
-import type { AiStreamEvent } from '@mental-health/types';
+import type { AiChatRequest, AiStreamEvent } from '@mental-health/types';
 import { z } from 'zod';
 import { parseApiError, readCsrfToken } from '../api/client';
 import { notifySessionInvalidated } from '../api/session-events';
@@ -7,33 +7,78 @@ import { publicEnv } from '../config/env';
 const aiStreamEventSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('turn.started'),
-    data: z.object({ turnId: z.string().uuid(), conversationId: z.string().uuid() }).strict(),
+    data: z.discriminatedUnion('mode', [
+      z
+        .object({
+          mode: z.literal('persistent'),
+          turnId: z.string().uuid(),
+          conversationId: z.string().uuid(),
+        })
+        .strict(),
+      z.object({ mode: z.literal('incognito'), generationId: z.string().uuid() }).strict(),
+    ]),
   }),
   z.object({
     type: z.literal('message.segment'),
-    data: z
-      .object({
-        turnId: z.string().uuid(),
-        sequence: z.number().int().positive(),
-        text: z.string(),
-      })
-      .strict(),
+    data: z.discriminatedUnion('mode', [
+      z
+        .object({
+          mode: z.literal('persistent'),
+          turnId: z.string().uuid(),
+          sequence: z.number().int().positive(),
+          text: z.string(),
+        })
+        .strict(),
+      z
+        .object({
+          mode: z.literal('incognito'),
+          generationId: z.string().uuid(),
+          sequence: z.number().int().positive(),
+          text: z.string(),
+        })
+        .strict(),
+    ]),
   }),
   z.object({
     type: z.literal('turn.completed'),
-    data: z
-      .object({
-        turnId: z.string().uuid(),
-        assistantMessageId: z.string().uuid(),
-        finishReason: z.enum(['stop', 'length', 'content_filter', 'tool_call', 'unknown']),
-      })
-      .strict(),
+    data: z.discriminatedUnion('mode', [
+      z
+        .object({
+          mode: z.literal('persistent'),
+          turnId: z.string().uuid(),
+          assistantMessageId: z.string().uuid(),
+          finishReason: z.enum(['stop', 'length', 'content_filter', 'tool_call', 'unknown']),
+        })
+        .strict(),
+      z
+        .object({
+          mode: z.literal('incognito'),
+          generationId: z.string().uuid(),
+          finishReason: z.enum(['stop', 'length', 'content_filter', 'tool_call', 'unknown']),
+        })
+        .strict(),
+    ]),
   }),
   z.object({
     type: z.literal('turn.failed'),
-    data: z
-      .object({ turnId: z.string().uuid(), code: z.string().min(1), message: z.string().min(1) })
-      .strict(),
+    data: z.discriminatedUnion('mode', [
+      z
+        .object({
+          mode: z.literal('persistent'),
+          turnId: z.string().uuid(),
+          code: z.string().min(1),
+          message: z.string().min(1),
+        })
+        .strict(),
+      z
+        .object({
+          mode: z.literal('incognito'),
+          generationId: z.string().uuid(),
+          code: z.string().min(1),
+          message: z.string().min(1),
+        })
+        .strict(),
+    ]),
   }),
 ]);
 
@@ -49,11 +94,7 @@ const existingTurnResponseSchema = z.object({
   }),
 });
 
-export type AiChatStreamInput = Readonly<{
-  clientRequestId: string;
-  conversationId?: string;
-  message: string;
-}>;
+export type AiChatStreamInput = Readonly<AiChatRequest>;
 
 export type ExistingAiTurn = z.infer<typeof existingTurnResponseSchema>['data']['turn'];
 
@@ -97,7 +138,7 @@ function parseFrame(frame: string): AiStreamEvent | null {
   if (!eventType || !data) {
     return null;
   }
-  return aiStreamEventSchema.parse({ type: eventType, data: JSON.parse(data) });
+  return aiStreamEventSchema.parse({ type: eventType, data: JSON.parse(data) }) as AiStreamEvent;
 }
 
 export async function* parseAiEventStream(
@@ -129,6 +170,26 @@ export async function* parseAiEventStream(
   } finally {
     await reader.cancel().catch(() => undefined);
     reader.releaseLock();
+  }
+}
+
+async function* validateStreamMode(
+  events: AsyncIterable<AiStreamEvent>,
+  expectedMode: AiChatRequest['mode'],
+): AsyncIterable<AiStreamEvent> {
+  let terminalReceived = false;
+  for await (const event of events) {
+    if (event.data.mode !== expectedMode) {
+      throw new AiChatRequestError('INVALID_STREAM_RESPONSE', 'AI 响应模式与请求不一致', 502);
+    }
+    if (event.type === 'turn.completed' || event.type === 'turn.failed') {
+      terminalReceived = true;
+    }
+    yield event;
+    if (terminalReceived) return;
+  }
+  if (!terminalReceived) {
+    throw new AiChatRequestError('INVALID_STREAM_RESPONSE', 'AI 响应未正常结束', 502);
   }
 }
 
@@ -164,11 +225,17 @@ export async function startAiChatStream(
   }
 
   if (contentType.includes('application/json')) {
+    if (input.mode === 'incognito') {
+      throw new AiChatRequestError('INVALID_STREAM_RESPONSE', '无痕响应格式无效', 502);
+    }
     const existing = existingTurnResponseSchema.parse(await response.json());
     return { kind: 'existing', turn: existing.data.turn };
   }
   if (!contentType.includes('text/event-stream') || !response.body) {
     throw new AiChatRequestError('INVALID_STREAM_RESPONSE', 'AI 响应格式无效', 502);
   }
-  return { kind: 'stream', events: parseAiEventStream(response.body) };
+  return {
+    kind: 'stream',
+    events: validateStreamMode(parseAiEventStream(response.body), input.mode),
+  };
 }

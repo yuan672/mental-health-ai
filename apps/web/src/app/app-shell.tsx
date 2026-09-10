@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Outlet } from 'react-router';
+import { NavLink, Outlet } from 'react-router';
 import { ChatWorkspaceProvider, useChatWorkspace } from '../features/chat/chat-workspace';
 import {
   ConversationHistory,
@@ -128,6 +128,10 @@ function AppShellContent() {
       ) : null}
       <div className="app-layout">
         <aside className="history-sidebar desktop-only">
+          <nav className="product-navigation" aria-label="产品功能">
+            <NavLink to="/app/chat/incognito">无痕聊天</NavLink>
+            <NavLink to="/app/privacy">隐私与数据</NavLink>
+          </nav>
           <ConversationHistory
             navigationDisabled={workspace.reconciliationPending}
             onNewChat={() => void workspace.startNewChat()}
@@ -171,6 +175,14 @@ function AppShellContent() {
               }}
               onSelect={() => setDrawerOpen(false)}
             />
+            <nav className="product-navigation" aria-label="产品功能">
+              <NavLink to="/app/chat/incognito" onClick={() => setDrawerOpen(false)}>
+                无痕聊天
+              </NavLink>
+              <NavLink to="/app/privacy" onClick={() => setDrawerOpen(false)}>
+                隐私与数据
+              </NavLink>
+            </nav>
             <button
               type="button"
               className="button button-quiet delete-all-button"

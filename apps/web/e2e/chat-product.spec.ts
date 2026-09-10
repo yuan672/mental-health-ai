@@ -75,9 +75,9 @@ test('approved safety text remains visible when persistence later fails', async 
       status: 200,
       contentType: 'text/event-stream',
       body: [
-        `event: turn.started\ndata: {"turnId":"${turnId}","conversationId":"${conversationId}"}\n\n`,
-        `event: message.segment\ndata: {"turnId":"${turnId}","sequence":1,"text":"这是合成的最低安全提示。"}\n\n`,
-        `event: turn.failed\ndata: {"turnId":"${turnId}","code":"DATABASE_ERROR","message":"本轮未能保存"}\n\n`,
+        `event: turn.started\ndata: {"mode":"persistent","turnId":"${turnId}","conversationId":"${conversationId}"}\n\n`,
+        `event: message.segment\ndata: {"mode":"persistent","turnId":"${turnId}","sequence":1,"text":"这是合成的最低安全提示。"}\n\n`,
+        `event: turn.failed\ndata: {"mode":"persistent","turnId":"${turnId}","code":"DATABASE_ERROR","message":"本轮未能保存"}\n\n`,
       ].join(''),
     });
   });
@@ -149,4 +149,65 @@ test('mobile history drawer supports keyboard close and focus restoration', asyn
   await page.keyboard.press('Escape');
   await expect(drawer).toBeHidden();
   await expect(trigger).toBeFocused();
+});
+
+test('Incognito supports multiple turns without adding ordinary history', async ({ page }) => {
+  await login(page);
+  await clearConversationHistory(page);
+  await page.reload();
+  await page.getByRole('link', { name: '无痕聊天' }).first().click();
+  await expect(page).toHaveURL(/\/app\/chat\/incognito$/u);
+  await page.getByRole('button', { name: '开始无痕对话' }).click();
+
+  const composer = page.getByLabel('输入无痕消息');
+  await composer.fill('第一条合成无痕消息。');
+  await page.getByRole('button', { name: '发送' }).click();
+  await expect(page.getByText('回复已完成。无痕普通聊天不会进入长期聊天记录。')).toBeVisible();
+  await composer.fill('第二条合成无痕消息。');
+  await page.getByRole('button', { name: '发送' }).click();
+  await expect(page.getByText('这是合成的安全流式回复。')).toHaveCount(2);
+  await expect(page.getByText('还没有保存的普通聊天。')).toBeVisible();
+  await expect(page).toHaveURL(/\/app\/chat\/incognito$/u);
+});
+
+test('refresh does not recover an Incognito browser context', async ({ page }) => {
+  await login(page);
+  await page.goto('/app/chat/incognito');
+  await page.getByRole('button', { name: '开始无痕对话' }).click();
+  await expect(page.getByLabel('输入无痕消息')).toBeVisible();
+  await page.reload();
+
+  await expect(page.getByRole('button', { name: '开始无痕对话' })).toBeVisible();
+  await expect(page.getByLabel('输入无痕消息')).toHaveCount(0);
+  await expect(page.getByText(/刷新页面、服务重启或超时后无法恢复/)).toBeVisible();
+});
+
+test('explicitly ending Incognito clears visible ordinary content', async ({ page }) => {
+  await login(page);
+  await page.goto('/app/chat/incognito');
+  await page.getByRole('button', { name: '开始无痕对话' }).click();
+  await page.getByLabel('输入无痕消息').fill('结束后应清除的合成正文。');
+  await page.getByRole('button', { name: '发送' }).click();
+  await expect(page.getByText('结束后应清除的合成正文。')).toBeVisible();
+
+  await page.getByRole('button', { name: '结束无痕对话' }).click();
+  await expect(page.getByText('无痕对话已结束，当前页面中的普通聊天内容已清除。')).toBeVisible();
+  await expect(page.getByText('结束后应清除的合成正文。')).toHaveCount(0);
+});
+
+test('logout clears Incognito browser memory before another session', async ({ page }) => {
+  await login(page);
+  await page.goto('/app/chat/incognito');
+  await page.getByRole('button', { name: '开始无痕对话' }).click();
+  await page.getByLabel('输入无痕消息').fill('退出后不能保留的合成正文。');
+  await page.getByRole('button', { name: '发送' }).click();
+  await expect(page.getByText('退出后不能保留的合成正文。')).toBeVisible();
+
+  await page.getByRole('button', { name: '退出' }).click();
+  await expect(page).toHaveURL(/\/login\?returnTo=/u);
+  await expect(page.getByText('退出后不能保留的合成正文。')).toHaveCount(0);
+  await page.getByLabel('邮箱').fill(EMAIL);
+  await page.getByLabel('密码').fill(PASSWORD);
+  await page.getByRole('button', { name: '登录' }).click();
+  await expect(page.getByText('退出后不能保留的合成正文。')).toHaveCount(0);
 });
