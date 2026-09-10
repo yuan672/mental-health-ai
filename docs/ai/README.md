@@ -6,10 +6,16 @@
 - Pull request: [#4](https://github.com/yuan672/mental-health-ai/pull/4)
 - Hosted CI: [34381367823](https://github.com/yuan672/mental-health-ai/actions/runs/34381367823)
 
+> This is the historical Phase 3 completion record. Phase 4 has since installed the
+> real application safety gates and completed its engineering scope. Production AI
+> remains disabled because production-readiness blockers are still unresolved. See
+> `docs/ai/ai-safety.md` and `docs/PROJECT_CONTROL_HANDOFF.md` for current status.
+
 Completion covers the Provider interface, SiliconFlow adapter, prompt management,
 conversation context, true streaming response, quota orchestration, and basic AI
-error handling. Production AI Chat remains fail-closed until Phase 4 replaces the
-pass-through safety gates; this completion status does not begin Phase 4.
+error handling. At the Phase 3 checkpoint, Production AI Chat remained fail-closed
+until Phase 4 replaced the pass-through safety gates. Phase 4 has since supplied
+real gates, while the broader Production Safety Lock remains enforced.
 
 Phase 3 implements an application-owned `LLMProvider` port, a SiliconFlow adapter,
 versioned code prompts, bounded conversation context, quota-aware AI-turn
@@ -43,10 +49,11 @@ clinical or product-safety constants.
 
 ## Safety and privacy boundary
 
-Phase 3 includes explicit pre- and post-generation safety interfaces but only
-non-production pass-through implementations. With AI chat enabled, Staging and
-Production fail startup while these unsafe placeholders are configured. Prompt
-instructions are not a safety system.
+Phase 3 introduced explicit pre- and post-generation safety interfaces with
+non-production pass-through implementations. Phase 4 subsequently replaced those
+placeholders with real application safety gates. Prompt instructions are not a
+safety system, and Staging/Production still fail closed while production readiness
+is incomplete.
 
 Ordinary assistant output is held in memory until complete before it is persisted.
 Partial streamed output is never written as an assistant message. Incognito context
@@ -64,6 +71,6 @@ processing, retention, privacy, security, applicable mainland-China compliance,
 and user-consent wording must be approved. This remains a production-readiness
 blocker.
 
-Risk Detection, `RiskEvent`, Crisis Flow, human review, and real output-safety
-policy remain Phase 4 work. See ADR-013 for the full state, quota, cancellation,
-streaming, and persistence decisions.
+Risk Detection, `RiskEvent`, Crisis Flow, the Human Review Queue boundary, and real
+output-safety policy were subsequently implemented in Phase 4. See ADR-013 for the
+Phase 3 state, quota, cancellation, streaming, and persistence decisions.

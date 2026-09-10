@@ -8,6 +8,10 @@
 - Phase 2B pull request: [#3](https://github.com/yuan672/mental-health-ai/pull/3)
 - Phase 2B hosted CI run: [34333266579](https://github.com/yuan672/mental-health-ai/actions/runs/34333266579)
 
+> This is the historical Phase 2 completion record. Phases 3 and 4 have since
+> completed their engineering scopes. See `docs/PROJECT_CONTROL_HANDOFF.md` for the
+> current project control state.
+
 ## Completed scope
 
 | Capability                   | Result   |
@@ -23,8 +27,9 @@
 | Drizzle migrations           | Complete |
 
 Phase 2B provides internal conversation, message, retention and quota services.
-User-facing conversation history, save and delete APIs remain deferred to Phase 5. AI providers, chat orchestration, streaming and incognito runtime storage
-remain deferred to Phase 3.
+User-facing conversation history, save and delete APIs remain deferred to Phase 5.
+AI providers, chat orchestration, streaming and process-memory Incognito runtime
+storage were subsequently implemented in Phase 3.
 
 ## Validation
 
@@ -38,11 +43,13 @@ PostgreSQL test database.
 
 - The production quota value has not been decided.
 - The production retention cleanup scheduler is not wired.
-- The incognito runtime store is deferred to Phase 3 design.
+- Phase 3 introduced a process-memory Incognito runtime store; the production
+  multi-instance strategy remains undecided.
 - Production database encryption and backup policies remain to be finalized.
 - GitHub Actions dependency deprecation warnings remain for dependency
   maintenance.
 - The Turborepo coverage output warning remains to be addressed.
 
-Phase 2 is complete and the project is ready to begin Phase 3 design. This
-status does not authorize or include Phase 3 implementation.
+At this checkpoint, Phase 2 was complete and the project was ready to begin Phase 3
+design. Phases 3 and 4 have since completed their engineering scopes; this document
+continues to record the Phase 2 boundary rather than the current phase.

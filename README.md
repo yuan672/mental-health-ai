@@ -1,6 +1,6 @@
 # 心理健康 AI 支持系统
 
-面向中国大陆 18 岁及以上成年用户的 Web AI 心理健康支持系统工程项目。Engineering Bootstrap、Phase 2 和 Phase 3 已完成；当前功能分支实现 **Phase 4 — AI Safety** 后端基础，尚未进入用户聊天历史、Mood Tracking 或 Admin UI 业务开发。Production Safety Lock 仍然生效，生产 AI Chat 仍然禁用。
+面向中国大陆 18 岁及以上成年用户的 Web AI 心理健康支持系统工程项目。Engineering Bootstrap、Phase 2、Phase 3 和 **Phase 4 — AI Safety** 已完成工程范围验收；Phase 5/6 尚未开始。Production Safety Lock 仍然生效，生产 AI Chat 仍然禁用，`productionSafe=false`。
 
 > 本产品定位为心理健康支持工具，不是心理医生、精神科医生、医疗诊断系统、药物处方系统或真人心理咨询师的替代品。
 
@@ -79,7 +79,7 @@ At minimum, configure:
 - `REQUIRED_PRIVACY_VERSION`
 - `FREE_DAILY_AI_LIMIT`（必填正整数；示例值由本地/测试决定，不代表产品政策）
 - `QUOTA_TIME_ZONE`（当前使用 `Asia/Shanghai`）
-- `AI_CHAT_ENABLED`（Staging/Production 当前会因仅有占位 Safety Gate 而 fail closed）
+- `AI_CHAT_ENABLED`（Staging/Production 在 production-readiness 条件未全部满足时 fail closed）
 - `LLM_PROVIDER`（`none` 或 `siliconflow`）
 - `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL`（只允许后端配置）
 - `LLM_FIRST_TOKEN_TIMEOUT_MS` / `LLM_STREAM_IDLE_TIMEOUT_MS` / `LLM_TOTAL_TIMEOUT_MS`
