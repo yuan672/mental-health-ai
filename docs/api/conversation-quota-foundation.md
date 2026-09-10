@@ -11,6 +11,13 @@ use AI, and idempotent quota consumption. PostgreSQL is the source of truth. The
 daily boundary uses the configured IANA time zone, currently Asia/Shanghai. The
 local/test value 20 is a fixture and is not an accepted product quota policy.
 
+Quota aggregates remain daily, but a consumption idempotency key is unique per
+user across dates. Replaying a key after the Asia/Shanghai date changes returns
+the original consumption's stored-date aggregate and does not charge the new
+day. Refund deletes the matching ledger row transactionally and decrements only
+that original date's aggregate; it does not locate the row by the refund call's
+current date.
+
 `ConversationService` provides owner-scoped create, get, save, delete, and bounded
 retention-cleanup primitives for ordinary persisted conversations. New ordinary
 conversations expire after 90 days. Saved conversations have no automatic expiry.

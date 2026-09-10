@@ -1,0 +1,2 @@
+DROP INDEX "quota_consumptions_user_date_key_unique";--> statement-breakpoint
+CREATE UNIQUE INDEX "quota_consumptions_user_key_unique" ON "quota_consumptions" USING btree ("user_id","idempotency_key");

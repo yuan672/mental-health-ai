@@ -99,15 +99,24 @@ export class QuotaRepository {
         createdAt: input.now,
       })
       .onConflictDoNothing({
-        target: [
-          quotaConsumptions.userId,
-          quotaConsumptions.usageDate,
-          quotaConsumptions.idempotencyKey,
-        ],
+        target: [quotaConsumptions.userId, quotaConsumptions.idempotencyKey],
       })
       .returning({ id: quotaConsumptions.id });
 
     if (!insertedConsumption) {
+      const [existingConsumption] = await transaction
+        .select({ usageDate: quotaConsumptions.usageDate })
+        .from(quotaConsumptions)
+        .where(
+          and(
+            eq(quotaConsumptions.userId, input.userId),
+            eq(quotaConsumptions.idempotencyKey, input.idempotencyKey),
+          ),
+        )
+        .limit(1);
+      if (!existingConsumption) {
+        throw new Error('Quota consumption conflict could not be resolved');
+      }
       const [existingUsage] = await transaction
         .select({
           userId: dailyUsageQuotas.userId,
@@ -119,7 +128,7 @@ export class QuotaRepository {
         .where(
           and(
             eq(dailyUsageQuotas.userId, input.userId),
-            eq(dailyUsageQuotas.usageDate, input.usageDate),
+            eq(dailyUsageQuotas.usageDate, existingConsumption.usageDate),
           ),
         )
         .limit(1);

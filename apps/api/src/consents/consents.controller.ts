@@ -1,9 +1,24 @@
-import { Body, Controller, Get, HttpCode, Post, Req, UseGuards } from '@nestjs/common';
+import type { ConsentMutationRequest } from '@mental-health/types';
+import {
+  Body,
+  Controller,
+  Get,
+  Header,
+  HttpCode,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { ZodValidationPipe } from '../common/validation/zod-validation.pipe';
 import type { AuthenticatedRequest } from '../auth/authenticated-request';
 import { AuthenticatedSessionGuard } from '../auth/authenticated-session.guard';
 import { CsrfGuard } from '../auth/csrf.guard';
-import { consentMutationSchema, type ConsentMutationRequest } from './consents.schemas';
+import {
+  consentHistoryQuerySchema,
+  consentMutationSchema,
+  type ConsentHistoryQuery,
+} from './consents.schemas';
 import { ConsentsService } from './consents.service';
 
 @Controller('consents')
@@ -11,10 +26,13 @@ export class ConsentsController {
   constructor(private readonly consentsService: ConsentsService) {}
 
   @Get()
+  @Header('Cache-Control', 'private, no-store')
   @UseGuards(AuthenticatedSessionGuard)
-  async list(@Req() request: AuthenticatedRequest) {
-    const consents = await this.consentsService.list(request.authenticatedSession.userId);
-    return { success: true, data: { consents } };
+  list(
+    @Req() request: AuthenticatedRequest,
+    @Query(new ZodValidationPipe(consentHistoryQuerySchema)) query: ConsentHistoryQuery,
+  ) {
+    return this.consentsService.list(request.authenticatedSession.userId, query);
   }
 
   @Post()
@@ -25,11 +43,8 @@ export class ConsentsController {
     @Body(new ZodValidationPipe(consentMutationSchema)) body: ConsentMutationRequest,
   ) {
     const userId = request.authenticatedSession.userId;
-    const consent =
-      body.action === 'accept'
-        ? await this.consentsService.accept(userId, body.consentType, body.consentVersion)
-        : await this.consentsService.withdraw(userId, body.consentType, body.consentVersion);
-
-    return { success: true, data: { consent } };
+    return body.action === 'accept'
+      ? this.consentsService.accept(userId, body.consentType, body.consentVersion)
+      : this.consentsService.withdraw(userId, body.consentType, body.consentVersion);
   }
 }

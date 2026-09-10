@@ -1,6 +1,7 @@
 import { Writable } from 'node:stream';
 import pino from 'pino';
 import { LOG_REDACT_PATHS } from '../src/app.module';
+import { safeOperationalPath } from '../src/common/http/safe-request-path';
 
 describe('sensitive logging redaction', () => {
   it('removes passwords, identifiers, session, cookie, CSRF, and API-key material', () => {
@@ -39,6 +40,7 @@ describe('sensitive logging redaction', () => {
     ];
     logger.info({
       req: {
+        url: '/incognito-contexts/private-context-id',
         headers: {
           cookie: sensitiveValues[4],
           'x-csrf-token': sensitiveValues[3],
@@ -62,8 +64,33 @@ describe('sensitive logging redaction', () => {
       rawProviderResponse: sensitiveValues[13],
     });
 
-    for (const sensitiveValue of [...sensitiveValues, 'sensitive body']) {
+    for (const sensitiveValue of [...sensitiveValues, 'sensitive body', 'private-context-id']) {
       expect(output).not.toContain(sensitiveValue);
     }
+  });
+
+  it('keeps an operational route shape without logging an Incognito context id', () => {
+    const contextId = '11111111-1111-4111-8111-111111111111';
+    expect(safeOperationalPath(`/incognito-contexts/${contextId}`)).toBe(
+      '/incognito-contexts/:contextId',
+    );
+    expect(safeOperationalPath(`/incognito-contexts/${contextId}/`)).toBe(
+      '/incognito-contexts/:contextId/',
+    );
+    expect(safeOperationalPath(`/incognito-contexts/${contextId}/unexpected`)).toBe(
+      '/incognito-contexts/:contextId/unexpected',
+    );
+    expect(safeOperationalPath(`/incognito-contexts/${contextId}?private=query`)).toBe(
+      '/incognito-contexts/:contextId',
+    );
+    for (const unsafePath of [
+      `/incognito-contexts/${contextId}`,
+      `/incognito-contexts/${contextId}/`,
+      `/incognito-contexts/${contextId}/unexpected`,
+      `/incognito-contexts/${contextId}?private=query`,
+    ]) {
+      expect(safeOperationalPath(unsafePath)).not.toContain(contextId);
+    }
+    expect(safeOperationalPath('/conversations?cursor=private')).toBe('/conversations');
   });
 });

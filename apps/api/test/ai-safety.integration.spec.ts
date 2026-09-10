@@ -574,6 +574,7 @@ describe('Phase 4 AI safety integration', () => {
       .set('Cookie', `mh_session=${rawToken}; mh_csrf=synthetic-csrf`)
       .set('x-csrf-token', 'synthetic-csrf')
       .send({
+        mode: 'persistent',
         clientRequestId: randomUUID(),
         conversationId: conversation.id,
         message: '合成的危机路由测试输入',
@@ -610,6 +611,7 @@ describe('Phase 4 AI safety integration', () => {
             .set('Cookie', `mh_session=${rawToken}; mh_csrf=synthetic-csrf`)
             .set('x-csrf-token', 'synthetic-csrf')
             .send({
+              mode: 'persistent',
               clientRequestId,
               conversationId: conversation.id,
               message: '合成的危机持久化故障输入',
@@ -657,6 +659,7 @@ describe('Phase 4 AI safety integration', () => {
         .set('Cookie', `mh_session=${rawToken}; mh_csrf=synthetic-csrf`)
         .set('x-csrf-token', 'synthetic-csrf')
         .send({
+          mode: 'persistent',
           clientRequestId,
           conversationId: conversation.id,
           message: '同一请求重试不得重建安全副作用',
@@ -1030,11 +1033,16 @@ describe('Phase 4 AI safety integration', () => {
   it('deduplicates 20 concurrent Incognito CRITICAL events without persisting content', async () => {
     const userId = await createUser();
     const sessionId = randomUUID();
-    const runtimeContext = incognitoStore.create(userId, sessionId, NOW);
+    const runtimeContext = incognitoStore.create(
+      userId,
+      sessionId,
+      new Date(NOW.getTime() + 60_000),
+      NOW,
+    );
     const clientRequestId = randomUUID();
     riskClassifier.reset('CRITICAL');
 
-    const results = await Promise.all(
+    const results = await Promise.allSettled(
       Array.from({ length: 20 }, () =>
         incognito.claim({
           userId,
@@ -1047,7 +1055,21 @@ describe('Phase 4 AI safety integration', () => {
         }),
       ),
     );
-    expect(results.every((result) => result.kind === 'trusted')).toBe(true);
+    const fulfilled = results.filter(
+      (result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof incognito.claim>>> =>
+        result.status === 'fulfilled',
+    );
+    expect(fulfilled).toHaveLength(1);
+    expect(fulfilled[0]?.value.kind).toBe('trusted');
+    expect(riskClassifier.calls).toBe(1);
+    if (fulfilled[0]) {
+      incognitoStore.releaseGeneration(
+        userId,
+        sessionId,
+        runtimeContext.id,
+        fulfilled[0].value.generation.id,
+      );
+    }
     const [eventCount] = await database.database
       .select({ value: count() })
       .from(riskEvents)
@@ -1380,19 +1402,45 @@ describe('Phase 4 AI safety integration', () => {
   it('isolates Incognito safety context by both user and session', async () => {
     const userId = await createUser();
     const sessionId = randomUUID();
-    const own = incognitoStore.create(userId, sessionId, NOW);
+    const own = incognitoStore.create(userId, sessionId, new Date(NOW.getTime() + 60_000), NOW);
+    const ownGeneration = incognitoStore.claimGeneration(
+      userId,
+      sessionId,
+      own.id,
+      randomUUID(),
+      new AbortController().signal,
+      NOW,
+    );
+    if (!ownGeneration) throw new Error('Expected an Incognito generation claim');
     incognitoStore.append(
       userId,
       sessionId,
       own.id,
+      ownGeneration.id,
       { role: 'user', content: '自己的最近上下文' },
       NOW,
     );
-    const other = incognitoStore.create(userId, randomUUID(), NOW);
+    incognitoStore.releaseGeneration(userId, sessionId, own.id, ownGeneration.id);
+    const other = incognitoStore.create(
+      userId,
+      randomUUID(),
+      new Date(NOW.getTime() + 60_000),
+      NOW,
+    );
+    const otherGeneration = incognitoStore.claimGeneration(
+      userId,
+      other.sessionId,
+      other.id,
+      randomUUID(),
+      new AbortController().signal,
+      NOW,
+    );
+    if (!otherGeneration) throw new Error('Expected an Incognito generation claim');
     incognitoStore.append(
       userId,
       other.sessionId,
       other.id,
+      otherGeneration.id,
       { role: 'user', content: '不得泄露的其他会话内容' },
       NOW,
     );

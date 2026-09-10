@@ -10,7 +10,7 @@ export type AiCancellationSource = 'user' | 'client_disconnect' | 'timeout';
 
 type TurnMetadata = Readonly<{
   userId: string;
-  conversationId: string;
+  conversationId?: string;
   turnId: string;
 }>;
 

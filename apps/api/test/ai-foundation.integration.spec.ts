@@ -930,6 +930,7 @@ describe('Phase 3 AI foundation integration', () => {
       .set('Cookie', `mh_session=${rawToken}; mh_csrf=synthetic-csrf`)
       .set('x-csrf-token', 'synthetic-csrf')
       .send({
+        mode: 'persistent',
         clientRequestId: randomUUID(),
         conversationId: conversation.id,
         message: 'synthetic-http-message',
@@ -952,7 +953,11 @@ describe('Phase 3 AI foundation integration', () => {
     await request(app.getHttpServer())
       .post('/ai/chat/stream')
       .set('Origin', 'http://localhost:5173')
-      .send({ clientRequestId: randomUUID(), message: 'synthetic-unauthorized' })
+      .send({
+        mode: 'persistent',
+        clientRequestId: randomUUID(),
+        message: 'synthetic-unauthorized',
+      })
       .expect(401)
       .expect({
         success: false,
@@ -971,11 +976,26 @@ describe('Phase 3 AI foundation integration', () => {
       createdAt: BASE_NOW,
       expiresAt: new Date(BASE_NOW.getTime() + 60_000),
     });
-    const context = incognitoStore.create(userId, sessionId, BASE_NOW);
+    const context = incognitoStore.create(
+      userId,
+      sessionId,
+      new Date(BASE_NOW.getTime() + 60_000),
+      BASE_NOW,
+    );
+    const generation = incognitoStore.claimGeneration(
+      userId,
+      sessionId,
+      context.id,
+      randomUUID(),
+      new AbortController().signal,
+      BASE_NOW,
+    );
+    if (!generation) throw new Error('Expected an Incognito generation claim');
     incognitoStore.append(
       userId,
       sessionId,
       context.id,
+      generation.id,
       { role: 'user', content: 'ephemeral-only' },
       BASE_NOW,
     );
@@ -994,7 +1014,12 @@ describe('Phase 3 AI foundation integration', () => {
     const userId = await createUser();
     const sessionId = randomUUID();
     const clientRequestId = randomUUID();
-    const context = incognitoStore.create(userId, sessionId, BASE_NOW);
+    const context = incognitoStore.create(
+      userId,
+      sessionId,
+      new Date(BASE_NOW.getTime() + 60_000),
+      BASE_NOW,
+    );
     const quotaIdempotencyKey = deriveIncognitoQuotaIdempotencyKey(
       userId,
       sessionId,

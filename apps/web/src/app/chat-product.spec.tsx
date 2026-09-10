@@ -200,7 +200,7 @@ describe('Phase 5B product flows', () => {
         streamState.controller = controller;
         controller.enqueue(
           encoder.encode(
-            `event: turn.started\ndata: {"turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\n`,
+            `event: turn.started\ndata: {"mode":"persistent","turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\n`,
           ),
         );
       },
@@ -279,7 +279,7 @@ describe('Phase 5B product flows', () => {
     expect(streamState.signal?.aborted).toBe(false);
     streamState.controller?.enqueue(
       encoder.encode(
-        `event: message.segment\ndata: {"turnId":"${TURN_ID}","sequence":1,"text":"合成流式回复。"}\n\nevent: turn.completed\ndata: {"turnId":"${TURN_ID}","assistantMessageId":"${ASSISTANT_ID}","finishReason":"stop"}\n\n`,
+        `event: message.segment\ndata: {"mode":"persistent","turnId":"${TURN_ID}","sequence":1,"text":"合成流式回复。"}\n\nevent: turn.completed\ndata: {"mode":"persistent","turnId":"${TURN_ID}","assistantMessageId":"${ASSISTANT_ID}","finishReason":"stop"}\n\n`,
       ),
     );
     historyReady = true;
@@ -372,9 +372,9 @@ describe('Phase 5B product flows', () => {
   it('retains approved safety text when the terminal event reports persistence failure', async () => {
     document.cookie = 'mh_csrf=synthetic-csrf; Path=/';
     const body = [
-      `event: turn.started\ndata: {"turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\n`,
-      `event: message.segment\ndata: {"turnId":"${TURN_ID}","sequence":1,"text":"合成最低安全提示。"}\n\n`,
-      `event: turn.failed\ndata: {"turnId":"${TURN_ID}","code":"DATABASE_ERROR","message":"本轮未能保存"}\n\n`,
+      `event: turn.started\ndata: {"mode":"persistent","turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\n`,
+      `event: message.segment\ndata: {"mode":"persistent","turnId":"${TURN_ID}","sequence":1,"text":"合成最低安全提示。"}\n\n`,
+      `event: turn.failed\ndata: {"mode":"persistent","turnId":"${TURN_ID}","code":"DATABASE_ERROR","message":"本轮未能保存"}\n\n`,
     ].join('');
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async (input) => {
       const url = new URL(String(input));
@@ -408,7 +408,7 @@ describe('Phase 5B product flows', () => {
         streamState.controller = controller;
         controller.enqueue(
           encoder.encode(
-            `event: turn.started\ndata: {"turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\n`,
+            `event: turn.started\ndata: {"mode":"persistent","turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\n`,
           ),
         );
       },
@@ -474,7 +474,7 @@ describe('Phase 5B product flows', () => {
         streamState.controller = controller;
         controller.enqueue(
           encoder.encode(
-            `event: turn.started\ndata: {"turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\nevent: message.segment\ndata: {"turnId":"${TURN_ID}","sequence":1,"text":"合成流式敏感正文"}\n\n`,
+            `event: turn.started\ndata: {"mode":"persistent","turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\nevent: message.segment\ndata: {"mode":"persistent","turnId":"${TURN_ID}","sequence":1,"text":"合成流式敏感正文"}\n\n`,
           ),
         );
       },
@@ -709,7 +709,7 @@ describe('Phase 5B product flows', () => {
         streamNumber += 1;
         const turnId = streamNumber === 1 ? TURN_ID : '55555555-5555-4555-8555-555555555556';
         return new Response(
-          `event: turn.started\ndata: {"turnId":"${turnId}","conversationId":"${CONVERSATION_ID}"}\n\nevent: turn.failed\ndata: {"turnId":"${turnId}","code":"AI_PROVIDER_UNAVAILABLE","message":"合成失败"}\n\n`,
+          `event: turn.started\ndata: {"mode":"persistent","turnId":"${turnId}","conversationId":"${CONVERSATION_ID}"}\n\nevent: turn.failed\ndata: {"mode":"persistent","turnId":"${turnId}","code":"AI_PROVIDER_UNAVAILABLE","message":"合成失败"}\n\n`,
           { headers: { 'content-type': 'text/event-stream' } },
         );
       }
@@ -841,7 +841,7 @@ describe('Phase 5B product flows', () => {
         active.controller = controller;
         controller.enqueue(
           encoder.encode(
-            `event: turn.started\ndata: {"turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\n`,
+            `event: turn.started\ndata: {"mode":"persistent","turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\n`,
           ),
         );
       },

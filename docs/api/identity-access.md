@@ -80,7 +80,47 @@ x-csrf-token header and must come from a configured trusted origin.
 
 ## Consent
 
-POST /consents accepts consentType, consentVersion, and action (accept or
-withdraw). GET /consents returns the authenticated user's versioned consent
-records. A withdrawn type/version cannot be accepted again in Phase 2A; a new
-policy version creates a new record.
+`POST /consents` accepts `consentType`, `consentVersion`, and `action` (`accept`
+or `withdraw`). Only the known `terms_of_service` and `privacy_policy` types are
+accepted. `accept` is valid only for the server-configured current version;
+clients cannot define which policy version is current. `withdraw` remains valid
+for an existing known historical version owned by the authenticated user.
+
+`GET /consents?limit=20&cursor=...` returns a newest-first, bounded page of the
+authenticated user's known consent history:
+
+    {
+      "success": true,
+      "data": {
+        "currentRequiredConsents": [
+          {
+            "consentType": "privacy_policy",
+            "consentVersion": "1.0",
+            "status": "accepted",
+            "acceptedAt": "2026-09-10T00:00:00.000Z",
+            "withdrawnAt": null
+          }
+        ],
+        "consents": [
+          {
+            "consentType": "privacy_policy",
+            "consentVersion": "1.0",
+            "status": "accepted",
+            "acceptedAt": "2026-09-10T00:00:00.000Z",
+            "withdrawnAt": null
+          }
+        ],
+        "nextCursor": null
+      }
+    }
+
+`currentRequiredConsents` is derived from the server-configured required policy
+versions and uses `not_accepted` when the current version has no lifecycle record.
+The history page limit defaults to 20 and is capped at 50. The cursor is an opaque,
+versioned pagination token. The response deliberately excludes persistence IDs
+and `userId`, and uses `Cache-Control: private, no-store`.
+
+A withdrawn type/version cannot be accepted again under ADR-011. A newly
+configured policy version creates a new lifecycle record. Product implications
+and unapproved alternatives are recorded in
+`docs/architecture/consent-policy-decision-note.md`.

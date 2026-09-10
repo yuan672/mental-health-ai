@@ -4,6 +4,7 @@ import { trustedTemplateKeySchema } from '../templates/trusted-safety-template.r
 export const auditActorTypeSchema = z.enum(['system', 'user', 'human_reviewer']);
 export const auditResourceTypeSchema = z.enum([
   'ai_turn',
+  'ai_generation',
   'conversation',
   'conversation_history',
   'risk_event',

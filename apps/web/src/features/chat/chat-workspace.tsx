@@ -60,6 +60,7 @@ type ChatWorkspaceContextValue = Readonly<{
   retryAsNewTurn: () => Promise<void>;
   reconcileUncertainTurn: () => Promise<void>;
   startNewChat: () => Promise<void>;
+  enterIncognito: () => Promise<boolean>;
   saveCurrent: () => Promise<void>;
   deleteCurrent: () => Promise<void>;
   deleteAll: () => Promise<number>;
@@ -237,6 +238,7 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
         const previousConversationId = conversationIdRef.current;
         const connection = await startAiChatStream(
           {
+            mode: 'persistent',
             clientRequestId,
             ...(conversationIdRef.current ? { conversationId: conversationIdRef.current } : {}),
             message,
@@ -287,6 +289,9 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
 
         for await (const event of connection.events) {
           if (controller.signal.aborted) break;
+          if (event.data.mode !== 'persistent') {
+            throw new AiChatRequestError('INVALID_STREAM_RESPONSE', 'AI 响应模式与请求不一致', 502);
+          }
           const next = reduceChatStreamEvent(streamRef.current, event);
           updateStream(next);
           if (event.type === 'turn.started') {
@@ -358,6 +363,16 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
     };
   }, [invalidateConversationLoad]);
 
+  const enterIncognito = useCallback(async () => {
+    if (lastSubmission?.uncertain) return false;
+    if (streamAbortRef.current) await cancel();
+    setNotice(null);
+    invalidateConversationLoad();
+    clearConversationMemory();
+    setLoadStatus('idle');
+    return true;
+  }, [cancel, clearConversationMemory, invalidateConversationLoad, lastSubmission?.uncertain]);
+
   const value = useMemo<ChatWorkspaceContextValue>(
     () => ({
       conversation,
@@ -419,6 +434,7 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
         setLoadStatus('idle');
         navigate('/app/chat');
       },
+      enterIncognito,
       saveCurrent: async () => {
         const conversationId = conversationIdRef.current;
         if (!conversationId) return;
@@ -456,6 +472,7 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
       clearConversationMemory,
       conversation,
       draft,
+      enterIncognito,
       lastSubmission,
       loadConversationData,
       loadError,

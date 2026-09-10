@@ -118,6 +118,30 @@ concurrent updates. A limit failure rolls back the ledger insert; a repeated key
 the same user and date returns the existing result without consuming again. There is
 no public quota-consume endpoint and no Redis cache.
 
+#### Phase 5C cross-day idempotency refinement (2026-09-10)
+
+The Incognito runtime introduced a concrete retry case that can cross an
+Asia/Shanghai calendar boundary while retaining one logical client request ID. To
+preserve that request identity, Migration 0004 narrows the ledger to one
+consumption per `(user_id, idempotency_key)` across all usage dates. The daily
+aggregate remains keyed by `(user_id, usage_date)`, so this refinement does not
+turn the configured daily quota into a rolling or lifetime quota.
+A replay returns the aggregate for the existing consumption's stored
+`usage_date`; it does not charge the current day. A refund resolves the original
+ledger row first and decrements only that row's stored-date aggregate. Refund
+currently deletes the ledger row transactionally and is idempotent while that row
+exists. Incognito runtime claims retain completed client request IDs for the
+context lifetime, and a missing or ended context fails before classifier or
+provider work. This is a bounded runtime-plus-ledger guarantee, not permanent
+retention of every refunded request ID.
+
+Migration 0004 deliberately performs no automatic historical deduplication. If an
+old database contains the same user/key on multiple dates, the new unique index
+cannot be created and the transactional migration fails without deleting ledger
+rows, changing aggregates, removing the old unique index, or recording 0004 as
+applied. Resolving such historical conflicts requires an explicit data decision;
+it is not inferred by the migration.
+
 ### Ownership and logging
 
 Every conversation and message repository query combines the resource identifier

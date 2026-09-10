@@ -144,11 +144,7 @@ export const quotaConsumptions = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex('quota_consumptions_user_date_key_unique').on(
-      table.userId,
-      table.usageDate,
-      table.idempotencyKey,
-    ),
+    uniqueIndex('quota_consumptions_user_key_unique').on(table.userId, table.idempotencyKey),
     index('quota_consumptions_user_date_idx').on(table.userId, table.usageDate),
   ],
 );

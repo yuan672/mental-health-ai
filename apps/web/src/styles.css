@@ -395,6 +395,25 @@ p {
   margin: 8px 14px 18px;
   color: var(--danger);
 }
+.product-navigation {
+  display: grid;
+  gap: 4px;
+  padding: 14px 14px 0;
+}
+.product-navigation a {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  border-radius: 10px;
+  padding: 9px 12px;
+  color: var(--ink);
+  font-weight: 700;
+  text-decoration: none;
+}
+.product-navigation a:hover,
+.product-navigation a.active {
+  background: var(--surface-soft);
+}
 .app-error,
 .app-status {
   position: fixed;
@@ -534,6 +553,83 @@ p {
   gap: 12px;
   margin-top: 9px;
 }
+
+.incognito-page {
+  background: linear-gradient(180deg, #f4f1fa 0, #fbfdfc 180px);
+}
+.incognito-intro {
+  width: min(680px, calc(100% - 32px));
+  align-self: center;
+  justify-self: center;
+  margin: clamp(32px, 9vh, 96px) auto;
+  padding: clamp(24px, 5vw, 40px);
+  border: 1px solid #ddd6ed;
+  border-radius: 20px;
+  background: rgb(255 255 255 / 88%);
+}
+.incognito-intro h2 {
+  font-size: 1.35rem;
+}
+.incognito-intro .button {
+  margin-top: 8px;
+}
+
+.privacy-page {
+  min-width: 0;
+  padding: clamp(24px, 5vw, 64px);
+  background: #fbfdfc;
+}
+.privacy-header,
+.privacy-card {
+  width: min(780px, 100%);
+  margin: 0 auto 22px;
+}
+.privacy-header h1 {
+  margin-bottom: 16px;
+  font-size: clamp(1.7rem, 4vw, 2.5rem);
+}
+.privacy-card {
+  padding: clamp(20px, 4vw, 30px);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface);
+}
+.privacy-card h2 {
+  margin-bottom: 16px;
+}
+.privacy-list,
+.consent-history {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.privacy-list li,
+.consent-history li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+.consent-history li > div {
+  display: grid;
+  gap: 4px;
+}
+.consent-history li > div:last-child {
+  color: var(--muted);
+  font-size: 0.88rem;
+  text-align: right;
+}
+.privacy-card .button {
+  margin-top: 16px;
+}
+.privacy-disclosure p:last-child {
+  margin-bottom: 0;
+}
 .character-count {
   margin-right: auto;
   color: var(--muted);
@@ -634,6 +730,17 @@ p {
   }
   .history-drawer .history {
     padding-top: 0;
+  }
+  .history-drawer .product-navigation {
+    border-top: 1px solid var(--line);
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+  }
+  .privacy-page {
+    padding: 22px 14px max(32px, env(safe-area-inset-bottom));
+  }
+  .consent-history li > div:last-child {
+    width: 100%;
+    text-align: left;
   }
 }
 

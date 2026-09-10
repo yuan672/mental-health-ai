@@ -19,6 +19,7 @@ import { PasswordHasherService } from '../src/auth/password-hasher.service';
 import { hashSessionToken } from '../src/auth/sessions.service';
 import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
 import { env } from '../src/config/env';
+import { ConsentsService } from '../src/consents/consents.service';
 import { DatabaseService } from '../src/database/database.service';
 import { UsersRepository } from '../src/users/users.repository';
 
@@ -60,6 +61,7 @@ describe('Phase 2A identity and access integration', () => {
   let app: INestApplication;
   let migrationClient: ReturnType<typeof createDatabaseClient>;
   let databaseService: DatabaseService;
+  let consentsService: ConsentsService;
   let usersRepository: UsersRepository;
   let passwordHasher: PasswordHasherService;
   let registeredEmail: string;
@@ -91,6 +93,7 @@ describe('Phase 2A identity and access integration', () => {
     await app.init();
 
     databaseService = moduleRef.get(DatabaseService);
+    consentsService = moduleRef.get(ConsentsService);
     usersRepository = moduleRef.get(UsersRepository);
     passwordHasher = moduleRef.get(PasswordHasherService);
   }, 60_000);
@@ -408,7 +411,7 @@ describe('Phase 2A identity and access integration', () => {
     await request(app.getHttpServer())
       .post('/consents')
       .set('Origin', WEB_ORIGIN)
-      .send({ consentType: 'research_optional', consentVersion: '1.0', action: 'accept' })
+      .send({ consentType: 'terms_of_service', consentVersion: '1.0', action: 'accept' })
       .expect(401);
 
     const agent = request.agent(app.getHttpServer());
@@ -420,12 +423,12 @@ describe('Phase 2A identity and access integration', () => {
     const response = await agent
       .post('/consents')
       .set('Origin', WEB_ORIGIN)
-      .send({ consentType: 'research_optional', consentVersion: '1.0', action: 'accept' })
+      .send({ consentType: 'terms_of_service', consentVersion: '1.0', action: 'accept' })
       .expect(403);
     expect(response.body.error.code).toBe('FORBIDDEN');
   });
 
-  it('accepts and withdraws consent, then revokes logout immediately', async () => {
+  it('returns a private, sanitized and stably paginated consent history', async () => {
     const agent = request.agent(app.getHttpServer());
     const login = await agent
       .post('/auth/login')
@@ -435,37 +438,126 @@ describe('Phase 2A identity and access integration', () => {
     const setCookies = login.headers['set-cookie'] as unknown as string[];
     const csrfToken = cookieValue(setCookies, 'mh_csrf');
 
-    const accepted = await agent
+    await usersRepository.createConsent({
+      id: randomUUID(),
+      userId: registeredUserId,
+      consentType: 'privacy_policy',
+      consentVersion: '0.9',
+      status: 'accepted',
+      acceptedAt: new Date(Date.now() - 86_400_000),
+      withdrawnAt: null,
+    });
+
+    const first = await agent
+      .get('/consents?limit=1')
+      .expect('Cache-Control', 'private, no-store')
+      .expect(200);
+    expect(first.body.data.consents).toHaveLength(1);
+    expect(first.body.data.nextCursor).toEqual(expect.any(String));
+    expect(JSON.stringify(first.body.data.consents)).not.toMatch(/"(?:id|userId)"/u);
+
+    const second = await agent
+      .get(`/consents?limit=1&cursor=${encodeURIComponent(first.body.data.nextCursor as string)}`)
+      .expect(200);
+    const third = await agent
+      .get(`/consents?limit=1&cursor=${encodeURIComponent(second.body.data.nextCursor as string)}`)
+      .expect(200);
+    expect(third.body.data.nextCursor).toBeNull();
+
+    const history = [
+      ...first.body.data.consents,
+      ...second.body.data.consents,
+      ...third.body.data.consents,
+    ] as Array<{ consentType: string; consentVersion: string }>;
+    expect(history).toHaveLength(3);
+    expect(history).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ consentType: 'terms_of_service', consentVersion: '1.0' }),
+        expect.objectContaining({ consentType: 'privacy_policy', consentVersion: '1.0' }),
+        expect.objectContaining({ consentType: 'privacy_policy', consentVersion: '0.9' }),
+      ]),
+    );
+
+    await agent.get('/consents?limit=51').expect(400);
+    await agent.get('/consents?limit=1&cursor=not-a-valid-cursor').expect(400);
+
+    const idempotentCurrentAcceptance = await agent
       .post('/consents')
       .set('Origin', WEB_ORIGIN)
       .set('x-csrf-token', csrfToken)
-      .send({ consentType: 'research_optional', consentVersion: '1.0', action: 'accept' })
+      .send({ consentType: 'terms_of_service', consentVersion: '1.0', action: 'accept' })
       .expect(200);
-    expect(accepted.body.data.consent).toMatchObject({
-      consentType: 'research_optional',
+    expect(idempotentCurrentAcceptance.body.data.consent).toMatchObject({
+      consentType: 'terms_of_service',
       consentVersion: '1.0',
       status: 'accepted',
       withdrawnAt: null,
     });
-
-    const listed = await agent.get('/consents').expect(200);
-    expect(listed.body.data.consents).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          consentType: 'research_optional',
-          consentVersion: '1.0',
-          status: 'accepted',
-        }),
-      ]),
+    expect(JSON.stringify(idempotentCurrentAcceptance.body.data.consent)).not.toMatch(
+      /"(?:id|userId)"/u,
     );
+  });
+
+  it('accepts only current known policies while preserving historical withdrawal', async () => {
+    const agent = request.agent(app.getHttpServer());
+    const login = await agent
+      .post('/auth/login')
+      .set('Origin', WEB_ORIGIN)
+      .send({ email: registeredEmail, password: VALID_PASSWORD })
+      .expect(200);
+    const setCookies = login.headers['set-cookie'] as unknown as string[];
+    const csrfToken = cookieValue(setCookies, 'mh_csrf');
+
+    await expect(
+      consentsService.accept(registeredUserId, 'research_optional', '1.0'),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR', statusCode: 400 });
+
+    await agent
+      .post('/consents')
+      .set('Origin', WEB_ORIGIN)
+      .set('x-csrf-token', csrfToken)
+      .send({ consentType: 'research_optional', consentVersion: '1.0', action: 'accept' })
+      .expect(400);
+
+    await agent
+      .post('/consents')
+      .set('Origin', WEB_ORIGIN)
+      .set('x-csrf-token', csrfToken)
+      .send({ consentType: 'privacy_policy', consentVersion: '0.9', action: 'accept' })
+      .expect(409);
+
+    const otherEmail = `consent-owner-${randomUUID()}@example.test`;
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .set('Origin', WEB_ORIGIN)
+      .send(registrationBody(otherEmail))
+      .expect(201);
+    const otherAgent = request.agent(app.getHttpServer());
+    const otherLogin = await otherAgent
+      .post('/auth/login')
+      .set('Origin', WEB_ORIGIN)
+      .send({ email: otherEmail, password: VALID_PASSWORD })
+      .expect(200);
+    const otherCsrfToken = cookieValue(
+      otherLogin.headers['set-cookie'] as unknown as string[],
+      'mh_csrf',
+    );
+    await otherAgent
+      .post('/consents')
+      .set('Origin', WEB_ORIGIN)
+      .set('x-csrf-token', otherCsrfToken)
+      .send({ consentType: 'privacy_policy', consentVersion: '0.9', action: 'withdraw' })
+      .expect(409);
 
     const withdrawn = await agent
       .post('/consents')
       .set('Origin', WEB_ORIGIN)
       .set('x-csrf-token', csrfToken)
-      .send({ consentType: 'research_optional', consentVersion: '1.0', action: 'withdraw' })
+      .send({ consentType: 'privacy_policy', consentVersion: '0.9', action: 'withdraw' })
       .expect(200);
     expect(withdrawn.body.data.consent).toMatchObject({
+      consentType: 'privacy_policy',
+      consentVersion: '0.9',
       status: 'withdrawn',
       withdrawnAt: expect.any(String),
     });
@@ -474,8 +566,27 @@ describe('Phase 2A identity and access integration', () => {
       .post('/consents')
       .set('Origin', WEB_ORIGIN)
       .set('x-csrf-token', csrfToken)
-      .send({ consentType: 'research_optional', consentVersion: '1.0', action: 'accept' })
+      .send({ consentType: 'privacy_policy', consentVersion: '0.9', action: 'accept' })
       .expect(409);
+
+    const withdrawnAgain = await agent
+      .post('/consents')
+      .set('Origin', WEB_ORIGIN)
+      .set('x-csrf-token', csrfToken)
+      .send({ consentType: 'privacy_policy', consentVersion: '0.9', action: 'withdraw' })
+      .expect(200);
+    expect(withdrawnAgain.body).toEqual(withdrawn.body);
+  });
+
+  it('revokes logout immediately', async () => {
+    const agent = request.agent(app.getHttpServer());
+    const login = await agent
+      .post('/auth/login')
+      .set('Origin', WEB_ORIGIN)
+      .send({ email: registeredEmail, password: VALID_PASSWORD })
+      .expect(200);
+    const setCookies = login.headers['set-cookie'] as unknown as string[];
+    const csrfToken = cookieValue(setCookies, 'mh_csrf');
 
     await agent
       .post('/auth/logout')

@@ -53,7 +53,7 @@ export const registrationResponseSchema = z
         consents: z.array(
           z
             .object({
-              consentType: z.string().min(1),
+              consentType: z.enum(['terms_of_service', 'privacy_policy']),
               consentVersion: z.string().min(1),
               status: z.literal('accepted'),
               acceptedAt: z.string().datetime({ offset: true }),
@@ -151,4 +151,57 @@ export const capabilitiesResponseSchema = z
     success: z.literal(true),
     data: z.object({ aiChatEnabled: z.boolean() }).strict(),
   })
+  .strict();
+
+const consentHistoryItemSchema = z
+  .object({
+    consentType: z.enum(['terms_of_service', 'privacy_policy']),
+    consentVersion: z.string().min(1).max(64),
+    status: z.enum(['accepted', 'withdrawn']),
+    acceptedAt: z.string().datetime({ offset: true }),
+    withdrawnAt: z.string().datetime({ offset: true }).nullable(),
+  })
+  .strict();
+
+export const consentHistoryResponseSchema = z
+  .object({
+    success: z.literal(true),
+    data: z
+      .object({
+        currentRequiredConsents: z.array(
+          z
+            .object({
+              consentType: z.enum(['terms_of_service', 'privacy_policy']),
+              consentVersion: z.string().min(1).max(64),
+              status: z.enum(['accepted', 'withdrawn', 'not_accepted']),
+              acceptedAt: z.string().datetime({ offset: true }).nullable(),
+              withdrawnAt: z.string().datetime({ offset: true }).nullable(),
+            })
+            .strict(),
+        ),
+        consents: z.array(consentHistoryItemSchema),
+        nextCursor: z.string().nullable(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const createIncognitoContextResponseSchema = z
+  .object({
+    success: z.literal(true),
+    data: z
+      .object({
+        context: z
+          .object({
+            id: z.string().uuid(),
+            expiresAt: z.string().datetime({ offset: true }),
+          })
+          .strict(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const endIncognitoContextResponseSchema = z
+  .object({ success: z.literal(true), data: z.object({ ended: z.literal(true) }).strict() })
   .strict();
