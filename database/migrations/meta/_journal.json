@@ -36,6 +36,13 @@
       "when": 1789038122994,
       "tag": "0004_special_swordsman",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789053242026,
+      "tag": "0005_third_speed",
+      "breakpoints": true
     }
   ]
 }

@@ -20,18 +20,37 @@ export const consentHistoryQuerySchema = z
 export const consentHistoryCursorSchema = z
   .object({
     kind: z.literal('consent-history'),
-    version: z.literal(1),
-    acceptedAt: z.string().datetime({ offset: true }),
+    version: z.literal(2),
+    occurredAt: z.string().datetime({ offset: true }),
     id: z.string().uuid(),
   })
   .strict();
 
-export const consentMutationSchema: z.ZodType<ConsentMutationRequest> = z
-  .object({
-    consentType: z.enum(CONSENT_TYPE_VALUES),
-    consentVersion: z.string().trim().min(1).max(64),
-    action: z.enum(['accept', 'withdraw']),
-  })
-  .strict();
+const consentMutationBase = {
+  operationId: z.string().uuid(),
+  consentType: z.enum(CONSENT_TYPE_VALUES),
+  consentVersion: z.string().trim().min(1).max(64),
+  expectedRevision: z.number().int().min(0),
+} as const;
+
+export const consentMutationSchema: z.ZodType<ConsentMutationRequest> = z.discriminatedUnion(
+  'action',
+  [
+    z
+      .object({
+        ...consentMutationBase,
+        action: z.literal('accept'),
+        documentKey: z.string().trim().min(1).max(128),
+        documentRevision: z.string().trim().min(1).max(64),
+      })
+      .strict(),
+    z
+      .object({
+        ...consentMutationBase,
+        action: z.literal('withdraw'),
+      })
+      .strict(),
+  ],
+);
 
 export type ConsentHistoryQuery = z.infer<typeof consentHistoryQuerySchema>;

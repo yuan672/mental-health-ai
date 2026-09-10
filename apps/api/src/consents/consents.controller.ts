@@ -43,8 +43,6 @@ export class ConsentsController {
     @Body(new ZodValidationPipe(consentMutationSchema)) body: ConsentMutationRequest,
   ) {
     const userId = request.authenticatedSession.userId;
-    return body.action === 'accept'
-      ? this.consentsService.accept(userId, body.consentType, body.consentVersion)
-      : this.consentsService.withdraw(userId, body.consentType, body.consentVersion);
+    return this.consentsService.mutate(userId, body);
   }
 }

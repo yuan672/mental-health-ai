@@ -35,8 +35,20 @@ type AccountCounts = {
 
 function requiredConsents() {
   return [
-    { consentType: 'terms_of_service', consentVersion: '1.0', accepted: true as const },
-    { consentType: 'privacy_policy', consentVersion: '1.0', accepted: true as const },
+    {
+      consentType: 'terms_of_service',
+      consentVersion: '1.0',
+      documentKey: 'synthetic.terms-of-service',
+      documentRevision: 'test-revision-1',
+      accepted: true as const,
+    },
+    {
+      consentType: 'privacy_policy',
+      consentVersion: '1.0',
+      documentKey: 'synthetic.privacy-policy',
+      documentRevision: 'test-revision-1',
+      accepted: true as const,
+    },
   ];
 }
 
@@ -152,11 +164,17 @@ describe('Phase 2A identity and access integration', () => {
             type: 'terms_of_service',
             version: '1.0',
             displayKey: 'consent.termsOfService',
+            documentKey: 'synthetic.terms-of-service',
+            documentRevision: 'test-revision-1',
+            documentUrl: 'https://example.invalid/mental-health-ai/synthetic/terms/1.0',
           },
           {
             type: 'privacy_policy',
             version: '1.0',
             displayKey: 'consent.privacyPolicy',
+            documentKey: 'synthetic.privacy-policy',
+            documentRevision: 'test-revision-1',
+            documentUrl: 'https://example.invalid/mental-health-ai/synthetic/privacy/1.0',
           },
         ],
       },
@@ -228,6 +246,8 @@ describe('Phase 2A identity and access integration', () => {
     body.consents[1] = {
       consentType: 'privacy_policy',
       consentVersion: '0.9',
+      documentKey: 'synthetic.privacy-policy',
+      documentRevision: 'test-revision-1',
       accepted: true,
     };
 
@@ -285,8 +305,12 @@ describe('Phase 2A identity and access integration', () => {
         consents: [
           {
             id: randomUUID(),
+            decisionId: randomUUID(),
+            operationId: randomUUID(),
             consentType: 'terms_of_service',
             consentVersion: '1.0',
+            documentKey: 'synthetic.terms-of-service',
+            documentRevision: 'test-revision-1',
             acceptedAt: new Date(),
           },
         ],
@@ -318,8 +342,22 @@ describe('Phase 2A identity and access integration', () => {
         verificationMethod: 'mock',
         verifiedAt: new Date(),
         consents: [
-          { id: randomUUID(), ...duplicateConsent },
-          { id: randomUUID(), ...duplicateConsent },
+          {
+            id: randomUUID(),
+            decisionId: randomUUID(),
+            operationId: randomUUID(),
+            documentKey: 'synthetic.terms-of-service',
+            documentRevision: 'test-revision-1',
+            ...duplicateConsent,
+          },
+          {
+            id: randomUUID(),
+            decisionId: randomUUID(),
+            operationId: randomUUID(),
+            documentKey: 'synthetic.terms-of-service',
+            documentRevision: 'test-revision-1',
+            ...duplicateConsent,
+          },
         ],
       }),
     ).rejects.toBeDefined();

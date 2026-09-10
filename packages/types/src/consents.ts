@@ -1,38 +1,86 @@
 export type ConsentType = 'terms_of_service' | 'privacy_policy';
 export type ConsentStatus = 'accepted' | 'withdrawn';
-export type RequiredConsentStatus = ConsentStatus | 'not_accepted';
+export type ConsentAuthorizationStatus = 'active' | 'confirmation_required' | 'inactive';
 export type ConsentMutationAction = 'accept' | 'withdraw';
+export type ConsentDecisionOutcome = 'applied' | 'no_change';
+export type ConsentDecisionSource = 'registration' | 'privacy_ui' | 'legacy_backfill';
 
-export type ConsentHistoryItem = {
+export type ConsentCurrentItem = {
   consentType: ConsentType;
   consentVersion: string;
-  status: ConsentStatus;
-  acceptedAt: string;
+  status: ConsentStatus | 'not_accepted';
+  stateRevision: number;
+  effectiveAt: string | null;
+  acceptedAt: string | null;
   withdrawnAt: string | null;
+  documentKey: string | null;
+  documentRevision: string | null;
+  documentUrl: string | null;
+  displayKey: 'consent.termsOfService' | 'consent.privacyPolicy';
+  authorizationStatus: ConsentAuthorizationStatus;
+  acceptanceEnabled: boolean;
+  withdrawalEnabled: boolean;
 };
+
+type ConsentDecisionReceiptBase = {
+  operationId: string;
+  outcome: ConsentDecisionOutcome;
+  consentType: ConsentType;
+  consentVersion: string;
+  priorRevision: number;
+  resultingRevision: number;
+  occurredAt: string;
+  decisionSource: ConsentDecisionSource;
+};
+
+export type ConsentAcceptanceReceipt = ConsentDecisionReceiptBase & {
+  action: 'accept';
+  documentKey: string | null;
+  documentRevision: string | null;
+};
+
+export type ConsentWithdrawalReceipt = ConsentDecisionReceiptBase & {
+  action: 'withdraw';
+  targetDocumentKey: string | null;
+  targetDocumentRevision: string | null;
+};
+
+export type ConsentDecisionReceipt = ConsentAcceptanceReceipt | ConsentWithdrawalReceipt;
+export type ConsentHistoryItem = ConsentDecisionReceipt;
 
 export type ConsentHistoryResponse = {
   success: true;
   data: {
-    currentRequiredConsents: Array<{
-      consentType: ConsentType;
-      consentVersion: string;
-      status: RequiredConsentStatus;
-      acceptedAt: string | null;
-      withdrawnAt: string | null;
-    }>;
+    currentRequiredConsents: ConsentCurrentItem[];
     consents: ConsentHistoryItem[];
     nextCursor: string | null;
   };
 };
 
-export type ConsentMutationRequest = {
+export type ConsentAcceptRequest = {
+  operationId: string;
+  action: 'accept';
   consentType: ConsentType;
   consentVersion: string;
-  action: ConsentMutationAction;
+  documentKey: string;
+  documentRevision: string;
+  expectedRevision: number;
 };
+
+export type ConsentWithdrawRequest = {
+  operationId: string;
+  action: 'withdraw';
+  consentType: ConsentType;
+  consentVersion: string;
+  expectedRevision: number;
+};
+
+export type ConsentMutationRequest = ConsentAcceptRequest | ConsentWithdrawRequest;
 
 export type ConsentMutationResponse = {
   success: true;
-  data: { consent: ConsentHistoryItem };
+  data: {
+    receipt: ConsentDecisionReceipt;
+    current: ConsentCurrentItem;
+  };
 };

@@ -4,6 +4,7 @@ import {
   check,
   char,
   date,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -92,6 +93,12 @@ export const consents = pgTable(
     status: consentStatus('status').notNull(),
     acceptedAt: timestamp('accepted_at', { withTimezone: true, mode: 'date' }).notNull(),
     withdrawnAt: timestamp('withdrawn_at', { withTimezone: true, mode: 'date' }),
+    stateRevision: integer('state_revision')
+      .notNull()
+      .$defaultFn(() => 1),
+    effectiveAt: timestamp('effective_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .$defaultFn(() => new Date()),
   },
   (table) => [
     uniqueIndex('consents_user_type_version_unique').on(
@@ -100,9 +107,93 @@ export const consents = pgTable(
       table.consentVersion,
     ),
     index('consents_user_status_idx').on(table.userId, table.status),
+    uniqueIndex('consents_identity_unique').on(
+      table.id,
+      table.userId,
+      table.consentType,
+      table.consentVersion,
+    ),
+    check('consents_state_revision_positive_check', sql`${table.stateRevision} > 0`),
     check(
       'consents_status_timestamps_check',
       sql`(${table.status} = 'accepted' AND ${table.withdrawnAt} IS NULL) OR (${table.status} = 'withdrawn' AND ${table.withdrawnAt} IS NOT NULL)`,
+    ),
+  ],
+);
+
+export const consentDecisions = pgTable(
+  'consent_decisions',
+  {
+    id: uuid('id').primaryKey(),
+    consentId: uuid('consent_id').notNull(),
+    userId: uuid('user_id').notNull(),
+    consentType: varchar('consent_type', { length: 64 }).notNull(),
+    consentVersion: varchar('consent_version', { length: 64 }).notNull(),
+    operationId: uuid('operation_id').notNull(),
+    decision: varchar('decision', { length: 16 }).notNull(),
+    outcome: varchar('outcome', { length: 16 }).notNull(),
+    priorRevision: integer('prior_revision').notNull(),
+    resultingRevision: integer('resulting_revision').notNull(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true, mode: 'date' }).notNull(),
+    documentKey: varchar('document_key', { length: 128 }),
+    documentRevision: varchar('document_revision', { length: 64 }),
+    targetAcceptanceDecisionId: uuid('target_acceptance_decision_id'),
+    decisionSource: varchar('decision_source', { length: 32 }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('consent_decisions_user_operation_unique').on(table.userId, table.operationId),
+    uniqueIndex('consent_decisions_applied_revision_unique')
+      .on(table.consentId, table.resultingRevision)
+      .where(sql`${table.outcome} = 'applied'`),
+    uniqueIndex('consent_decisions_identity_unique').on(
+      table.id,
+      table.consentId,
+      table.userId,
+      table.consentType,
+      table.consentVersion,
+    ),
+    index('consent_decisions_history_idx').on(table.userId, table.occurredAt, table.id),
+    foreignKey({
+      name: 'consent_decisions_projection_fk',
+      columns: [table.consentId, table.userId, table.consentType, table.consentVersion],
+      foreignColumns: [consents.id, consents.userId, consents.consentType, consents.consentVersion],
+    }).onDelete('cascade'),
+    foreignKey({
+      name: 'consent_decisions_target_acceptance_fk',
+      columns: [
+        table.targetAcceptanceDecisionId,
+        table.consentId,
+        table.userId,
+        table.consentType,
+        table.consentVersion,
+      ],
+      foreignColumns: [
+        table.id,
+        table.consentId,
+        table.userId,
+        table.consentType,
+        table.consentVersion,
+      ],
+    }).onDelete('cascade'),
+    check(
+      'consent_decisions_values_check',
+      sql`${table.decision} IN ('accepted', 'withdrawn') AND ${table.outcome} IN ('applied', 'no_change') AND ${table.decisionSource} IN ('registration', 'privacy_ui', 'legacy_backfill')`,
+    ),
+    check(
+      'consent_decisions_revision_check',
+      sql`${table.priorRevision} >= 0 AND ((${table.outcome} = 'applied' AND ${table.resultingRevision} = ${table.priorRevision} + 1) OR (${table.outcome} = 'no_change' AND ${table.resultingRevision} = ${table.priorRevision}))`,
+    ),
+    check(
+      'consent_decisions_document_pair_check',
+      sql`(${table.documentKey} IS NULL) = (${table.documentRevision} IS NULL)`,
+    ),
+    check(
+      'consent_decisions_target_check',
+      sql`(${table.decision} = 'accepted' AND ${table.targetAcceptanceDecisionId} IS NULL) OR (${table.decision} = 'withdrawn' AND ${table.targetAcceptanceDecisionId} IS NOT NULL AND ${table.documentKey} IS NULL AND ${table.documentRevision} IS NULL)`,
+    ),
+    check(
+      'consent_decisions_acceptance_evidence_check',
+      sql`${table.decision} <> 'accepted' OR ${table.decisionSource} = 'legacy_backfill' OR (${table.documentKey} IS NOT NULL AND ${table.documentRevision} IS NOT NULL)`,
     ),
   ],
 );
@@ -324,6 +415,7 @@ export const schema = {
   aiTurns,
   auditLogs,
   consents,
+  consentDecisions,
   conversations,
   dailyUsageQuotas,
   messages,
@@ -336,6 +428,9 @@ export const schema = {
 };
 
 export type ConsentStatus = (typeof consentStatus.enumValues)[number];
+export type ConsentDecision = 'accepted' | 'withdrawn';
+export type ConsentDecisionOutcome = 'applied' | 'no_change';
+export type ConsentDecisionSource = 'registration' | 'privacy_ui' | 'legacy_backfill';
 export type AiTurnStatus = (typeof aiTurnStatus.enumValues)[number];
 export type MessageRole = (typeof messageRole.enumValues)[number];
 export type RiskLevel = (typeof riskLevel.enumValues)[number];
