@@ -9,7 +9,8 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
 - Phase 2 — Core Backend Foundation: Complete
 - Phase 3 — AI Foundation: Complete
 - Phase 4 — AI Safety: Engineering scope complete
-- Phase 5 — User Features: In progress; Phase 5A and Phase 5B complete
+- Phase 5 — User Features: In progress; Phase 5A and Phase 5B complete; Phase 5C
+  has a bounded Incognito/Privacy implementation batch under review
 - Phase 5B — Chat Product Experience: Product UI engineering complete
 - Phase 6 — Admin and operations features: Not started
 
@@ -39,8 +40,26 @@ safety, or validation for clinical use.
 
 - Phase 5A is merged into `develop` and its post-merge CI passed.
 - Phase 5B is merged into `develop` and its post-merge quality and browser E2E CI passed.
-- Public Incognito lifecycle, Mood, Profile, Privacy UI, Knowledge Base,
-  Admin/Reviewer features, and production enablement remain outside completed scope.
+- The Phase 5C batch adds a session-bound public Incognito lifecycle, strict
+  persistent/Incognito chat protocol, bounded in-process context, runtime cleanup,
+  and a read-only Privacy/Consent overview. It does not mark all Phase 5C product
+  policy work complete until its implementation PR is reviewed and merged.
+- Mood, Profile, Knowledge Base, Admin/Reviewer features, and production enablement
+  remain outside completed scope.
+
+## Phase 5C Batch Scope and Open Consent Product Flow
+
+The bounded Phase 5C batch covers Incognito create/chat/end/lost-state UX and a
+sanitized, paginated view of current required Consent status and known Consent
+history. Incognito ordinary text remains outside browser persistent storage and
+ordinary Conversation, Message, and AI Turn tables. Necessary minimal Risk Event
+and Audit records remain possible under ADR-014.
+
+ADR-011 remains unchanged. The batch provides no Consent withdrawal/reaccept UI and
+does not redefine Consent types, versions, legal copy, or same-version lifecycle.
+The product flow for withdrawal, later reopening, account deletion/export, backup
+deletion, and final safety/audit retention remains unresolved. The decision note is
+Proposed only.
 
 ## Production Readiness Blockers
 
@@ -67,9 +86,8 @@ None.
 
 ## Immediate Next Step
 
-Proceed to Phase 5C Incognito and Privacy Experience design review only when
-explicitly authorized. Do not begin Phase 5C implementation or Phase 5D/5E work
-from this status file alone.
+Complete review and CI for the bounded Phase 5C Incognito/Privacy implementation
+PR. Do not begin Phase 5D/5E or Phase 6 work from this status file alone.
 
 ## Source of Truth
 
