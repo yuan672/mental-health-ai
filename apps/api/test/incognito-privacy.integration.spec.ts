@@ -14,6 +14,7 @@ import {
   sessions,
   users,
 } from '@mental-health/database';
+import type { IncognitoAiStreamEvent } from '@mental-health/types';
 import type { INestApplication } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { resolve } from 'node:path';
@@ -73,7 +74,7 @@ function deferred<T = void>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
-type ProviderMode = 'success' | 'wait-for-release';
+type ProviderMode = 'success' | 'fail-before-segment' | 'wait-for-release';
 
 class ControlledGenerationProvider implements LLMProvider {
   mode: ProviderMode = 'success';
@@ -107,6 +108,9 @@ class ControlledGenerationProvider implements LLMProvider {
     const metadata = { provider: 'fake', model: 'phase5c-fake', requestId: 'safe-trace' };
     this.dispatched.resolve();
     yield { type: 'started', metadata };
+    if (this.mode === 'fail-before-segment') {
+      throw new LLMProviderFailure('upstream', true, metadata.requestId);
+    }
     if (this.mode === 'wait-for-release') {
       // Deliberately ignore AbortSignal until released. This simulates a late, badly behaved
       // upstream result so the application boundary—not the fake—must reject it.
@@ -289,18 +293,7 @@ describe('Phase 5C Incognito and privacy API integration', () => {
   async function createAuth(withRequiredConsents = true): Promise<AuthFixture> {
     const now = new Date();
     const userId = randomUUID();
-    const sessionId = randomUUID();
-    const rawToken = `phase5c-session-${randomUUID()}`;
-    const csrfToken = `phase5c-csrf-${randomUUID()}`;
-    const expiresAt = new Date(now.getTime() + 60 * 60 * 1000);
     await database.database.insert(users).values({ id: userId, createdAt: now });
-    await database.database.insert(sessions).values({
-      id: sessionId,
-      userId,
-      tokenHash: hashSessionToken(rawToken),
-      createdAt: now,
-      expiresAt,
-    });
     if (withRequiredConsents) {
       await database.database.insert(consents).values([
         {
@@ -321,6 +314,21 @@ describe('Phase 5C Incognito and privacy API integration', () => {
         },
       ]);
     }
+    return createSessionForUser(userId, now);
+  }
+
+  async function createSessionForUser(userId: string, now = new Date()): Promise<AuthFixture> {
+    const sessionId = randomUUID();
+    const rawToken = `phase5c-session-${randomUUID()}`;
+    const csrfToken = `phase5c-csrf-${randomUUID()}`;
+    const expiresAt = new Date(now.getTime() + 60 * 60 * 1000);
+    await database.database.insert(sessions).values({
+      id: sessionId,
+      userId,
+      tokenHash: hashSessionToken(rawToken),
+      createdAt: now,
+      expiresAt,
+    });
     return {
       userId,
       sessionId,
@@ -545,6 +553,146 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     expect(provider.streamCalls).toBe(0);
     expect(riskClassifier.calls).toBe(0);
     expect((await quota.getUsage(auth.userId, new Date())).usedCount).toBe(1);
+  });
+
+  it('refunds the quota ledger when Provider infrastructure fails before any approved segment', async () => {
+    provider.reset('fail-before-segment');
+    const auth = await createAuth();
+    const contextId = await createContext(auth);
+    const clientRequestId = randomUUID();
+    const response = await stream(auth, {
+      mode: 'incognito',
+      contextId,
+      clientRequestId,
+      message: '合成的首段前 Provider 故障输入',
+    }).expect(200);
+
+    const events = parseSse(response.text);
+    expect(events.map((event) => event.type)).toEqual(['turn.started', 'turn.failed']);
+    expect(events.some((event) => event.type === 'message.segment')).toBe(false);
+    expect(provider.streamCalls).toBe(1);
+    expect((await quota.getUsage(auth.userId, new Date())).usedCount).toBe(0);
+    const [ledgerCount] = await database.database
+      .select({ value: count() })
+      .from(quotaConsumptions)
+      .where(eq(quotaConsumptions.userId, auth.userId));
+    expect(Number(ledgerCount?.value)).toBe(0);
+    expect(contexts.get(auth.userId, auth.sessionId, contextId)?.messages).toEqual([
+      { role: 'user', content: '合成的首段前 Provider 故障输入' },
+    ]);
+  });
+
+  it('keeps one quota consumption when the client cancels after Provider dispatch', async () => {
+    provider.reset('wait-for-release');
+    const auth = await createAuth();
+    const contextId = await createContext(auth);
+    const clientController = new AbortController();
+    const prepared = await orchestration.prepareIncognitoTurn(
+      { userId: auth.userId, sessionId: auth.sessionId },
+      {
+        mode: 'incognito',
+        contextId,
+        clientRequestId: randomUUID(),
+        message: '合成的 Provider 启动后取消输入',
+      },
+      clientController.signal,
+    );
+    if (prepared.kind !== 'ready') throw new Error('Expected a ready Incognito generation');
+    const generated = orchestration.streamPreparedIncognitoTurn(prepared, clientController.signal);
+    const iterator = generated[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: { type: 'turn.started', data: { mode: 'incognito' } },
+    });
+    const pending = iterator.next();
+    await provider.dispatched.promise;
+    clientController.abort(new Error('synthetic_client_cancel'));
+    provider.releaseLateResult();
+
+    await expect(pending).rejects.toMatchObject({ code: 'AI_PROVIDER_UNAVAILABLE' });
+    expect(provider.streamCalls).toBe(1);
+    expect((await quota.getUsage(auth.userId, new Date())).usedCount).toBe(1);
+    const [ledgerCount] = await database.database
+      .select({ value: count() })
+      .from(quotaConsumptions)
+      .where(eq(quotaConsumptions.userId, auth.userId));
+    expect(Number(ledgerCount?.value)).toBe(1);
+    expect(contexts.get(auth.userId, auth.sessionId, contextId)?.messages).toEqual([
+      { role: 'user', content: '合成的 Provider 启动后取消输入' },
+    ]);
+  });
+
+  it('cancels an in-flight generation at context session expiry and rejects late output', async () => {
+    provider.reset('wait-for-release');
+    const auth = await createAuth();
+    const now = new Date();
+    const context = contexts.create(
+      auth.userId,
+      auth.sessionId,
+      new Date(now.getTime() + 100),
+      now,
+    );
+    const prepared = await orchestration.prepareIncognitoTurn(
+      { userId: auth.userId, sessionId: auth.sessionId },
+      {
+        mode: 'incognito',
+        contextId: context.id,
+        clientRequestId: randomUUID(),
+        message: '合成的 Session 到期竞态输入',
+      },
+      new AbortController().signal,
+      now,
+    );
+    if (prepared.kind !== 'ready') throw new Error('Expected a ready Incognito generation');
+    const generated = orchestration.streamPreparedIncognitoTurn(
+      prepared,
+      new AbortController().signal,
+    );
+    const iterator = generated[Symbol.asyncIterator]();
+    const visibleEvents: IncognitoAiStreamEvent[] = [];
+    const started = await iterator.next();
+    if (!started.done) visibleEvents.push(started.value);
+    const pending = iterator.next();
+    await provider.dispatched.promise;
+    expect(contexts.purgeExpired(new Date(now.getTime() + 101))).toBe(1);
+    provider.releaseLateResult();
+
+    await expect(pending).rejects.toMatchObject({ code: 'AI_PROVIDER_UNAVAILABLE' });
+    expect(visibleEvents.map((event) => event.type)).toEqual(['turn.started']);
+    expect(visibleEvents.some((event) => event.type === 'message.segment')).toBe(false);
+    expect(visibleEvents.some((event) => event.type === 'turn.completed')).toBe(false);
+    expect(
+      contexts.get(auth.userId, auth.sessionId, context.id, new Date(now.getTime() + 101)),
+    ).toBeNull();
+    expect(provider.streamCalls).toBe(1);
+  });
+
+  it('does not disclose or mutate an Incognito context across users or sessions', async () => {
+    const owner = await createAuth();
+    const sameUserOtherSession = await createSessionForUser(owner.userId);
+    const otherUser = await createAuth();
+    const contextId = await createContext(owner);
+    const body = {
+      mode: 'incognito',
+      contextId,
+      clientRequestId: randomUUID(),
+      message: '合成的 ownership 输入',
+    };
+
+    const crossSession = await stream(sameUserOtherSession, body).expect(409);
+    const crossUser = await stream(otherUser, { ...body, clientRequestId: randomUUID() }).expect(
+      409,
+    );
+    expect(crossSession.body.error.code).toBe('AI_INCOGNITO_CONTEXT_LOST');
+    expect(crossUser.body.error.code).toBe('AI_INCOGNITO_CONTEXT_LOST');
+    expect(provider.streamCalls).toBe(0);
+    expect(riskClassifier.calls).toBe(0);
+
+    await endContext(sameUserOtherSession, contextId).expect(200);
+    await endContext(otherUser, contextId).expect(200);
+    expect(contexts.get(owner.userId, owner.sessionId, contextId)).not.toBeNull();
+
+    await stream(owner, { ...body, clientRequestId: randomUUID() }).expect(200);
+    expect(provider.streamCalls).toBe(1);
   });
 
   it('cancels a late Provider result after explicit end and never appends it', async () => {
