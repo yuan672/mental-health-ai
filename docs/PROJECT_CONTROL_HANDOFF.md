@@ -11,7 +11,8 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
 - Phase 4 — AI Safety: Engineering scope complete
 - Phase 5 — User Features: In progress; Phase 5A and Phase 5B complete; the
   bounded Phase 5C Incognito/Privacy engineering scope is complete, while the
-  overall Phase 5C remains incomplete pending Consent product decisions
+  Consent lifecycle backend is implemented in the current delivery branch;
+  overall Phase 5C remains incomplete pending the full Privacy action UI
 - Phase 5B — Chat Product Experience: Product UI engineering complete
 - Phase 6 — Admin and operations features: Not started
 
@@ -61,10 +62,13 @@ and Audit records remain possible under ADR-014.
 ADR-016 is Accepted as the target Consent lifecycle architecture. It narrowly
 supersedes ADR-011's single-lifecycle/no-reaccept constraint and ADR-015's broad
 all-user withdrawal cleanup rule; all other decisions in those ADRs remain
-Accepted. The backend ledger, dispatch coordination, and Privacy
-withdrawal/reaccept controls are not yet implemented. Consent types, formal legal
-copy, production document approval, retention, account deletion/export, backup
-deletion, and cross-instance cancellation remain unresolved production matters.
+Accepted. The implementation change set containing this status update provides
+the backend projection/decision ledger, environment-aware document registry,
+operation replay, and single-process dependency-scoped dispatch/cancellation
+coordination. The Privacy withdrawal/reaccept/new-version controls are not yet
+implemented. Consent types, formal legal copy, production document approval,
+retention, account deletion/export, backup deletion, and cross-instance
+cancellation remain unresolved production matters.
 
 ## Production Readiness Blockers
 
@@ -91,10 +95,9 @@ None.
 
 ## Immediate Next Step
 
-After the bounded PR #12 implementation passes final review and is merged, resolve
-the user-facing Consent withdrawal/reactivation lifecycle before extending the
-Privacy experience. Do not begin Phase 5D/5E or Phase 6 work from this status file
-alone.
+After the Consent lifecycle backend implementation passes final review and is
+merged, deliver the user-facing Privacy withdrawal/reactivation/new-version flow.
+Do not begin Phase 5D/5E or Phase 6 work from this status file alone.
 
 ## Source of Truth
 

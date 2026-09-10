@@ -92,7 +92,16 @@ carry a client-generated UUID `operationId`, the owned type/version and
 `documentKey` and `documentRevision`; `withdraw` rejects those document fields.
 Exact retries reuse `operationId`, return the original immutable receipt and do
 not append another decision. Reusing an operation ID for different semantics or
-submitting a stale revision returns a bounded 409 error.
+submitting a stale revision returns a bounded 409 error. Both mutation and read
+responses use `Cache-Control: private, no-store`.
+
+Acceptance succeeds only for the one current environment-eligible document
+identity. Once a policy version has been bound to a non-legacy document identity,
+the server rejects a different identity for that same version instead of silently
+replacing its evidence. Withdrawal derives the target document identity from the
+owned applied acceptance and therefore remains available when that document is no
+longer current or reachable. A `no_change` receipt never becomes an authorization
+dependency or withdrawal target.
 
 `GET /consents?limit=20&cursor=...` returns a newest-first, bounded page of the
 authenticated user's known consent history:
@@ -149,3 +158,12 @@ ADR-016 permits a new explicit acceptance of the same current version after
 withdrawal. Applied transitions increment state revision; state-preserving
 operations create durable `no_change` receipts. Production document content,
 legal classification and Consent retention remain separate readiness decisions.
+
+Mutation failures use bounded error semantics. `CONSENT_UNAVAILABLE` means the
+operation did not enter the coordinated mutation boundary and the client may
+retry later. `CONSENT_RESULT_UNKNOWN` means the operation may have committed but
+post-commit coordination or acknowledgement could not be confirmed; the client
+must reuse the same `operationId` to resolve the original receipt instead of
+creating a replacement operation. Exact replay is resolved before current policy
+or revision checks, so an already committed operation remains replayable after a
+later policy or state change.

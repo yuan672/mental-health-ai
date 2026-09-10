@@ -19,11 +19,18 @@ processed by configured third-party AI generation and safety-classification
 providers when AI chat is enabled and required consent is active.
 
 The privacy view shows server-reported current required consent status and a
-sanitized, paginated history. It is read-only in this batch. ADR-011's existing
-withdrawal lifecycle remains unchanged, including the prohibition on same-version
-reacceptance after withdrawal. Product/legal decisions for withdrawal UX,
-reopening, account deletion, backups, and final Risk Event/Audit retention remain
-unresolved readiness work.
+sanitized, paginated decision history. It remains read-only in this batch. The
+backend now implements ADR-016's document-bound accept/withdraw contract,
+same-version re-acceptance, immutable decision receipts, exact operation replay,
+and dependency-scoped runtime cancellation. The full user-facing withdrawal,
+re-acceptance, stale-tab, and new-version interaction flows remain the next
+Phase 5C delivery; no legacy mutation bypass is exposed.
+
+Development/Test use visibly synthetic Consent documents. They are not production
+policy content and cannot make Staging/Production registration or third-party AI
+admission eligible. Product/legal decisions for formal document content, the
+meaning and sufficiency of the current Consent types, retention, account deletion,
+backups, and final Risk Event/Audit retention remain unresolved readiness work.
 
 Production Safety Lock remains enforced, Production AI Chat remains disabled,
 `productionSafe=false`, and real-model safety evaluation remains not evaluated.
