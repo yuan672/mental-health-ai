@@ -12,6 +12,7 @@ import { HealthModule } from './health/health.module';
 import { MessageModule } from './messages/message.module';
 import { QuotaModule } from './quota/quota.module';
 import { SecurityModule } from './security/security.module';
+import { safeOperationalPath } from './common/http/safe-request-path';
 
 export const LOG_REDACT_PATHS = [
   'req.headers.authorization',
@@ -23,6 +24,7 @@ export const LOG_REDACT_PATHS = [
   'req.headers.x-api-key',
   'req.headers["x-api-key"]',
   'req.body',
+  'req.url',
   'res.headers["set-cookie"]',
   'email',
   'password',
@@ -73,8 +75,9 @@ export const LOG_REDACT_PATHS = [
           paths: [...LOG_REDACT_PATHS],
           remove: true,
         },
-        customProps: () => ({
+        customProps: (request) => ({
           logType: 'application',
+          path: safeOperationalPath(request.url),
         }),
       },
     }),

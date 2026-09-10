@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AppError, ERROR_CODES, type ErrorCode } from '../errors';
+import { safeOperationalPath } from '../http/safe-request-path';
 
 type ErrorResponse = {
   success: false;
@@ -64,7 +65,7 @@ export class AppExceptionFilter implements ExceptionFilter {
       event: 'request_failed',
       requestId,
       method: request.method,
-      path: request.path,
+      path: safeOperationalPath(request.path),
       errorCode: appError.code,
       statusCode: appError.statusCode,
       errorName: exception instanceof Error ? exception.name : 'UnknownError',
