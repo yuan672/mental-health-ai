@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import {
   ageVerifications,
   and,
@@ -253,50 +252,5 @@ export class UsersRepository {
       .limit(1);
 
     return consent ?? null;
-  }
-
-  async createConsent(input: ConsentRecord): Promise<void> {
-    const effectiveAt = input.effectiveAt ?? input.withdrawnAt ?? input.acceptedAt;
-    const stateRevision = input.stateRevision ?? (input.status === 'withdrawn' ? 2 : 1);
-    await this.databaseService.database.transaction(async (transaction) => {
-      await transaction.insert(consents).values({ ...input, effectiveAt, stateRevision });
-      const acceptanceId = randomUUID();
-      await transaction.insert(consentDecisions).values({
-        id: acceptanceId,
-        consentId: input.id,
-        userId: input.userId,
-        consentType: input.consentType,
-        consentVersion: input.consentVersion,
-        operationId: randomUUID(),
-        decision: 'accepted',
-        outcome: 'applied',
-        priorRevision: 0,
-        resultingRevision: 1,
-        occurredAt: input.acceptedAt,
-        documentKey: null,
-        documentRevision: null,
-        targetAcceptanceDecisionId: null,
-        decisionSource: 'legacy_backfill',
-      });
-      if (input.status === 'withdrawn' && input.withdrawnAt) {
-        await transaction.insert(consentDecisions).values({
-          id: randomUUID(),
-          consentId: input.id,
-          userId: input.userId,
-          consentType: input.consentType,
-          consentVersion: input.consentVersion,
-          operationId: randomUUID(),
-          decision: 'withdrawn',
-          outcome: 'applied',
-          priorRevision: 1,
-          resultingRevision: 2,
-          occurredAt: input.withdrawnAt,
-          documentKey: null,
-          documentRevision: null,
-          targetAcceptanceDecisionId: acceptanceId,
-          decisionSource: 'legacy_backfill',
-        });
-      }
-    });
   }
 }

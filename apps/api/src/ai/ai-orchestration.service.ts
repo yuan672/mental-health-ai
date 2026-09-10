@@ -298,7 +298,9 @@ export class AiOrchestrationService {
         } catch {
           // A trusted safety response remains deliverable even if the bounded runtime is full.
         }
+        await this.consentExecutions.assertStillUsable(execution);
         throwIfAborted(execution.signal);
+        throwIfAborted(admission.generation.signal);
         return {
           kind: 'trusted',
           principal,
@@ -328,6 +330,8 @@ export class AiOrchestrationService {
         await this.quota.refundQuota(principal.userId, admission.quotaIdempotencyKey, now);
         throw new AIIncognitoContextLostError();
       }
+      await this.consentExecutions.assertStillUsable(execution);
+      throwIfAborted(execution.signal);
       throwIfAborted(admission.generation.signal);
       return {
         kind: 'ready',
@@ -419,18 +423,20 @@ export class AiOrchestrationService {
         if (trustedResponse) {
           try {
             await this.consentExecutions.assertStillUsable(execution);
-            const completed = await this.aiTurns.completeTrusted(
-              claimed.turn,
-              {
-                userMessageContent: input.message,
-                assistantContent: trustedResponse.content,
-                promptKey: trustedResponse.templateKey,
-                promptVersion: trustedResponse.templateVersion,
-                riskDecision,
-                templateKey: trustedResponse.templateKey,
-                templateVersion: trustedResponse.templateVersion,
-              },
-              now,
+            const completed = await this.consentExecutions.runWhileUsable(execution, () =>
+              this.aiTurns.completeTrusted(
+                claimed.turn,
+                {
+                  userMessageContent: input.message,
+                  assistantContent: trustedResponse.content,
+                  promptKey: trustedResponse.templateKey,
+                  promptVersion: trustedResponse.templateVersion,
+                  riskDecision,
+                  templateKey: trustedResponse.templateKey,
+                  templateVersion: trustedResponse.templateVersion,
+                },
+                now,
+              ),
             );
             await this.consentExecutions.assertStillUsable(execution);
             throwIfAborted(execution.signal);
@@ -479,13 +485,10 @@ export class AiOrchestrationService {
         );
         throwIfAborted(execution.signal);
         await this.consentExecutions.assertStillUsable(execution);
-        const started = await this.aiTurns.start(
-          claimed.turn,
-          input.message,
-          prompt,
-          riskDecision,
-          now,
+        const started = await this.consentExecutions.runWhileUsable(execution, () =>
+          this.aiTurns.start(claimed.turn, input.message, prompt, riskDecision, now),
         );
+        await this.consentExecutions.assertStillUsable(execution);
         throwIfAborted(execution.signal);
         return { kind: 'ready', turn: started, context, riskDecision, execution };
       } catch (error) {
@@ -784,7 +787,9 @@ export class AiOrchestrationService {
       }
       throwIfAborted(generationController.signal);
       await this.consentExecutions.assertStillUsable(prepared.execution);
-      const completed = await this.aiTurns.complete(turn, approvedText, new Date());
+      const completed = await this.consentExecutions.runWhileUsable(prepared.execution, () =>
+        this.aiTurns.complete(turn, approvedText, new Date()),
+      );
       await this.consentExecutions.assertStillUsable(prepared.execution);
       throwIfAborted(generationController.signal);
       this.logging.turnCompleted(metadata, {
@@ -857,7 +862,9 @@ export class AiOrchestrationService {
           throwIfAborted(prepared.execution.signal);
           throwIfAborted(clientSignal);
           await this.consentExecutions.assertStillUsable(prepared.execution);
-          completed = await this.aiTurns.complete(turn, approvedText, new Date());
+          completed = await this.consentExecutions.runWhileUsable(prepared.execution, () =>
+            this.aiTurns.complete(turn, approvedText, new Date()),
+          );
         } catch (persistenceError) {
           await this.finishAfterSafetyPersistenceFailure(turn);
           throw persistenceError;
@@ -876,7 +883,8 @@ export class AiOrchestrationService {
       const timedOut =
         error instanceof ProviderEventTimeout ||
         generationController.signal.reason instanceof ProviderEventTimeout ||
-        generationController.signal.reason instanceof AiExecutionTotalTimeoutError;
+        generationController.signal.reason instanceof AiExecutionTotalTimeoutError ||
+        prepared.execution.signal.reason instanceof AiExecutionTotalTimeoutError;
       const clientCancelled = clientSignal.aborted && !timedOut;
       const category = timedOut ? 'timeout' : failureCategory(error);
 
@@ -923,7 +931,9 @@ export class AiOrchestrationService {
           throwIfAborted(prepared.execution.signal);
           throwIfAborted(clientSignal);
           await this.consentExecutions.assertStillUsable(prepared.execution);
-          const completed = await this.aiTurns.complete(turn, fallback.content, new Date());
+          const completed = await this.consentExecutions.runWhileUsable(prepared.execution, () =>
+            this.aiTurns.complete(turn, fallback.content, new Date()),
+          );
           yield {
             type: 'turn.completed',
             data: {

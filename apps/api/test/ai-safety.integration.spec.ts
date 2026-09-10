@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   aiTurns,
   auditLogs,
+  consentDecisions,
   consents,
   conversations as conversationRows,
   count,
@@ -335,26 +336,81 @@ describe('Phase 4 AI safety integration', () => {
     const userId = randomUUID();
     await database.database.insert(users).values({ id: userId, createdAt: NOW });
     if (withRequiredConsents) {
-      await database.database.insert(consents).values([
-        {
-          id: randomUUID(),
-          userId,
-          consentType: 'terms_of_service',
-          consentVersion: '1.0',
-          status: 'accepted',
-          acceptedAt: NOW,
-        },
-        {
-          id: randomUUID(),
-          userId,
-          consentType: 'privacy_policy',
-          consentVersion: '1.0',
-          status: 'accepted',
-          acceptedAt: NOW,
-        },
-      ]);
+      await insertConsentFixture(userId, 'terms_of_service', '1.0', 'accepted');
+      await insertConsentFixture(userId, 'privacy_policy', '1.0', 'accepted');
     }
     return userId;
+  }
+
+  async function insertConsentFixture(
+    userId: string,
+    consentType: 'terms_of_service' | 'privacy_policy',
+    consentVersion: string,
+    status: 'accepted' | 'withdrawn',
+  ): Promise<void> {
+    const consentId = randomUUID();
+    const acceptanceDecisionId = randomUUID();
+    const document =
+      consentVersion === '1.0'
+        ? {
+            documentKey: `synthetic.${consentType === 'terms_of_service' ? 'terms-of-service' : 'privacy-policy'}`,
+            documentRevision: 'test-revision-1',
+            decisionSource: 'registration' as const,
+          }
+        : {
+            documentKey: null,
+            documentRevision: null,
+            decisionSource: 'legacy_backfill' as const,
+          };
+    await database.database.transaction(async (transaction) => {
+      await transaction.insert(consents).values({
+        id: consentId,
+        userId,
+        consentType,
+        consentVersion,
+        status,
+        acceptedAt: NOW,
+        withdrawnAt: status === 'withdrawn' ? NOW : null,
+        stateRevision: status === 'withdrawn' ? 2 : 1,
+        effectiveAt: NOW,
+      });
+      await transaction.insert(consentDecisions).values({
+        id: acceptanceDecisionId,
+        consentId,
+        userId,
+        consentType,
+        consentVersion,
+        operationId: randomUUID(),
+        decision: 'accepted',
+        outcome: 'applied',
+        priorRevision: 0,
+        resultingRevision: 1,
+        occurredAt: NOW,
+        documentKey: document.documentKey,
+        documentRevision: document.documentRevision,
+        targetAcceptanceDecisionId: null,
+        decisionSource: document.decisionSource,
+      });
+      if (status === 'withdrawn') {
+        await transaction.insert(consentDecisions).values({
+          id: randomUUID(),
+          consentId,
+          userId,
+          consentType,
+          consentVersion,
+          operationId: randomUUID(),
+          decision: 'withdrawn',
+          outcome: 'applied',
+          priorRevision: 1,
+          resultingRevision: 2,
+          occurredAt: NOW,
+          documentKey: null,
+          documentRevision: null,
+          targetAcceptanceDecisionId: acceptanceDecisionId,
+          decisionSource: 'privacy_ui',
+        });
+      }
+    });
   }
 
   async function exhaustQuota(userId: string): Promise<void> {
@@ -501,25 +557,13 @@ describe('Phase 4 AI safety integration', () => {
       const userId = await createUser(false);
       if (consentState !== 'missing') {
         const version = consentState === 'outdated' ? '0.9' : '1.0';
-        await database.database.insert(consents).values([
-          {
-            id: randomUUID(),
-            userId,
-            consentType: 'terms_of_service',
-            consentVersion: version,
-            status: 'accepted',
-            acceptedAt: NOW,
-          },
-          {
-            id: randomUUID(),
-            userId,
-            consentType: 'privacy_policy',
-            consentVersion: version,
-            status: consentState === 'withdrawn' ? 'withdrawn' : 'accepted',
-            acceptedAt: NOW,
-            ...(consentState === 'withdrawn' ? { withdrawnAt: NOW } : {}),
-          },
-        ]);
+        await insertConsentFixture(userId, 'terms_of_service', version, 'accepted');
+        await insertConsentFixture(
+          userId,
+          'privacy_policy',
+          version,
+          consentState === 'withdrawn' ? 'withdrawn' : 'accepted',
+        );
       }
 
       await expect(prepare(userId, '不得进入任何分类器')).rejects.toMatchObject({
@@ -681,10 +725,19 @@ describe('Phase 4 AI safety integration', () => {
     const clientRequestId = randomUUID();
     riskClassifier.reset('CRITICAL');
     const controller = new AbortController();
+    let persistenceStarted!: () => void;
+    let releasePersistence!: () => void;
+    const started = new Promise<void>((resolve) => {
+      persistenceStarted = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releasePersistence = resolve;
+    });
     const persistence = jest
       .spyOn(aiTurnsService, 'completeTrusted')
       .mockImplementationOnce(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 30));
+        persistenceStarted();
+        await release;
         throw new Error('synthetic delayed persistence failure');
       });
     const pending = orchestration.preparePersistentTurn(
@@ -693,7 +746,9 @@ describe('Phase 4 AI safety integration', () => {
       controller.signal,
       NOW,
     );
-    setTimeout(() => controller.abort(new Error('synthetic client disconnect')), 5);
+    await started;
+    controller.abort(new Error('synthetic client disconnect'));
+    releasePersistence();
     try {
       await expect(pending).rejects.toThrow('synthetic client disconnect');
     } finally {
@@ -995,16 +1050,32 @@ describe('Phase 4 AI safety integration', () => {
     const clientRequestId = randomUUID();
     riskClassifier.reset('HIGH');
 
-    const attempts = await Promise.all(
-      Array.from({ length: 20 }, () =>
-        orchestration.preparePersistentTurn(
-          { userId, sessionId: randomUUID() },
-          { clientRequestId, conversationId: conversation.id, message: '并发安全测试消息。' },
-          new AbortController().signal,
-          NOW,
+    const previousGlobalLimit = env.CONSENT_ACTIVE_EXECUTIONS_MAX_GLOBAL;
+    const previousUserLimit = env.CONSENT_ACTIVE_EXECUTIONS_MAX_PER_USER;
+    const previousGlobalWaiterLimit = env.CONSENT_LOCK_MAX_WAITERS_GLOBAL;
+    const previousUserWaiterLimit = env.CONSENT_LOCK_MAX_WAITERS_PER_USER;
+    env.CONSENT_ACTIVE_EXECUTIONS_MAX_GLOBAL = Math.max(previousGlobalLimit, 40);
+    env.CONSENT_ACTIVE_EXECUTIONS_MAX_PER_USER = 20;
+    env.CONSENT_LOCK_MAX_WAITERS_GLOBAL = Math.max(previousGlobalWaiterLimit, 100);
+    env.CONSENT_LOCK_MAX_WAITERS_PER_USER = 50;
+    let attempts;
+    try {
+      attempts = await Promise.all(
+        Array.from({ length: 20 }, () =>
+          orchestration.preparePersistentTurn(
+            { userId, sessionId: randomUUID() },
+            { clientRequestId, conversationId: conversation.id, message: '并发安全测试消息。' },
+            new AbortController().signal,
+            NOW,
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      env.CONSENT_ACTIVE_EXECUTIONS_MAX_GLOBAL = previousGlobalLimit;
+      env.CONSENT_ACTIVE_EXECUTIONS_MAX_PER_USER = previousUserLimit;
+      env.CONSENT_LOCK_MAX_WAITERS_GLOBAL = previousGlobalWaiterLimit;
+      env.CONSENT_LOCK_MAX_WAITERS_PER_USER = previousUserWaiterLimit;
+    }
     const turnId = attempts[0]!.turn.id;
     const [turnCount] = await database.database
       .select({ value: count() })
@@ -1047,30 +1118,46 @@ describe('Phase 4 AI safety integration', () => {
     const clientRequestId = randomUUID();
     riskClassifier.reset('CRITICAL');
 
-    const results = await Promise.allSettled(
-      Array.from({ length: 20 }, async () => {
-        const pending = consentExecutions.registerPending({
-          userId,
-          sessionId,
-          clientSignal: new AbortController().signal,
-        });
-        const execution = await consentExecutions.bindRequired(pending);
-        try {
-          return await incognito.claim({
+    const previousGlobalLimit = env.CONSENT_ACTIVE_EXECUTIONS_MAX_GLOBAL;
+    const previousUserLimit = env.CONSENT_ACTIVE_EXECUTIONS_MAX_PER_USER;
+    const previousGlobalWaiterLimit = env.CONSENT_LOCK_MAX_WAITERS_GLOBAL;
+    const previousUserWaiterLimit = env.CONSENT_LOCK_MAX_WAITERS_PER_USER;
+    env.CONSENT_ACTIVE_EXECUTIONS_MAX_GLOBAL = Math.max(previousGlobalLimit, 40);
+    env.CONSENT_ACTIVE_EXECUTIONS_MAX_PER_USER = 20;
+    env.CONSENT_LOCK_MAX_WAITERS_GLOBAL = Math.max(previousGlobalWaiterLimit, 100);
+    env.CONSENT_LOCK_MAX_WAITERS_PER_USER = 50;
+    let results: PromiseSettledResult<Awaited<ReturnType<typeof incognito.claim>>>[];
+    try {
+      results = await Promise.allSettled(
+        Array.from({ length: 20 }, async () => {
+          const pending = consentExecutions.registerPending({
             userId,
             sessionId,
-            contextId: runtimeContext.id,
-            clientRequestId,
-            message: '合成的紧急风险测试表达。',
-            signal: execution.signal,
-            execution,
-            now: NOW,
+            clientSignal: new AbortController().signal,
           });
-        } finally {
-          execution.dispose();
-        }
-      }),
-    );
+          const execution = await consentExecutions.bindRequired(pending);
+          try {
+            return await incognito.claim({
+              userId,
+              sessionId,
+              contextId: runtimeContext.id,
+              clientRequestId,
+              message: '合成的紧急风险测试表达。',
+              signal: execution.signal,
+              execution,
+              now: NOW,
+            });
+          } finally {
+            execution.dispose();
+          }
+        }),
+      );
+    } finally {
+      env.CONSENT_ACTIVE_EXECUTIONS_MAX_GLOBAL = previousGlobalLimit;
+      env.CONSENT_ACTIVE_EXECUTIONS_MAX_PER_USER = previousUserLimit;
+      env.CONSENT_LOCK_MAX_WAITERS_GLOBAL = previousGlobalWaiterLimit;
+      env.CONSENT_LOCK_MAX_WAITERS_PER_USER = previousUserWaiterLimit;
+    }
     const fulfilled = results.filter(
       (result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof incognito.claim>>> =>
         result.status === 'fulfilled',
@@ -1418,7 +1505,7 @@ describe('Phase 4 AI safety integration', () => {
   it('isolates Incognito safety context by both user and session', async () => {
     const userId = await createUser();
     const sessionId = randomUUID();
-    const own = incognitoStore.create(userId, sessionId, new Date(NOW.getTime() + 60_000), NOW);
+    const own = incognitoStore.create(userId, sessionId, new Date(NOW.getTime() + 60_000), [], NOW);
     const ownGeneration = incognitoStore.claimGeneration(
       userId,
       sessionId,
@@ -1441,6 +1528,7 @@ describe('Phase 4 AI safety integration', () => {
       userId,
       randomUUID(),
       new Date(NOW.getTime() + 60_000),
+      [],
       NOW,
     );
     const otherGeneration = incognitoStore.claimGeneration(

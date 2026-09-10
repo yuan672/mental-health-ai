@@ -37,6 +37,7 @@ export class ConsentsController {
 
   @Post()
   @HttpCode(200)
+  @Header('Cache-Control', 'private, no-store')
   @UseGuards(AuthenticatedSessionGuard, CsrfGuard)
   async mutate(
     @Req() request: AuthenticatedRequest,

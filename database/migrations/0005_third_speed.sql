@@ -91,4 +91,45 @@ ALTER TABLE "consent_decisions" ADD CONSTRAINT "consent_decisions_projection_fk"
 --> statement-breakpoint
 ALTER TABLE "consent_decisions" ADD CONSTRAINT "consent_decisions_target_acceptance_fk" FOREIGN KEY ("target_acceptance_decision_id","consent_id","user_id","consent_type","consent_version") REFERENCES "public"."consent_decisions"("id","consent_id","user_id","consent_type","consent_version") ON DELETE cascade ON UPDATE no action;
 --> statement-breakpoint
+CREATE FUNCTION "validate_consent_withdrawal_target"() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+	IF NEW."decision" = 'withdrawn' AND NOT EXISTS (
+		SELECT 1
+		FROM "consent_decisions" target
+		WHERE target."id" = NEW."target_acceptance_decision_id"
+		  AND target."consent_id" = NEW."consent_id"
+		  AND target."user_id" = NEW."user_id"
+		  AND target."consent_type" = NEW."consent_type"
+		  AND target."consent_version" = NEW."consent_version"
+		  AND target."decision" = 'accepted'
+		  AND target."outcome" = 'applied'
+	) THEN
+		RAISE EXCEPTION 'Consent withdrawal target must be an applied acceptance';
+	END IF;
+	RETURN NEW;
+END;
+$$;
+--> statement-breakpoint
+CREATE TRIGGER "consent_decisions_withdrawal_target_trigger"
+BEFORE INSERT OR UPDATE OF "target_acceptance_decision_id", "decision"
+ON "consent_decisions"
+FOR EACH ROW
+EXECUTE FUNCTION "validate_consent_withdrawal_target"();
+--> statement-breakpoint
+CREATE FUNCTION "prevent_consent_decision_update"() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+	RAISE EXCEPTION 'Consent decisions are append-only';
+END;
+$$;
+--> statement-breakpoint
+CREATE TRIGGER "consent_decisions_append_only_trigger"
+BEFORE UPDATE
+ON "consent_decisions"
+FOR EACH ROW
+EXECUTE FUNCTION "prevent_consent_decision_update"();
+--> statement-breakpoint
 ALTER TABLE "consents" ADD CONSTRAINT "consents_state_revision_positive_check" CHECK ("consents"."state_revision" > 0);

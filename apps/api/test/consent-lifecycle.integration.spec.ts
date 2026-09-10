@@ -1,16 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import {
+  ageVerifications,
   consentDecisions,
   consents,
   count,
   createDatabaseClient,
   eq,
   migrate,
+  passwordCredentials,
   users,
 } from '@mental-health/database';
 import { resolve } from 'node:path';
 import { ConsentDocumentRegistry } from '../src/consents/consent-document.registry';
 import {
+  ConsentDocumentIdentityConflictRepositoryError,
   ConsentLifecycleRepository,
   ConsentOperationConflictRepositoryError,
   ConsentStateChangedRepositoryError,
@@ -81,6 +84,14 @@ describe('ADR-016 Consent lifecycle persistence', () => {
     expect(
       new ConsentDocumentRegistry('production').findEligible('privacy_policy', '1.0'),
     ).toBeNull();
+    expect(
+      new ConsentDocumentRegistry('production').findVerifiedDocument(
+        'privacy_policy',
+        '1.0',
+        PRIVACY_DOCUMENT.documentKey,
+        PRIVACY_DOCUMENT.documentRevision,
+      ),
+    ).toBeNull();
   });
 
   it('creates registration projections and immutable document-bound decisions atomically', async () => {
@@ -143,6 +154,70 @@ describe('ADR-016 Consent lifecycle persistence', () => {
     );
   });
 
+  it('rolls registration back when immutable decision evidence cannot be inserted', async () => {
+    const userId = randomUUID();
+    const duplicateDecisionId = randomUUID();
+    const acceptedAt = new Date('2026-09-10T10:00:00.000Z');
+    await expect(
+      usersRepository.createVerifiedRegistration({
+        userId,
+        email: `consent-rollback-${randomUUID()}@example.test`,
+        passwordHash: 'synthetic-password-hash',
+        verificationMethod: 'mock',
+        verifiedAt: acceptedAt,
+        consents: [
+          {
+            id: randomUUID(),
+            decisionId: duplicateDecisionId,
+            operationId: randomUUID(),
+            consentType: 'terms_of_service',
+            consentVersion: '1.0',
+            documentKey: 'synthetic.terms-of-service',
+            documentRevision: 'test-revision-1',
+            acceptedAt,
+          },
+          {
+            id: randomUUID(),
+            decisionId: duplicateDecisionId,
+            operationId: randomUUID(),
+            consentType: 'privacy_policy',
+            consentVersion: '1.0',
+            ...PRIVACY_DOCUMENT,
+            acceptedAt,
+          },
+        ],
+      }),
+    ).rejects.toBeDefined();
+
+    const [userCount] = await client.database
+      .select({ value: count() })
+      .from(users)
+      .where(eq(users.id, userId));
+    const [credentialCount] = await client.database
+      .select({ value: count() })
+      .from(passwordCredentials)
+      .where(eq(passwordCredentials.userId, userId));
+    const [ageCount] = await client.database
+      .select({ value: count() })
+      .from(ageVerifications)
+      .where(eq(ageVerifications.userId, userId));
+    const [projectionCount] = await client.database
+      .select({ value: count() })
+      .from(consents)
+      .where(eq(consents.userId, userId));
+    const [decisionCount] = await client.database
+      .select({ value: count() })
+      .from(consentDecisions)
+      .where(eq(consentDecisions.userId, userId));
+    expect([
+      userCount?.value,
+      credentialCount?.value,
+      ageCount?.value,
+      projectionCount?.value,
+      decisionCount?.value,
+    ]).toEqual([0, 0, 0, 0, 0]);
+  });
+
   it('replays one operation exactly and rejects operation-id reuse with different semantics', async () => {
     const userId = await createUser();
     const operationId = randomUUID();
@@ -159,6 +234,33 @@ describe('ADR-016 Consent lifecycle persistence', () => {
       .from(consentDecisions)
       .where(eq(consentDecisions.userId, userId));
     expect(decisionCount?.value).toBe(1);
+  });
+
+  it('replays committed operations after state changes and rejects same-version document replacement', async () => {
+    const userId = await createUser();
+    const acceptanceOperationId = randomUUID();
+    const accepted = await lifecycle.mutate(userId, acceptRequest(acceptanceOperationId, 0));
+    await expect(
+      lifecycle.mutate(userId, {
+        ...acceptRequest(randomUUID(), 1),
+        documentKey: 'synthetic.replacement-privacy-policy',
+        documentRevision: 'replacement-revision',
+      }),
+    ).rejects.toBeInstanceOf(ConsentDocumentIdentityConflictRepositoryError);
+    await lifecycle.mutate(userId, {
+      operationId: randomUUID(),
+      action: 'withdraw',
+      consentType: 'privacy_policy',
+      consentVersion: '1.0',
+      expectedRevision: 1,
+    });
+
+    const replay = await lifecycle.mutate(userId, acceptRequest(acceptanceOperationId, 0));
+    expect(replay).toMatchObject({
+      replayed: true,
+      receipt: { id: accepted.receipt.id },
+      current: { status: 'withdrawn', stateRevision: 2 },
+    });
   });
 
   it('serializes 20 concurrent identical first submissions into one receipt', async () => {
@@ -216,13 +318,22 @@ describe('ADR-016 Consent lifecycle persistence', () => {
       priorRevision: 3,
       resultingRevision: 3,
     });
+    const secondWithdrawal = await lifecycle.mutate(userId, {
+      operationId: randomUUID(),
+      action: 'withdraw',
+      consentType: 'privacy_policy',
+      consentVersion: '1.0',
+      expectedRevision: 3,
+    });
+    expect(secondWithdrawal.receipt.targetAcceptanceDecisionId).toBe(reaccepted.receipt.id);
+    expect(secondWithdrawal.receipt.targetAcceptanceDecisionId).not.toBe(noChange.receipt.id);
     const history = await lifecycle.listDecisionHistoryPage(
       userId,
       ['terms_of_service', 'privacy_policy'],
       10,
       null,
     );
-    expect(history).toHaveLength(4);
+    expect(history).toHaveLength(5);
     expect(
       history.filter((item) => item.outcome === 'applied').map((item) => item.resultingRevision),
     ).toEqual(expect.arrayContaining([1, 2, 3]));

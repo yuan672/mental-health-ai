@@ -103,7 +103,8 @@ export class ConsentDocumentRegistry {
           document.consentType === consentType &&
           document.consentVersion === consentVersion &&
           document.documentKey === documentKey &&
-          document.documentRevision === documentRevision,
+          document.documentRevision === documentRevision &&
+          isEnvironmentEligible(document, this.appEnvironment),
       ) ?? null
     );
   }

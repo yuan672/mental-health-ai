@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type {
   ConsentCurrentItem,
   ConsentDecisionReceipt,
@@ -14,12 +13,15 @@ import {
   ConsentRequiredError,
   ConsentResultUnknownError,
   ConsentStateChangedError,
+  ConsentUnavailableError,
   DatabaseError,
   ValidationError,
 } from '../common/errors';
 import { decodeOpaqueCursor, encodeOpaqueCursor } from '../common/pagination/opaque-cursor';
+import { env } from '../config/env';
 import {
   ConsentLifecycleRepository,
+  ConsentDocumentIdentityConflictRepositoryError,
   ConsentOperationConflictRepositoryError,
   ConsentStateChangedRepositoryError,
   ConsentTargetInvalidRepositoryError,
@@ -29,6 +31,7 @@ import {
 import { CONSENT_TYPE_VALUES, ConsentPolicyService } from './consent-policy.service';
 import { consentHistoryCursorSchema, type ConsentHistoryQuery } from './consents.schemas';
 import { ConsentWithdrawalCoordinator } from './consent-withdrawal.coordinator';
+import { ConsentCoordinationNotStartedError } from './runtime/per-user-consent-lock';
 
 const DISPLAY_KEYS = {
   terms_of_service: 'consent.termsOfService',
@@ -169,11 +172,15 @@ export class ConsentsService {
       throw new ValidationError('授权类型无效');
     }
 
+    let coordinationStarted = false;
     try {
       const existingOperation = await this.lifecycleRepository.findOperation(
         userId,
         input.operationId,
       );
+      if (existingOperation) {
+        this.lifecycleRepository.assertOperationMatches(existingOperation, input);
+      }
       if (!existingOperation && input.action === 'accept') {
         if (
           !this.consentPolicy.isCurrentRequiredPolicy(input.consentType, input.consentVersion) ||
@@ -183,10 +190,30 @@ export class ConsentsService {
         }
       }
 
-      const result = await this.lifecycleRepository.mutate(userId, input);
-      if (result.receipt.decision === 'withdrawn') {
-        this.withdrawalCoordinator.cancelUserAiActivity(userId);
-      }
+      const signal = AbortSignal.timeout(env.LLM_TOTAL_TIMEOUT_MS);
+      const withdrawalTargetDecisionId =
+        existingOperation?.decision === 'withdrawn'
+          ? (existingOperation.targetAcceptanceDecisionId ?? undefined)
+          : input.action === 'withdraw'
+            ? (
+                await this.lifecycleRepository.findEffectiveAcceptance(
+                  userId,
+                  input.consentType,
+                  input.consentVersion,
+                )
+              )?.id
+            : undefined;
+      coordinationStarted = true;
+      const result = await this.withdrawalCoordinator.mutate(
+        {
+          userId,
+          signal,
+          deadlineAt: new Date(Date.now() + env.LLM_TOTAL_TIMEOUT_MS),
+          mayWithdraw: input.action === 'withdraw',
+          ...(withdrawalTargetDecisionId ? { withdrawalTargetDecisionId } : {}),
+        },
+        () => this.lifecycleRepository.mutate(userId, input),
+      );
       return {
         success: true,
         data: {
@@ -205,69 +232,23 @@ export class ConsentsService {
       if (error instanceof ConsentOperationConflictRepositoryError) {
         throw new ConsentOperationConflictError();
       }
+      if (error instanceof ConsentDocumentIdentityConflictRepositoryError) {
+        throw new ConsentPolicyChangedError();
+      }
       if (error instanceof ConsentStateChangedRepositoryError) {
         throw new ConsentStateChangedError();
       }
       if (error instanceof ConsentTargetInvalidRepositoryError) {
         throw new ConsentStateChangedError();
       }
+      if (error instanceof ConsentCoordinationNotStartedError) {
+        throw new ConsentUnavailableError();
+      }
+      if (!coordinationStarted) {
+        throw new ConsentUnavailableError();
+      }
       throw new ConsentResultUnknownError();
     }
-  }
-
-  async accept(
-    userId: string,
-    consentType: string,
-    consentVersion: string,
-  ): Promise<ConsentMutationResponse> {
-    if (!this.consentPolicy.isKnownConsentType(consentType)) {
-      throw new ValidationError('授权类型无效');
-    }
-    const document = this.consentPolicy
-      .getDocumentRegistry()
-      .findEligible(consentType, consentVersion);
-    if (!document) {
-      throw new ConsentPolicyChangedError();
-    }
-    const projection = await this.lifecycleRepository.findProjection(
-      userId,
-      consentType,
-      consentVersion,
-    );
-    return this.mutate(userId, {
-      operationId: randomUUID(),
-      action: 'accept',
-      consentType,
-      consentVersion,
-      documentKey: document.documentKey,
-      documentRevision: document.documentRevision,
-      expectedRevision: projection?.stateRevision ?? 0,
-    });
-  }
-
-  async withdraw(
-    userId: string,
-    consentType: string,
-    consentVersion: string,
-  ): Promise<ConsentMutationResponse> {
-    if (!this.consentPolicy.isKnownConsentType(consentType)) {
-      throw new ValidationError('授权类型无效');
-    }
-    const projection = await this.lifecycleRepository.findProjection(
-      userId,
-      consentType,
-      consentVersion,
-    );
-    if (!projection) {
-      throw new ConsentStateChangedError();
-    }
-    return this.mutate(userId, {
-      operationId: randomUUID(),
-      action: 'withdraw',
-      consentType,
-      consentVersion,
-      expectedRevision: projection.stateRevision,
-    });
   }
 
   private async toCurrentFromProjection(

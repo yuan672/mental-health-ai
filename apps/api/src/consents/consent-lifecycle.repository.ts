@@ -64,6 +64,7 @@ type RawConsentDecisionRecord = Omit<
 };
 
 export class ConsentOperationConflictRepositoryError extends Error {}
+export class ConsentDocumentIdentityConflictRepositoryError extends Error {}
 export class ConsentStateChangedRepositoryError extends Error {}
 export class ConsentTargetInvalidRepositoryError extends Error {}
 
@@ -146,6 +147,10 @@ export class ConsentLifecycleRepository {
   async findOperation(userId: string, operationId: string): Promise<ConsentDecisionRecord | null> {
     const row = await this.findOperationWith(this.databaseService.database, userId, operationId);
     return row ? this.hydrateTarget(this.databaseService.database, row) : null;
+  }
+
+  assertOperationMatches(record: ConsentDecisionRecord, input: ConsentMutationRequest): void {
+    this.assertReplayMatches(record, input);
   }
 
   async listDecisionHistoryPage(
@@ -301,6 +306,15 @@ export class ConsentLifecycleRepository {
     now: Date,
   ) {
     const effective = await this.findLatestAppliedAcceptance(transaction, projection);
+    if (
+      effective &&
+      effective.documentKey !== null &&
+      effective.documentRevision !== null &&
+      (effective.documentKey !== input.documentKey ||
+        effective.documentRevision !== input.documentRevision)
+    ) {
+      throw new ConsentDocumentIdentityConflictRepositoryError();
+    }
     const noChange =
       projection.status === 'accepted' &&
       effective?.documentKey === input.documentKey &&

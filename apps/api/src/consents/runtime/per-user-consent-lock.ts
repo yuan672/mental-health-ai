@@ -10,6 +10,13 @@ export class ConsentCoordinationCapacityError extends Error {
   }
 }
 
+export class ConsentCoordinationNotStartedError extends Error {
+  constructor(public readonly cause: unknown) {
+    super('Consent coordination stopped before the mutation began');
+    this.name = ConsentCoordinationNotStartedError.name;
+  }
+}
+
 type Release = () => void;
 type Waiter = {
   signal: AbortSignal;

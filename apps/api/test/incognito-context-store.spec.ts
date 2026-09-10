@@ -5,8 +5,23 @@ import {
   IncognitoGenerationAlreadyClaimedError,
   IncognitoGenerationInProgressError,
   IncognitoSessionExpiredError,
-  InMemoryIncognitoContextStore,
+  InMemoryIncognitoContextStore as ProductionIncognitoContextStore,
 } from '../src/ai/incognito/incognito-context.store';
+import type { ConsentDependency } from '../src/consents/runtime/consent-execution.types';
+
+class InMemoryIncognitoContextStore extends ProductionIncognitoContextStore {
+  override create(
+    userId: string,
+    sessionId: string,
+    sessionExpiresAt: Date,
+    dependenciesOrNow: readonly ConsentDependency[] | Date,
+    now?: Date,
+  ) {
+    return dependenciesOrNow instanceof Date
+      ? super.create(userId, sessionId, sessionExpiresAt, [], dependenciesOrNow)
+      : super.create(userId, sessionId, sessionExpiresAt, dependenciesOrNow, now);
+  }
+}
 
 const NOW = new Date('2026-09-10T00:00:00.000Z');
 

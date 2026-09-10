@@ -36,9 +36,11 @@ describe('SiliconFlowProvider', () => {
   let streamEnded = false;
   let receivedAuthorization = '';
   let receivedBody = '';
+  let receivedRequests = 0;
 
   beforeAll(async () => {
     server = createServer((request, response) => {
+      receivedRequests += 1;
       receivedAuthorization = String(request.headers.authorization ?? '');
       request.setEncoding('utf8');
       request.on('data', (chunk: string) => {
@@ -57,6 +59,7 @@ describe('SiliconFlowProvider', () => {
     streamEnded = false;
     receivedAuthorization = '';
     receivedBody = '';
+    receivedRequests = 0;
   });
 
   afterAll(async () => {
@@ -198,6 +201,30 @@ describe('SiliconFlowProvider', () => {
       ]),
     );
     expect(JSON.stringify(remaining)).not.toContain('reasoning_content');
+  });
+
+  it('does not start a lazy stream or classification request when the dispatch guard refuses it', async () => {
+    const refusal = new Error('synthetic_consent_withdrawn');
+    const blockedOptions: LLMCallOptions = {
+      signal: new AbortController().signal,
+      startTransport: () => Promise.reject(refusal),
+    };
+    const stream = provider().streamChat(REQUEST, blockedOptions);
+    const iterator = stream[Symbol.asyncIterator]();
+    await expect(iterator.next()).rejects.toBe(refusal);
+    await expect(
+      provider().classifyRisk(
+        {
+          requestId: REQUEST.requestId,
+          messages: REQUEST.messages,
+          maxOutputTokens: 128,
+        },
+        blockedOptions,
+      ),
+    ).rejects.toBe(refusal);
+    expect(receivedRequests).toBe(0);
+    expect(receivedAuthorization).toBe('');
+    expect(receivedBody).toBe('');
   });
 
   it.each([

@@ -3,6 +3,11 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createDatabaseClient, migrate } from '@mental-health/database';
+import { ConsentDocumentRegistry } from '../src/consents/consent-document.registry';
+import { ConsentLifecycleRepository } from '../src/consents/consent-lifecycle.repository';
+import { ConsentPolicyService } from '../src/consents/consent-policy.service';
+import { LedgerConsentAuthorizationSnapshotAdapter } from '../src/consents/runtime/consent-authorization.port';
+import { DatabaseService } from '../src/database/database.service';
 
 type MigrationJournal = {
   version: string;
@@ -229,5 +234,171 @@ describe('migration 0005 Consent lifecycle upgrade', () => {
       count: 5,
       maximum: String(MIGRATION_0004_CREATED_AT),
     });
+  });
+
+  it('enforces projection ownership, applied-acceptance targets and cascade cleanup', async () => {
+    const firstUserId = randomUUID();
+    const secondUserId = randomUUID();
+    const consentId = randomUUID();
+    await insertUserAndConsent({
+      userId: firstUserId,
+      consentId,
+      status: 'accepted',
+      acceptedAt: new Date('2026-09-05T01:00:00.000Z'),
+      withdrawnAt: null,
+    });
+    await client.pool.query('INSERT INTO users (id, created_at) VALUES ($1, $2)', [
+      secondUserId,
+      new Date('2026-09-05T01:00:00.000Z'),
+    ]);
+    await migrate(client.database, { migrationsFolder: through0005 });
+
+    const applied = await client.pool.query<{ id: string }>(
+      `SELECT id::text FROM consent_decisions
+       WHERE consent_id = $1 AND decision = 'accepted' AND outcome = 'applied'`,
+      [consentId],
+    );
+    const appliedId = applied.rows[0]?.id;
+    expect(appliedId).toEqual(expect.any(String));
+
+    await expect(
+      client.pool.query(
+        `INSERT INTO consent_decisions
+         (id, consent_id, user_id, consent_type, consent_version, operation_id,
+          decision, outcome, prior_revision, resulting_revision, occurred_at,
+          document_key, document_revision, target_acceptance_decision_id, decision_source)
+         VALUES ($1, $2, $3, 'privacy_policy', '1.0', $4,
+                 'accepted', 'no_change', 1, 1, $5, NULL, NULL, NULL, 'legacy_backfill')`,
+        [randomUUID(), consentId, secondUserId, randomUUID(), new Date()],
+      ),
+    ).rejects.toBeDefined();
+
+    await expect(
+      client.pool.query(
+        `INSERT INTO consent_decisions
+         (id, consent_id, user_id, consent_type, consent_version, operation_id,
+          decision, outcome, prior_revision, resulting_revision, occurred_at,
+          document_key, document_revision, target_acceptance_decision_id, decision_source)
+         VALUES ($1, $2, $3, 'terms_of_service', '1.0', $4,
+                 'accepted', 'no_change', 1, 1, $5, NULL, NULL, NULL, 'legacy_backfill')`,
+        [randomUUID(), consentId, firstUserId, randomUUID(), new Date()],
+      ),
+    ).rejects.toBeDefined();
+
+    const noChangeId = randomUUID();
+    await client.pool.query(
+      `INSERT INTO consent_decisions
+       (id, consent_id, user_id, consent_type, consent_version, operation_id,
+        decision, outcome, prior_revision, resulting_revision, occurred_at,
+        document_key, document_revision, target_acceptance_decision_id, decision_source)
+       VALUES ($1, $2, $3, 'privacy_policy', '1.0', $4,
+               'accepted', 'no_change', 1, 1, $5, NULL, NULL, NULL, 'legacy_backfill')`,
+      [noChangeId, consentId, firstUserId, randomUUID(), new Date()],
+    );
+    await expect(
+      client.pool.query(
+        `INSERT INTO consent_decisions
+         (id, consent_id, user_id, consent_type, consent_version, operation_id,
+          decision, outcome, prior_revision, resulting_revision, occurred_at,
+          document_key, document_revision, target_acceptance_decision_id, decision_source)
+         VALUES ($1, $2, $3, 'privacy_policy', '1.0', $4,
+                 'withdrawn', 'applied', 1, 2, $5, NULL, NULL, $6, 'privacy_ui')`,
+        [randomUUID(), consentId, firstUserId, randomUUID(), new Date(), noChangeId],
+      ),
+    ).rejects.toThrow(/applied acceptance/u);
+
+    await expect(
+      client.pool.query(
+        `UPDATE consent_decisions SET decision_source = 'privacy_ui' WHERE id = $1`,
+        [appliedId],
+      ),
+    ).rejects.toThrow(/append-only/u);
+    const unchanged = await client.pool.query<{ decision_source: string }>(
+      'SELECT decision_source FROM consent_decisions WHERE id = $1',
+      [appliedId],
+    );
+    expect(unchanged.rows[0]?.decision_source).toBe('legacy_backfill');
+
+    await client.pool.query('DELETE FROM users WHERE id = $1', [firstUserId]);
+    const orphaned = await client.pool.query<{ count: number }>(
+      'SELECT count(*)::int AS count FROM consent_decisions WHERE consent_id = $1',
+      [consentId],
+    );
+    expect(orphaned.rows[0]?.count).toBe(0);
+  });
+
+  it('keeps unmapped legacy evidence withdrawable and restores admission through explicit document binding', async () => {
+    const userId = randomUUID();
+    const acceptedAt = new Date('2026-09-06T01:00:00.000Z');
+    await insertUserAndConsent({
+      userId,
+      consentId: randomUUID(),
+      status: 'accepted',
+      acceptedAt,
+      withdrawnAt: null,
+    });
+    await client.pool.query(
+      `INSERT INTO consents
+       (id, user_id, consent_type, consent_version, status, accepted_at, withdrawn_at)
+       VALUES ($1, $2, 'terms_of_service', '1.0', 'accepted', $3, NULL)`,
+      [randomUUID(), userId, acceptedAt],
+    );
+    await migrate(client.database, { migrationsFolder: through0005 });
+
+    const databaseService = { database: client.database } as unknown as DatabaseService;
+    const lifecycle = new ConsentLifecycleRepository(databaseService);
+    const policy = new ConsentPolicyService(new ConsentDocumentRegistry('test'));
+    const authorization = new LedgerConsentAuthorizationSnapshotAdapter(policy, lifecycle);
+    await expect(authorization.loadRequiredDependencies(userId)).rejects.toBeDefined();
+
+    for (const [index, required] of policy.getRequiredPolicies().entries()) {
+      const projection = await lifecycle.findProjection(
+        userId,
+        required.consentType,
+        required.consentVersion,
+      );
+      expect(projection).not.toBeNull();
+      const document = policy
+        .getDocumentRegistry()
+        .findEligible(required.consentType, required.consentVersion);
+      if (!document) throw new Error('Synthetic document fixture is missing');
+
+      let expectedRevision = projection?.stateRevision ?? -1;
+      if (index === 1) {
+        const withdrawal = await lifecycle.mutate(userId, {
+          operationId: randomUUID(),
+          action: 'withdraw',
+          consentType: required.consentType,
+          consentVersion: required.consentVersion,
+          expectedRevision,
+        });
+        expect(withdrawal.receipt).toMatchObject({
+          decision: 'withdrawn',
+          targetDocumentKey: null,
+          targetDocumentRevision: null,
+        });
+        expectedRevision = withdrawal.current.stateRevision;
+      }
+
+      const accepted = await lifecycle.mutate(userId, {
+        operationId: randomUUID(),
+        action: 'accept',
+        consentType: required.consentType,
+        consentVersion: required.consentVersion,
+        documentKey: document.documentKey,
+        documentRevision: document.documentRevision,
+        expectedRevision,
+      });
+      expect(accepted.receipt).toMatchObject({
+        decision: 'accepted',
+        outcome: 'applied',
+        documentKey: document.documentKey,
+        documentRevision: document.documentRevision,
+      });
+    }
+
+    const dependencies = await authorization.loadRequiredDependencies(userId);
+    expect(dependencies).toHaveLength(2);
+    expect(dependencies.map((dependency) => dependency.stateRevision).sort()).toEqual([2, 3]);
   });
 });

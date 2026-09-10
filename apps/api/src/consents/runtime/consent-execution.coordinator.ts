@@ -21,7 +21,11 @@ import type {
   ThirdPartyDispatchKind,
 } from './consent-execution.types';
 import { consentPolicyKey, sameConsentDependencies } from './consent-execution.types';
-import { ConsentCoordinationCapacityError, PerUserConsentLock } from './per-user-consent-lock';
+import {
+  ConsentCoordinationCapacityError,
+  ConsentCoordinationNotStartedError,
+  PerUserConsentLock,
+} from './per-user-consent-lock';
 
 export type ConsentTransportStarter = <T>(
   startTransport: (signal: AbortSignal) => T,
@@ -34,6 +38,7 @@ export interface ConsentDispatchGuard {
     startTransport: (signal: AbortSignal) => T,
   ): Promise<{ readonly transport: T }>;
   assertStillUsable(execution: ConsentBoundExecution): Promise<void>;
+  runWhileUsable<T>(execution: ConsentBoundExecution, operation: () => Promise<T>): Promise<T>;
 }
 
 type PendingExecution = {
@@ -43,6 +48,11 @@ type PendingExecution = {
 };
 
 type RevokedMarker = { userId: string; expiresAt: number };
+export type WithdrawnConsentDependency = Readonly<{
+  acceptanceDecisionId: string;
+  consentType: ConsentDependency['consentType'];
+  consentVersion: string;
+}>;
 
 @Injectable()
 export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
@@ -66,10 +76,12 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
   }): ActiveAiExecution {
     const execution = this.activeExecutions.register(input);
     const requiredPolicyKeys = this.authorization.requiredPolicyKeys();
+    const userEpochs = this.epochs.get(input.userId) ?? new Map<string, number>();
+    this.epochs.set(input.userId, userEpochs);
     const observedEpochs = new Map(
       requiredPolicyKeys.map((policy) => [
         consentPolicyKey(policy),
-        this.epoch(input.userId, policy),
+        userEpochs.get(consentPolicyKey(policy)) ?? 0,
       ]),
     );
     this.pending.set(execution.id, { execution, requiredPolicyKeys, observedEpochs });
@@ -88,7 +100,7 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
         for (const policy of pending.requiredPolicyKeys) {
           if (
             pending.observedEpochs.get(consentPolicyKey(policy)) !==
-            this.epoch(execution.userId, policy)
+            (this.epochs.get(execution.userId)?.get(consentPolicyKey(policy)) ?? 0)
           ) {
             throw new ConsentRequiredError();
           }
@@ -99,6 +111,7 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
         this.assertExecutionTime(execution);
         const bound = this.activeExecutions.bind(execution.id, dependencies);
         this.pending.delete(execution.id);
+        this.pruneEpochs(execution.userId);
         return this.withBoundDispose(bound);
       },
     );
@@ -197,21 +210,68 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
     );
   }
 
-  async coordinateWithdrawal<T>(
+  async runWhileUsable<T>(
+    execution: ConsentBoundExecution,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    return this.userLock.runExclusive(
+      execution.userId,
+      execution.signal,
+      execution.deadlineAt,
+      async () => {
+        this.assertExecutionTime(execution);
+        this.pruneRevokedMarkers();
+        this.assertNotRevoked(execution.userId, execution.dependencies);
+        const active = await this.authorization.dependenciesRemainActive(
+          execution.userId,
+          execution.dependencies,
+        );
+        if (!active) throw new ConsentRequiredError();
+        this.assertExecutionTime(execution);
+        const result = await operation();
+        this.assertExecutionTime(execution);
+        return result;
+      },
+    );
+  }
+
+  async coordinateMutation<T>(
     input: {
       userId: string;
-      dependency: ConsentDependency;
       signal: AbortSignal;
       deadlineAt: Date;
+      mayWithdraw: boolean;
+      withdrawalTargetDecisionId?: string;
     },
     commit: () => Promise<T>,
+    withdrawalEffect: (result: T) => Readonly<{
+      dependency: WithdrawnConsentDependency;
+      invalidatePending: boolean;
+    }> | null,
   ): Promise<T> {
-    return this.userLock.runExclusive(input.userId, input.signal, input.deadlineAt, async () => {
-      this.ensureRevokedMarkerCapacity(input.dependency.acceptanceDecisionId);
-      const result = await commit();
-      this.publishWithdrawal(input.userId, input.dependency);
-      return result;
-    });
+    let commitStarted = false;
+    try {
+      return await this.userLock.runExclusive(
+        input.userId,
+        input.signal,
+        input.deadlineAt,
+        async () => {
+          if (input.mayWithdraw) {
+            this.ensureRevokedMarkerCapacity(input.withdrawalTargetDecisionId);
+          }
+          commitStarted = true;
+          const result = await commit();
+          const effect = withdrawalEffect(result);
+          if (effect) {
+            this.publishWithdrawal(input.userId, effect.dependency, effect.invalidatePending);
+          }
+          return result;
+        },
+      );
+    } catch (error) {
+      if (!commitStarted) throw new ConsentCoordinationNotStartedError(error);
+      throw error;
+    }
   }
 
   async reconcileWithdrawal(input: {
@@ -222,22 +282,26 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
   }): Promise<void> {
     await this.userLock.runExclusive(input.userId, input.signal, input.deadlineAt, () => {
       this.ensureRevokedMarkerCapacity(input.dependency.acceptanceDecisionId);
-      this.publishWithdrawal(input.userId, input.dependency);
+      this.publishWithdrawal(input.userId, input.dependency, false);
     });
   }
 
-  /** Pre-ADR compatibility only; the ledger service must use coordinateWithdrawal. */
-  cancelUserAiActivity(userId: string): void {
-    this.activeExecutions.abortUser(userId, 'consent_withdrawn');
-    this.incognitoContexts.clearUser(userId);
-  }
-
-  private publishWithdrawal(userId: string, dependency: ConsentDependency): void {
-    this.incrementEpoch(userId, dependency);
-    this.revoked.set(dependency.acceptanceDecisionId, {
-      userId,
-      expiresAt: Date.now() + env.CONSENT_REVOKED_MARKER_MAX_LIFETIME_MS,
-    });
+  private publishWithdrawal(
+    userId: string,
+    dependency: WithdrawnConsentDependency,
+    invalidatePending: boolean,
+  ): void {
+    if (invalidatePending) this.incrementEpoch(userId, dependency);
+    if (
+      this.revoked.has(dependency.acceptanceDecisionId) ||
+      this.activeExecutions.hasDependency(dependency.acceptanceDecisionId) ||
+      this.incognitoContexts.hasDependency(dependency.acceptanceDecisionId)
+    ) {
+      this.revoked.set(dependency.acceptanceDecisionId, {
+        userId,
+        expiresAt: Date.now() + env.CONSENT_REVOKED_MARKER_MAX_LIFETIME_MS,
+      });
+    }
     this.activeExecutions.abortDependency(userId, dependency.acceptanceDecisionId);
     this.incognitoContexts.clearDependency(userId, dependency.acceptanceDecisionId);
   }
@@ -268,21 +332,25 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
     }
   }
 
-  private epoch(userId: string, policy: ConsentPolicyKey): number {
-    return this.epochs.get(userId)?.get(consentPolicyKey(policy)) ?? 0;
-  }
-
-  private incrementEpoch(userId: string, dependency: ConsentDependency): void {
-    const epochs = this.epochs.get(userId) ?? new Map<string, number>();
+  private incrementEpoch(userId: string, dependency: WithdrawnConsentDependency): void {
+    const epochs = this.epochs.get(userId);
+    if (!epochs) return;
     const key = consentPolicyKey(dependency);
     epochs.set(key, (epochs.get(key) ?? 0) + 1);
-    this.epochs.set(userId, epochs);
   }
 
-  private ensureRevokedMarkerCapacity(acceptanceDecisionId: string): void {
+  private ensureRevokedMarkerCapacity(acceptanceDecisionId?: string): void {
     this.pruneRevokedMarkers();
     if (
+      acceptanceDecisionId &&
       !this.revoked.has(acceptanceDecisionId) &&
+      !this.activeExecutions.hasDependency(acceptanceDecisionId) &&
+      !this.incognitoContexts.hasDependency(acceptanceDecisionId)
+    ) {
+      return;
+    }
+    if (
+      (!acceptanceDecisionId || !this.revoked.has(acceptanceDecisionId)) &&
       this.revoked.size >= env.CONSENT_REVOKED_MARKER_MAX_GLOBAL
     ) {
       throw new ConsentCoordinationCapacityError('revoked_marker_limit');
@@ -291,7 +359,6 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
 
   private pruneRevokedMarkers(): void {
     const now = Date.now();
-    this.incognitoContexts.purgeExpired(new Date(now));
     for (const [decisionId, marker] of this.revoked) {
       if (marker.expiresAt > now) continue;
       if (
@@ -316,6 +383,7 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
       abort: execution.abort,
       dispose: () => {
         this.pending.delete(execution.id);
+        this.pruneEpochs(execution.userId);
         execution.dispose();
       },
     };
@@ -326,8 +394,14 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
       ...execution,
       dispose: () => {
         this.pending.delete(execution.id);
+        this.pruneEpochs(execution.userId);
         execution.dispose();
       },
     };
+  }
+
+  private pruneEpochs(userId: string): void {
+    if ([...this.pending.values()].some((pending) => pending.execution.userId === userId)) return;
+    this.epochs.delete(userId);
   }
 }

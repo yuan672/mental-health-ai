@@ -127,6 +127,12 @@ export class ConsentResultUnknownError extends AppError {
   }
 }
 
+export class ConsentUnavailableError extends AppError {
+  constructor(message = '授权服务暂时不可用，请稍后重试') {
+    super(ERROR_CODES.CONSENT_UNAVAILABLE, 503, message);
+  }
+}
+
 export class DatabaseError extends AppError {
   constructor(message = '数据服务暂时不可用') {
     super(ERROR_CODES.DATABASE_ERROR, 500, message);

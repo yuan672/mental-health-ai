@@ -93,7 +93,6 @@ export type IncognitoGenerationClaim = Readonly<{
 }>;
 
 export interface IncognitoContextStore {
-  create(userId: string, sessionId: string, sessionExpiresAt: Date, now?: Date): IncognitoContext;
   create(
     userId: string,
     sessionId: string,
@@ -166,7 +165,6 @@ export class InMemoryIncognitoContextStore implements IncognitoContextStore, OnM
     this.cleanupTimer.unref();
   }
 
-  create(userId: string, sessionId: string, sessionExpiresAt: Date, now?: Date): IncognitoContext;
   create(
     userId: string,
     sessionId: string,
@@ -178,12 +176,9 @@ export class InMemoryIncognitoContextStore implements IncognitoContextStore, OnM
     userId: string,
     sessionId: string,
     sessionExpiresAt: Date,
-    dependenciesOrNow: readonly ConsentDependency[] | Date = [],
-    explicitNow?: Date,
+    dependencies: readonly ConsentDependency[],
+    now = new Date(),
   ): IncognitoContext {
-    const dependencies: readonly ConsentDependency[] =
-      dependenciesOrNow instanceof Date ? [] : dependenciesOrNow;
-    const now = dependenciesOrNow instanceof Date ? dependenciesOrNow : (explicitNow ?? new Date());
     if (sessionExpiresAt.getTime() <= now.getTime()) {
       throw new IncognitoSessionExpiredError();
     }
