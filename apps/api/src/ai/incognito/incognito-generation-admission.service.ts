@@ -20,18 +20,24 @@ import {
   INCOGNITO_CONTEXT_STORE,
   type IncognitoContext,
   type IncognitoContextStore,
+  type IncognitoGenerationClaim,
+  IncognitoGenerationAlreadyClaimedError,
+  IncognitoGenerationInProgressError,
 } from './incognito-context.store';
+import { AITurnInProgressError } from '../../common/errors';
 
 export type IncognitoGenerationAdmission =
   | Readonly<{
       kind: 'generation';
       context: IncognitoContext;
+      generation: IncognitoGenerationClaim;
       quotaIdempotencyKey: string;
       riskDecision: RiskDecision;
     }>
   | Readonly<{
       kind: 'trusted';
       context: IncognitoContext;
+      generation: IncognitoGenerationClaim;
       response: TrustedSafetyResponse;
       riskDecision: RiskDecision;
     }>;
@@ -61,72 +67,113 @@ export class IncognitoGenerationAdmissionService {
   }): Promise<IncognitoGenerationAdmission> {
     const now = input.now ?? new Date();
     if (!env.AI_CHAT_ENABLED) throw new AIChatDisabledError();
-    await this.consents.ensureRequiredConsentsActive(input.userId);
 
-    const quotaIdempotencyKey = deriveIncognitoQuotaIdempotencyKey(
-      input.userId,
-      input.sessionId,
-      input.clientRequestId,
-    );
-    if (await this.quota.hasConsumption(input.userId, quotaIdempotencyKey)) {
-      throw new AIIncognitoContextLostError();
-    }
-    const context = this.contexts.get(input.userId, input.sessionId, input.contextId, now);
-    if (!context) throw new AIIncognitoContextLostError();
-    if (input.signal.aborted) throw input.signal.reason;
-
-    const quotaAvailable = await this.quota.canUseAI(input.userId, now);
-    const riskDecision = await this.preGenerationSafety.check(
-      {
-        turnId: input.clientRequestId,
-        userId: input.userId,
-        target: {
-          kind: 'incognito',
-          contextId: input.contextId,
-          sessionId: input.sessionId,
-        },
-        message: input.message,
+    let generation: IncognitoGenerationClaim | null;
+    try {
+      generation = this.contexts.claimGeneration(
+        input.userId,
+        input.sessionId,
+        input.contextId,
+        input.clientRequestId,
+        input.signal,
         now,
-      },
-      input.signal,
-    );
-
-    const trusted = await this.resolveTrustedResponse(
-      input,
-      context,
-      riskDecision,
-      quotaAvailable,
-      now,
-    );
-    if (trusted) return trusted;
-
-    await this.riskEvents.persistIncognito({
-      userId: input.userId,
-      clientRequestId: input.clientRequestId,
-      decision: riskDecision,
-      now,
-    });
-    if (!quotaAvailable) throw new QuotaExceededError();
-
-    const consumption = await this.quota.consumeQuotaOnce(input.userId, quotaIdempotencyKey, now);
-    if (consumption.status === 'already_consumed') throw new AIIncognitoContextLostError();
-
-    const currentContext = this.contexts.get(input.userId, input.sessionId, input.contextId, now);
-    if (!currentContext) {
-      await this.quota.refundQuota(input.userId, quotaIdempotencyKey, now);
-      throw new AIIncognitoContextLostError();
+      );
+    } catch (error) {
+      if (error instanceof IncognitoGenerationInProgressError) {
+        throw new AITurnInProgressError('该无痕对话已有正在处理的 AI 回复');
+      }
+      if (error instanceof IncognitoGenerationAlreadyClaimedError) {
+        throw new AIIncognitoContextLostError('该无痕请求已结束，请重新开始本轮请求');
+      }
+      throw error;
     }
-    return {
-      kind: 'generation',
-      context: currentContext,
-      quotaIdempotencyKey,
-      riskDecision,
-    };
+    if (!generation) throw new AIIncognitoContextLostError();
+
+    try {
+      await this.consents.ensureRequiredConsentsActive(input.userId);
+      if (generation.signal.aborted) throw generation.signal.reason;
+
+      const quotaIdempotencyKey = deriveIncognitoQuotaIdempotencyKey(
+        input.userId,
+        input.sessionId,
+        input.clientRequestId,
+      );
+      if (await this.quota.hasConsumption(input.userId, quotaIdempotencyKey)) {
+        throw new AIIncognitoContextLostError();
+      }
+      const context = this.contexts.get(input.userId, input.sessionId, input.contextId, now);
+      if (!context) throw new AIIncognitoContextLostError();
+      if (generation.signal.aborted) throw generation.signal.reason;
+
+      const quotaAvailable = await this.quota.canUseAI(input.userId, now);
+      const riskDecision = await this.preGenerationSafety.check(
+        {
+          turnId: generation.id,
+          userId: input.userId,
+          target: {
+            kind: 'incognito',
+            contextId: input.contextId,
+            sessionId: input.sessionId,
+          },
+          message: input.message,
+          now,
+        },
+        generation.signal,
+      );
+
+      const trusted = await this.resolveTrustedResponse(
+        input,
+        context,
+        generation,
+        riskDecision,
+        quotaAvailable,
+        now,
+      );
+      if (trusted) return trusted;
+
+      await this.riskEvents.persistIncognito({
+        userId: input.userId,
+        clientRequestId: input.clientRequestId,
+        decision: riskDecision,
+        now,
+      });
+      if (!quotaAvailable) throw new QuotaExceededError();
+
+      const consumption = await this.quota.consumeQuotaOnce(input.userId, quotaIdempotencyKey, now);
+      if (consumption.status === 'already_consumed') throw new AIIncognitoContextLostError();
+
+      const currentContext = this.contexts.get(
+        input.userId,
+        input.sessionId,
+        input.contextId,
+        new Date(),
+      );
+      if (!currentContext) {
+        await this.quota.refundQuota(input.userId, quotaIdempotencyKey, now);
+        throw new AIIncognitoContextLostError();
+      }
+      return {
+        kind: 'generation',
+        context: currentContext,
+        generation,
+        quotaIdempotencyKey,
+        riskDecision,
+      };
+    } catch (error) {
+      this.contexts.releaseGeneration(
+        input.userId,
+        input.sessionId,
+        input.contextId,
+        generation.id,
+      );
+      throw error;
+    }
   }
 
   private async resolveTrustedResponse(
     input: { userId: string; clientRequestId: string; now?: Date },
     context: IncognitoContext,
+    generation: IncognitoGenerationClaim,
     decision: RiskDecision,
     quotaAvailable: boolean,
     now: Date,
@@ -148,7 +195,7 @@ export class IncognitoGenerationAdmissionService {
       response,
       now,
     });
-    return { kind: 'trusted', context, response, riskDecision: decision };
+    return { kind: 'trusted', context, generation, response, riskDecision: decision };
   }
 
   private toResponse(template: Readonly<{ key: string; version: string; content: string }>) {

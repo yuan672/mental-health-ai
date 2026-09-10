@@ -22,7 +22,7 @@ export type PreGenerationSafetyInput = Readonly<{
 export type PostGenerationSafetyInput = Readonly<{
   userId: string;
   turnId: string;
-  conversationId: string;
+  target: SafetyTarget;
   candidateSegment: string;
   previouslyApprovedText: string;
   riskDecision: RiskDecision;

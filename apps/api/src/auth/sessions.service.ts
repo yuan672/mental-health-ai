@@ -4,6 +4,7 @@ import {
   INCOGNITO_CONTEXT_STORE,
   type IncognitoContextStore,
 } from '../ai/incognito/incognito-context.store';
+import { ActiveAiExecutionRegistry } from '../ai/runtime/active-ai-execution.registry';
 import { AuthenticationError, DatabaseError } from '../common/errors';
 import { env } from '../config/env';
 import { UsersRepository, type SessionRecord } from '../users/users.repository';
@@ -20,6 +21,7 @@ export function hashSessionToken(rawToken: string): string {
 @Injectable()
 export class SessionsService {
   constructor(
+    private readonly activeAiExecutions: ActiveAiExecutionRegistry,
     @Inject(INCOGNITO_CONTEXT_STORE)
     private readonly incognitoContexts: IncognitoContextStore,
     private readonly usersRepository: UsersRepository,
@@ -60,7 +62,12 @@ export class SessionsService {
     } catch {
       throw new DatabaseError();
     }
-    if (!session || session.revokedAt || session.expiresAt.getTime() <= Date.now()) {
+    if (!session) {
+      throw new AuthenticationError('登录已失效，请重新登录');
+    }
+    if (session.revokedAt || session.expiresAt.getTime() <= Date.now()) {
+      this.activeAiExecutions.abortSession(session.userId, session.id, 'session_invalid');
+      this.incognitoContexts.clearSession(session.userId, session.id);
       throw new AuthenticationError('登录已失效，请重新登录');
     }
 
@@ -73,6 +80,7 @@ export class SessionsService {
     } catch {
       throw new DatabaseError();
     }
+    this.activeAiExecutions.abortSession(session.userId, session.id, 'session_revoked');
     this.incognitoContexts.clearSession(session.userId, session.id);
   }
 }

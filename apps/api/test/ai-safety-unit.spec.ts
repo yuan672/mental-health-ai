@@ -385,6 +385,7 @@ describe('SSE transport backpressure', () => {
       {
         type: 'message.segment',
         data: {
+          mode: 'persistent',
           turnId: '11111111-1111-4111-8111-111111111111',
           sequence: 1,
           text: '合成安全片段',
@@ -422,6 +423,7 @@ describe('SSE transport backpressure', () => {
         {
           type: 'message.segment',
           data: {
+            mode: 'persistent',
             turnId: '11111111-1111-4111-8111-111111111111',
             sequence: 1,
             text: '不得迟到发送',

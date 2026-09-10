@@ -171,6 +171,38 @@ describe('Phase 2B conversation and quota integration', () => {
     expect(ledgerCount?.value).toBe(1);
   });
 
+  it('deduplicates one stable request key across the Asia/Shanghai day boundary', async () => {
+    const retryUserId = randomUUID();
+    const idempotencyKey = randomUUID();
+    const beforeMidnight = new Date('2026-09-09T15:59:59.999Z');
+    const afterMidnight = new Date('2026-09-09T16:00:00.000Z');
+    await databaseService.database.insert(users).values({ id: retryUserId });
+
+    await Promise.all([
+      quotaService.consumeQuota(retryUserId, idempotencyKey, beforeMidnight),
+      quotaService.consumeQuota(retryUserId, idempotencyKey, afterMidnight),
+    ]);
+
+    const [ledgerCount] = await databaseService.database
+      .select({ value: count() })
+      .from(quotaConsumptions)
+      .where(eq(quotaConsumptions.userId, retryUserId));
+    const aggregates = await databaseService.database
+      .select({ usedCount: dailyUsageQuotas.usedCount })
+      .from(dailyUsageQuotas)
+      .where(eq(dailyUsageQuotas.userId, retryUserId));
+
+    expect(ledgerCount?.value).toBe(1);
+    expect(aggregates.reduce((sum, aggregate) => sum + aggregate.usedCount, 0)).toBe(1);
+
+    await expect(
+      quotaService.refundQuota(retryUserId, idempotencyKey, afterMidnight),
+    ).resolves.toBe(true);
+    await expect(
+      quotaService.refundQuota(retryUserId, idempotencyKey, afterMidnight),
+    ).resolves.toBe(false);
+  });
+
   it('refunds one consumption transactionally and never decrements twice or below zero', async () => {
     const refundUserId = randomUUID();
     const idempotencyKey = randomUUID();

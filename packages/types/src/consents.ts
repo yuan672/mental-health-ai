@@ -1,5 +1,6 @@
 export type ConsentType = 'terms_of_service' | 'privacy_policy';
 export type ConsentStatus = 'accepted' | 'withdrawn';
+export type RequiredConsentStatus = ConsentStatus | 'not_accepted';
 export type ConsentMutationAction = 'accept' | 'withdraw';
 
 export type ConsentHistoryItem = {
@@ -13,6 +14,13 @@ export type ConsentHistoryItem = {
 export type ConsentHistoryResponse = {
   success: true;
   data: {
+    currentRequiredConsents: Array<{
+      consentType: ConsentType;
+      consentVersion: string;
+      status: RequiredConsentStatus;
+      acceptedAt: string | null;
+      withdrawnAt: string | null;
+    }>;
     consents: ConsentHistoryItem[];
     nextCursor: string | null;
   };

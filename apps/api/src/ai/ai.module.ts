@@ -10,6 +10,8 @@ import { AiOrchestrationService } from './ai-orchestration.service';
 import { ConversationContextService } from './context/conversation-context.service';
 import { ConservativeTokenEstimator } from './context/token-estimator';
 import { IncognitoGenerationAdmissionService } from './incognito/incognito-generation-admission.service';
+import { IncognitoContextsController } from './incognito/incognito-contexts.controller';
+import { IncognitoContextsService } from './incognito/incognito-contexts.service';
 import { IncognitoRuntimeModule } from './incognito/incognito-runtime.module';
 import { AiOperationalLoggingService } from './logging/ai-operational-logging.service';
 import { LlmProviderModule } from './providers/llm-provider.module';
@@ -30,7 +32,7 @@ import { AiTurnService } from './turns/ai-turn.service';
     QuotaModule,
     SafetyModule,
   ],
-  controllers: [AiController],
+  controllers: [AiController, IncognitoContextsController],
   providers: [
     AiOperationalLoggingService,
     AiOrchestrationService,
@@ -40,6 +42,7 @@ import { AiTurnService } from './turns/ai-turn.service';
     ConversationContextService,
     ConservativeTokenEstimator,
     IncognitoGenerationAdmissionService,
+    IncognitoContextsService,
   ],
   exports: [AiOrchestrationService, AiTurnService, IncognitoGenerationAdmissionService],
 })

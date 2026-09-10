@@ -104,20 +104,71 @@ export type CapabilitiesResponse = ApiSuccessResponse<{ aiChatEnabled: boolean }
 
 export type AiPublicFinishReason = 'stop' | 'length' | 'content_filter' | 'tool_call' | 'unknown';
 
-export type AiStreamEvent =
+export type PersistentAiChatRequest = {
+  mode: 'persistent';
+  clientRequestId: string;
+  conversationId?: string | undefined;
+  message: string;
+};
+
+export type IncognitoAiChatRequest = {
+  mode: 'incognito';
+  clientRequestId: string;
+  contextId: string;
+  message: string;
+};
+
+export type AiChatRequest = PersistentAiChatRequest | IncognitoAiChatRequest;
+
+export type PersistentAiStreamEvent =
   | {
       type: 'turn.started';
-      data: { turnId: string; conversationId: string };
+      data: { mode: 'persistent'; turnId: string; conversationId: string };
     }
   | {
       type: 'message.segment';
-      data: { turnId: string; sequence: number; text: string };
+      data: { mode: 'persistent'; turnId: string; sequence: number; text: string };
     }
   | {
       type: 'turn.completed';
-      data: { turnId: string; assistantMessageId: string; finishReason: AiPublicFinishReason };
+      data: {
+        mode: 'persistent';
+        turnId: string;
+        assistantMessageId: string;
+        finishReason: AiPublicFinishReason;
+      };
     }
   | {
       type: 'turn.failed';
-      data: ApiErrorResponse['error'] & { turnId: string };
+      data: ApiErrorResponse['error'] & { mode: 'persistent'; turnId: string };
     };
+
+export type IncognitoAiStreamEvent =
+  | {
+      type: 'turn.started';
+      data: { mode: 'incognito'; generationId: string };
+    }
+  | {
+      type: 'message.segment';
+      data: { mode: 'incognito'; generationId: string; sequence: number; text: string };
+    }
+  | {
+      type: 'turn.completed';
+      data: {
+        mode: 'incognito';
+        generationId: string;
+        finishReason: AiPublicFinishReason;
+      };
+    }
+  | {
+      type: 'turn.failed';
+      data: ApiErrorResponse['error'] & { mode: 'incognito'; generationId: string };
+    };
+
+export type AiStreamEvent = PersistentAiStreamEvent | IncognitoAiStreamEvent;
+
+export type CreateIncognitoContextResponse = ApiSuccessResponse<{
+  context: { id: string; expiresAt: string };
+}>;
+
+export type EndIncognitoContextResponse = ApiSuccessResponse<{ ended: true }>;

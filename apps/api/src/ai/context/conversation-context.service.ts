@@ -33,6 +33,23 @@ export class ConversationContextService {
   ): Promise<ConversationContext> {
     await this.conversations.get(userId, conversationId, now);
     const history = await this.messages.readMessages(userId, conversationId, now);
+    return this.buildContext(history, currentUserMessage, promptKey);
+  }
+
+  buildIncognitoContext(
+    history: readonly Readonly<{ role: 'user' | 'assistant'; content: string }>[],
+    currentUserMessage: string,
+    promptKey:
+      'supportive-chat' | 'supportive-chat-safety' | 'high-risk-support' = 'supportive-chat',
+  ): ConversationContext {
+    return this.buildContext(history, currentUserMessage, promptKey);
+  }
+
+  private buildContext(
+    history: readonly Readonly<{ role: 'user' | 'assistant'; content: string }>[],
+    currentUserMessage: string,
+    promptKey: 'supportive-chat' | 'supportive-chat-safety' | 'high-risk-support',
+  ): ConversationContext {
     const prompt =
       promptKey === 'high-risk-support'
         ? this.prompts.getHighRiskSupportPrompt()

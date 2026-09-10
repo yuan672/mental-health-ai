@@ -1,5 +1,10 @@
 import { Body, Controller, Post, Req, Res, UseGuards } from '@nestjs/common';
-import type { AiStreamEvent } from '@mental-health/types';
+import type {
+  AiStreamEvent,
+  IncognitoAiChatRequest,
+  IncognitoAiStreamEvent,
+  PersistentAiStreamEvent,
+} from '@mental-health/types';
 import type { Response } from 'express';
 import { AuthenticatedSessionGuard } from '../auth/authenticated-session.guard';
 import type { AuthenticatedRequest } from '../auth/authenticated-request';
@@ -17,7 +22,8 @@ export async function writeSse(
 ): Promise<void> {
   if (signal.aborted) throw signal.reason ?? new Error('AI stream aborted');
   if (response.destroyed || response.writableEnded) throw new Error('AI stream is not writable');
-  const frame = `id: ${event.data.turnId}:${sequence}\nevent: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`;
+  const streamId = event.data.mode === 'persistent' ? event.data.turnId : event.data.generationId;
+  const frame = `id: ${streamId}:${sequence}\nevent: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`;
   if (response.write(frame)) return;
 
   await new Promise<void>((resolve, reject) => {
@@ -43,14 +49,30 @@ export async function writeSse(
   });
 }
 
-function failedEvent(turnId: string, error: unknown): AiStreamEvent {
-  const appError =
-    error instanceof AppError
-      ? error
-      : new AppError(ERROR_CODES.INTERNAL_ERROR, 500, '服务器内部错误');
+function toAppError(error: unknown): AppError {
+  return error instanceof AppError
+    ? error
+    : new AppError(ERROR_CODES.INTERNAL_ERROR, 500, '服务器内部错误');
+}
+
+function failedEvent(turnId: string, error: unknown): PersistentAiStreamEvent {
+  const appError = toAppError(error);
   return {
     type: 'turn.failed',
-    data: { turnId, code: appError.code, message: appError.message },
+    data: { mode: 'persistent', turnId, code: appError.code, message: appError.message },
+  };
+}
+
+function incognitoFailedEvent(generationId: string, error: unknown): IncognitoAiStreamEvent {
+  const appError = toAppError(error);
+  return {
+    type: 'turn.failed',
+    data: {
+      mode: 'incognito',
+      generationId,
+      code: appError.code,
+      message: appError.message,
+    },
   };
 }
 
@@ -72,6 +94,11 @@ export class AiController {
       }
     };
     response.once('close', onClose);
+
+    if (body.mode === 'incognito') {
+      await this.streamIncognito(request, response, body, abortController, onClose);
+      return;
+    }
 
     let prepared;
     try {
@@ -124,7 +151,11 @@ export class AiController {
           response,
           {
             type: 'turn.started',
-            data: { turnId: prepared.turn.id, conversationId: prepared.turn.conversationId },
+            data: {
+              mode: 'persistent',
+              turnId: prepared.turn.id,
+              conversationId: prepared.turn.conversationId,
+            },
           },
           ++eventSequence,
           prepared.execution.signal,
@@ -133,7 +164,12 @@ export class AiController {
           response,
           {
             type: 'message.segment',
-            data: { turnId: prepared.turn.id, sequence: 1, text: prepared.response.content },
+            data: {
+              mode: 'persistent',
+              turnId: prepared.turn.id,
+              sequence: 1,
+              text: prepared.response.content,
+            },
           },
           ++eventSequence,
           prepared.execution.signal,
@@ -144,6 +180,7 @@ export class AiController {
             {
               type: 'turn.completed',
               data: {
+                mode: 'persistent',
                 turnId: prepared.turn.id,
                 assistantMessageId: prepared.turn.assistantMessageId,
                 finishReason: 'content_filter',
@@ -200,6 +237,117 @@ export class AiController {
       if (!response.writableEnded && !response.destroyed) {
         response.end();
       }
+    }
+  }
+
+  private async streamIncognito(
+    request: AuthenticatedRequest,
+    response: Response,
+    body: IncognitoAiChatRequest,
+    abortController: AbortController,
+    onClose: () => void,
+  ): Promise<void> {
+    let prepared;
+    try {
+      prepared = await this.orchestration.prepareIncognitoTurn(
+        {
+          userId: request.authenticatedSession.userId,
+          sessionId: request.authenticatedSession.id,
+        },
+        body,
+        abortController.signal,
+      );
+    } catch (error) {
+      response.removeListener('close', onClose);
+      throw error;
+    }
+
+    if (prepared.generation.signal.aborted || response.destroyed || response.writableEnded) {
+      this.orchestration.releasePreparedIncognitoTurn(prepared);
+      response.removeListener('close', onClose);
+      return;
+    }
+
+    response.status(200);
+    response.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-cache, no-transform');
+    response.setHeader('Connection', 'keep-alive');
+    response.setHeader('X-Accel-Buffering', 'no');
+    response.flushHeaders();
+
+    let eventSequence = 0;
+    if (prepared.kind === 'trusted') {
+      try {
+        await writeSse(
+          response,
+          {
+            type: 'turn.started',
+            data: { mode: 'incognito', generationId: prepared.generation.id },
+          },
+          ++eventSequence,
+          prepared.generation.signal,
+        );
+        await writeSse(
+          response,
+          {
+            type: 'message.segment',
+            data: {
+              mode: 'incognito',
+              generationId: prepared.generation.id,
+              sequence: 1,
+              text: prepared.response.content,
+            },
+          },
+          ++eventSequence,
+          prepared.generation.signal,
+        );
+        await writeSse(
+          response,
+          {
+            type: 'turn.completed',
+            data: {
+              mode: 'incognito',
+              generationId: prepared.generation.id,
+              finishReason: 'content_filter',
+            },
+          },
+          ++eventSequence,
+          prepared.generation.signal,
+        );
+      } catch {
+        // Context termination, logout, withdrawal, timeout, or disconnect rejects late events.
+      } finally {
+        this.orchestration.releasePreparedIncognitoTurn(prepared);
+        response.removeListener('close', onClose);
+        if (!response.writableEnded && !response.destroyed) response.end();
+      }
+      return;
+    }
+
+    try {
+      for await (const event of this.orchestration.streamPreparedIncognitoTurn(
+        prepared,
+        abortController.signal,
+      )) {
+        eventSequence += 1;
+        await writeSse(response, event, eventSequence, prepared.generation.signal);
+      }
+    } catch (error) {
+      if (!prepared.generation.signal.aborted && !response.destroyed && !response.writableEnded) {
+        try {
+          await writeSse(
+            response,
+            incognitoFailedEvent(prepared.generation.id, error),
+            ++eventSequence,
+            prepared.generation.signal,
+          );
+        } catch {
+          // Do not write after context termination, cancellation, deadline, or socket closure.
+        }
+      }
+    } finally {
+      response.removeListener('close', onClose);
+      if (!response.writableEnded && !response.destroyed) response.end();
     }
   }
 }

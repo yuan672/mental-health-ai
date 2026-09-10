@@ -3,6 +3,7 @@ import type {
   ConsentHistoryItem,
   ConsentHistoryResponse,
   ConsentMutationResponse,
+  RequiredConsentStatus,
   ConsentType,
 } from '@mental-health/types';
 import { Injectable } from '@nestjs/common';
@@ -17,6 +18,7 @@ import { decodeOpaqueCursor, encodeOpaqueCursor } from '../common/pagination/opa
 import { UsersRepository, type ConsentRecord } from '../users/users.repository';
 import { CONSENT_TYPE_VALUES, ConsentPolicyService } from './consent-policy.service';
 import { consentHistoryCursorSchema, type ConsentHistoryQuery } from './consents.schemas';
+import { ConsentWithdrawalCoordinator } from './consent-withdrawal.coordinator';
 
 function toPublicConsent(record: ConsentRecord): ConsentHistoryItem {
   if (!CONSENT_TYPE_VALUES.some((knownType) => knownType === record.consentType)) {
@@ -36,6 +38,7 @@ function toPublicConsent(record: ConsentRecord): ConsentHistoryItem {
 export class ConsentsService {
   constructor(
     private readonly consentPolicy: ConsentPolicyService,
+    private readonly withdrawalCoordinator: ConsentWithdrawalCoordinator,
     private readonly usersRepository: UsersRepository,
   ) {}
 
@@ -60,9 +63,33 @@ export class ConsentsService {
     const page = records.slice(0, query.limit);
     const last = page.at(-1);
 
+    const currentRequiredConsents = await Promise.all(
+      this.consentPolicy.getRequiredPolicies().map(async (policy) => {
+        let record: ConsentRecord | null;
+        try {
+          record = await this.usersRepository.findConsent(
+            userId,
+            policy.consentType,
+            policy.consentVersion,
+          );
+        } catch {
+          throw new DatabaseError();
+        }
+        const status: RequiredConsentStatus = record?.status ?? 'not_accepted';
+        return {
+          consentType: policy.consentType,
+          consentVersion: policy.consentVersion,
+          status,
+          acceptedAt: record?.acceptedAt.toISOString() ?? null,
+          withdrawnAt: record?.withdrawnAt?.toISOString() ?? null,
+        };
+      }),
+    );
+
     return {
       success: true,
       data: {
+        currentRequiredConsents,
         consents: page.map(toPublicConsent),
         nextCursor:
           hasNextPage && last
@@ -152,6 +179,7 @@ export class ConsentsService {
       throw new ConflictError('该政策版本尚未接受');
     }
     if (existing.status === 'withdrawn') {
+      this.withdrawalCoordinator.cancelUserAiActivity(userId);
       return { success: true, data: { consent: toPublicConsent(existing) } };
     }
 
@@ -161,6 +189,8 @@ export class ConsentsService {
     } catch {
       throw new DatabaseError();
     }
+
+    this.withdrawalCoordinator.cancelUserAiActivity(userId);
 
     return {
       success: true,

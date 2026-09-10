@@ -1,5 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { AiStreamEvent } from '@mental-health/types';
+import type {
+  IncognitoAiChatRequest,
+  IncognitoAiStreamEvent,
+  PersistentAiChatRequest,
+  PersistentAiStreamEvent,
+} from '@mental-health/types';
 import {
   AIChatDisabledError,
   AIProviderError,
@@ -7,6 +12,7 @@ import {
   AITurnInProgressError,
   InternalServerError,
   QuotaExceededError,
+  AIIncognitoContextLostError,
 } from '../common/errors';
 import { env } from '../config/env';
 import { ConsentsService } from '../consents/consents.service';
@@ -36,7 +42,6 @@ import {
 import { SentenceSegmentBuffer } from './streaming/sentence-segment-buffer';
 import { AiTurnService } from './turns/ai-turn.service';
 import type { AiTurnRecord } from './turns/ai-turn.repository';
-import type { AiChatRequest } from './ai.schemas';
 import { PromptService } from './prompts/prompt.service';
 import {
   CrisisFlowService,
@@ -46,16 +51,28 @@ import { AuditLogService } from '../safety/audit/audit-log.service';
 import { SafetyOperationalLoggingService } from '../safety/logging/safety-operational-logging.service';
 import type { RiskDecision } from '../safety/safety.types';
 import { TrustedSafetyTemplateRegistry } from '../safety/templates/trusted-safety-template.registry';
+import {
+  ActiveAiExecutionRegistry,
+  AiExecutionTotalTimeoutError,
+  type ActiveAiExecution,
+} from './runtime/active-ai-execution.registry';
+import { IncognitoGenerationAdmissionService } from './incognito/incognito-generation-admission.service';
+import {
+  INCOGNITO_CONTEXT_STORE,
+  type IncognitoContextStore,
+  type IncognitoGenerationClaim,
+} from './incognito/incognito-context.store';
 
 export type AuthenticatedAiPrincipal = Readonly<{
   userId: string;
   sessionId: string;
 }>;
 
-export type AiTurnExecutionDeadline = Readonly<{
-  signal: AbortSignal;
-  dispose: () => void;
-}>;
+type PersistentAiTurnInput = Omit<PersistentAiChatRequest, 'mode'> & {
+  mode?: 'persistent';
+};
+
+export type AiTurnExecutionDeadline = ActiveAiExecution;
 
 export type PreparedAiTurn =
   | Readonly<{ kind: 'existing'; turn: AiTurnRecord }>
@@ -79,6 +96,27 @@ export type PreparedAiTurn =
       execution: AiTurnExecutionDeadline;
     }>;
 
+export type PreparedIncognitoTurn =
+  | Readonly<{
+      kind: 'ready';
+      principal: AuthenticatedAiPrincipal;
+      input: IncognitoAiChatRequest;
+      context: ConversationContext;
+      riskDecision: RiskDecision;
+      generation: IncognitoGenerationClaim;
+      quotaIdempotencyKey: string;
+      execution: AiTurnExecutionDeadline;
+    }>
+  | Readonly<{
+      kind: 'trusted';
+      principal: AuthenticatedAiPrincipal;
+      input: IncognitoAiChatRequest;
+      response: TrustedSafetyResponse;
+      riskDecision: RiskDecision;
+      generation: IncognitoGenerationClaim;
+      execution: AiTurnExecutionDeadline;
+    }>;
+
 class OutputSafetyReplacement extends Error {
   constructor(
     public readonly text: string,
@@ -96,31 +134,6 @@ class ProviderEventTimeout extends Error {
     super(`Provider stream timed out: ${phase}`);
     this.name = ProviderEventTimeout.name;
   }
-}
-
-function createTurnExecutionDeadline(clientSignal: AbortSignal): AiTurnExecutionDeadline {
-  const controller = new AbortController();
-  const onClientAbort = (): void =>
-    controller.abort(clientSignal.reason ?? new Error('client_disconnect'));
-  clientSignal.addEventListener('abort', onClientAbort, { once: true });
-  if (clientSignal.aborted) {
-    onClientAbort();
-  }
-  const timer = setTimeout(
-    () => controller.abort(new ProviderEventTimeout('total')),
-    env.LLM_TOTAL_TIMEOUT_MS,
-  );
-  timer.unref();
-  let disposed = false;
-  return {
-    signal: controller.signal,
-    dispose: () => {
-      if (disposed) return;
-      disposed = true;
-      clearTimeout(timer);
-      clientSignal.removeEventListener('abort', onClientAbort);
-    },
-  };
 }
 
 function throwIfAborted(signal: AbortSignal): void {
@@ -207,11 +220,15 @@ const MAX_OUTPUT_CHARACTERS_PER_REQUESTED_TOKEN = 16;
 export class AiOrchestrationService {
   constructor(
     private readonly aiTurns: AiTurnService,
+    private readonly activeExecutions: ActiveAiExecutionRegistry,
     private readonly audits: AuditLogService,
     private readonly consents: ConsentsService,
     private readonly contextService: ConversationContextService,
     private readonly conversations: ConversationService,
     private readonly crisisFlow: CrisisFlowService,
+    private readonly incognitoAdmission: IncognitoGenerationAdmissionService,
+    @Inject(INCOGNITO_CONTEXT_STORE)
+    private readonly incognitoContexts: IncognitoContextStore,
     private readonly logging: AiOperationalLoggingService,
     @Inject(LLM_PROVIDER) private readonly provider: LLMProvider,
     @Inject(POST_GENERATION_SAFETY_GATE)
@@ -224,149 +241,265 @@ export class AiOrchestrationService {
     private readonly templates: TrustedSafetyTemplateRegistry,
   ) {}
 
+  async prepareIncognitoTurn(
+    principal: AuthenticatedAiPrincipal,
+    input: IncognitoAiChatRequest,
+    signal: AbortSignal,
+    now = new Date(),
+  ): Promise<PreparedIncognitoTurn> {
+    const execution = this.activeExecutions.register({
+      userId: principal.userId,
+      sessionId: principal.sessionId,
+      clientSignal: signal,
+    });
+
+    let admission;
+    try {
+      admission = await this.incognitoAdmission.claim({
+        userId: principal.userId,
+        sessionId: principal.sessionId,
+        contextId: input.contextId,
+        clientRequestId: input.clientRequestId,
+        message: input.message,
+        signal: execution.signal,
+        now,
+      });
+    } catch (error) {
+      execution.dispose();
+      throw error;
+    }
+
+    try {
+      throwIfAborted(admission.generation.signal);
+      if (admission.kind === 'trusted') {
+        try {
+          const withUserMessage = this.incognitoContexts.append(
+            principal.userId,
+            principal.sessionId,
+            input.contextId,
+            admission.generation.id,
+            { role: 'user', content: input.message },
+            now,
+          );
+          if (withUserMessage) {
+            this.incognitoContexts.append(
+              principal.userId,
+              principal.sessionId,
+              input.contextId,
+              admission.generation.id,
+              { role: 'assistant', content: admission.response.content },
+              now,
+            );
+          }
+        } catch {
+          // A trusted safety response remains deliverable even if the bounded runtime is full.
+        }
+        throwIfAborted(execution.signal);
+        return {
+          kind: 'trusted',
+          principal,
+          input,
+          response: admission.response,
+          riskDecision: admission.riskDecision,
+          generation: admission.generation,
+          execution,
+        };
+      }
+
+      const prompt = this.generationPromptFor(admission.riskDecision);
+      const context = this.contextService.buildIncognitoContext(
+        admission.context.messages,
+        input.message,
+        prompt.key as 'supportive-chat' | 'supportive-chat-safety' | 'high-risk-support',
+      );
+      const appended = this.incognitoContexts.append(
+        principal.userId,
+        principal.sessionId,
+        input.contextId,
+        admission.generation.id,
+        { role: 'user', content: input.message },
+        now,
+      );
+      if (!appended) {
+        await this.quota.refundQuota(principal.userId, admission.quotaIdempotencyKey, now);
+        throw new AIIncognitoContextLostError();
+      }
+      throwIfAborted(admission.generation.signal);
+      return {
+        kind: 'ready',
+        principal,
+        input,
+        context,
+        riskDecision: admission.riskDecision,
+        generation: admission.generation,
+        quotaIdempotencyKey: admission.quotaIdempotencyKey,
+        execution,
+      };
+    } catch (error) {
+      if (admission.kind === 'generation') {
+        await this.quota.refundQuota(principal.userId, admission.quotaIdempotencyKey, now);
+      }
+      this.releaseIncognitoGeneration(principal, input.contextId, admission.generation.id);
+      execution.dispose();
+      throw error;
+    }
+  }
+
   async preparePersistentTurn(
     principal: AuthenticatedAiPrincipal,
-    input: AiChatRequest,
+    input: PersistentAiTurnInput,
     signal: AbortSignal,
     now = new Date(),
   ): Promise<PreparedAiTurn> {
-    if (!env.AI_CHAT_ENABLED) {
-      throw new AIChatDisabledError();
-    }
-    await this.consents.ensureRequiredConsentsActive(principal.userId);
-
-    const existing = await this.aiTurns.findByClientRequestId(
-      principal.userId,
-      input.clientRequestId,
-    );
-    if (existing) {
-      await this.conversations.get(principal.userId, existing.conversationId, now);
-      return { kind: 'existing', turn: existing };
-    }
-
-    const conversation = input.conversationId
-      ? await this.conversations.get(principal.userId, input.conversationId, now)
-      : await this.conversations.create(principal.userId, now);
-    const routingPrompt = this.prompts.getSafetyRoutingPrompt();
-    const claimed = await this.aiTurns.claim({
+    const execution = this.activeExecutions.register({
       userId: principal.userId,
-      conversationId: conversation.id,
-      clientRequestId: input.clientRequestId,
-      promptKey: routingPrompt.key,
-      promptVersion: routingPrompt.version,
-      now,
+      sessionId: principal.sessionId,
+      clientSignal: signal,
     });
-    if (!claimed.created) {
-      return { kind: 'existing', turn: claimed.turn };
-    }
-
-    const execution = createTurnExecutionDeadline(signal);
 
     try {
-      const quotaAvailable = await this.quota.canUseAI(principal.userId, now);
-      throwIfAborted(execution.signal);
-      const riskDecision = await this.preGenerationSafety.check(
-        {
-          turnId: claimed.turn.id,
-          userId: principal.userId,
-          target: { kind: 'conversation', conversationId: conversation.id },
-          message: input.message,
-          now,
-        },
-        execution.signal,
-      );
+      if (!env.AI_CHAT_ENABLED) {
+        throw new AIChatDisabledError();
+      }
+      await this.consents.ensureRequiredConsentsActive(principal.userId);
       throwIfAborted(execution.signal);
 
-      const trustedResponse = this.trustedResponseFor(riskDecision, quotaAvailable);
-      if (trustedResponse) {
-        try {
-          const completed = await this.aiTurns.completeTrusted(
+      const existing = await this.aiTurns.findByClientRequestId(
+        principal.userId,
+        input.clientRequestId,
+      );
+      if (existing) {
+        await this.conversations.get(principal.userId, existing.conversationId, now);
+        execution.dispose();
+        return { kind: 'existing', turn: existing };
+      }
+
+      const conversation = input.conversationId
+        ? await this.conversations.get(principal.userId, input.conversationId, now)
+        : await this.conversations.create(principal.userId, now);
+      const routingPrompt = this.prompts.getSafetyRoutingPrompt();
+      const claimed = await this.aiTurns.claim({
+        userId: principal.userId,
+        conversationId: conversation.id,
+        clientRequestId: input.clientRequestId,
+        promptKey: routingPrompt.key,
+        promptVersion: routingPrompt.version,
+        now,
+      });
+      if (!claimed.created) {
+        execution.dispose();
+        return { kind: 'existing', turn: claimed.turn };
+      }
+
+      try {
+        const quotaAvailable = await this.quota.canUseAI(principal.userId, now);
+        throwIfAborted(execution.signal);
+        const riskDecision = await this.preGenerationSafety.check(
+          {
+            turnId: claimed.turn.id,
+            userId: principal.userId,
+            target: { kind: 'conversation', conversationId: conversation.id },
+            message: input.message,
+            now,
+          },
+          execution.signal,
+        );
+        throwIfAborted(execution.signal);
+
+        const trustedResponse = this.trustedResponseFor(riskDecision, quotaAvailable);
+        if (trustedResponse) {
+          try {
+            const completed = await this.aiTurns.completeTrusted(
+              claimed.turn,
+              {
+                userMessageContent: input.message,
+                assistantContent: trustedResponse.content,
+                promptKey: trustedResponse.templateKey,
+                promptVersion: trustedResponse.templateVersion,
+                riskDecision,
+                templateKey: trustedResponse.templateKey,
+                templateVersion: trustedResponse.templateVersion,
+              },
+              now,
+            );
+            throwIfAborted(execution.signal);
+            return { kind: 'trusted', turn: completed, response: trustedResponse, execution };
+          } catch (error) {
+            if (execution.signal.aborted) {
+              throw execution.signal.reason ?? error;
+            }
+            this.safetyLogging.crisisPersistenceFailed({ turnId: claimed.turn.id });
+            try {
+              await this.aiTurns.finish(
+                claimed.turn,
+                'failed',
+                'TRUSTED_SAFETY_PERSISTENCE_FAILED',
+                new Date(),
+              );
+            } catch {
+              // The trusted response remains deliverable even when persistence is unavailable.
+            }
+            return {
+              kind: 'unpersisted_trusted',
+              turn: claimed.turn,
+              response: trustedResponse,
+              execution,
+            };
+          }
+        }
+
+        if (!quotaAvailable) {
+          await this.aiTurns.failAfterSafetyDecision(
             claimed.turn,
-            {
-              userMessageContent: input.message,
-              assistantContent: trustedResponse.content,
-              promptKey: trustedResponse.templateKey,
-              promptVersion: trustedResponse.templateVersion,
-              riskDecision,
-              templateKey: trustedResponse.templateKey,
-              templateVersion: trustedResponse.templateVersion,
-            },
+            riskDecision,
+            'QUOTA_EXCEEDED',
             now,
           );
-          throwIfAborted(execution.signal);
-          return { kind: 'trusted', turn: completed, response: trustedResponse, execution };
-        } catch (error) {
-          if (execution.signal.aborted) {
-            throw execution.signal.reason ?? error;
-          }
-          this.safetyLogging.crisisPersistenceFailed({ turnId: claimed.turn.id });
-          try {
-            await this.aiTurns.finish(
-              claimed.turn,
-              'failed',
-              'TRUSTED_SAFETY_PERSISTENCE_FAILED',
-              new Date(),
-            );
-          } catch {
-            // The trusted response remains deliverable even when persistence is unavailable.
-          }
-          return {
-            kind: 'unpersisted_trusted',
-            turn: claimed.turn,
-            response: trustedResponse,
-            execution,
-          };
+          throw new QuotaExceededError();
         }
-      }
 
-      if (!quotaAvailable) {
-        await this.aiTurns.failAfterSafetyDecision(
+        const prompt = this.generationPromptFor(riskDecision);
+        const context = await this.contextService.buildPersistentContext(
+          principal.userId,
+          conversation.id,
+          input.message,
+          now,
+          prompt.key as 'supportive-chat' | 'supportive-chat-safety' | 'high-risk-support',
+        );
+        throwIfAborted(execution.signal);
+        const started = await this.aiTurns.start(
           claimed.turn,
+          input.message,
+          prompt,
           riskDecision,
-          'QUOTA_EXCEEDED',
           now,
         );
-        throw new QuotaExceededError();
+        throwIfAborted(execution.signal);
+        return { kind: 'ready', turn: started, context, riskDecision, execution };
+      } catch (error) {
+        const timedOut = execution.signal.reason instanceof AiExecutionTotalTimeoutError;
+        const cancelled = execution.signal.aborted && !timedOut;
+        try {
+          await this.aiTurns.finish(
+            claimed.turn,
+            cancelled ? 'cancelled' : 'failed',
+            cancelled
+              ? 'CANCELLED_BEFORE_PROVIDER'
+              : timedOut
+                ? 'TOTAL_TIMEOUT_BEFORE_PROVIDER'
+                : this.safeFailureCode(error),
+            new Date(),
+          );
+        } finally {
+          execution.dispose();
+        }
+        if (timedOut) {
+          throw new AIProviderTimeoutError();
+        }
+        throw error;
       }
-
-      const prompt = this.generationPromptFor(riskDecision);
-      const context = await this.contextService.buildPersistentContext(
-        principal.userId,
-        conversation.id,
-        input.message,
-        now,
-        prompt.key as 'supportive-chat' | 'supportive-chat-safety' | 'high-risk-support',
-      );
-      throwIfAborted(execution.signal);
-      const started = await this.aiTurns.start(
-        claimed.turn,
-        input.message,
-        prompt,
-        riskDecision,
-        now,
-      );
-      throwIfAborted(execution.signal);
-      return { kind: 'ready', turn: started, context, riskDecision, execution };
     } catch (error) {
-      const timedOut = execution.signal.reason instanceof ProviderEventTimeout;
-      const cancelled = execution.signal.aborted && !timedOut;
-      try {
-        await this.aiTurns.finish(
-          claimed.turn,
-          cancelled ? 'cancelled' : 'failed',
-          cancelled
-            ? 'CANCELLED_BEFORE_PROVIDER'
-            : timedOut
-              ? 'TOTAL_TIMEOUT_BEFORE_PROVIDER'
-              : this.safeFailureCode(error),
-          new Date(),
-        );
-      } finally {
-        execution.dispose();
-      }
-      if (timedOut) {
-        throw new AIProviderTimeoutError();
-      }
+      execution.dispose();
       throw error;
     }
   }
@@ -417,7 +550,7 @@ export class AiOrchestrationService {
   async *streamPreparedTurn(
     prepared: Extract<PreparedAiTurn, { kind: 'ready' }>,
     clientSignal: AbortSignal,
-  ): AsyncIterable<AiStreamEvent> {
+  ): AsyncIterable<PersistentAiStreamEvent> {
     const { turn, context, riskDecision } = prepared;
     const metadata = { userId: turn.userId, conversationId: turn.conversationId, turnId: turn.id };
     const generationStartedAt = Date.now();
@@ -454,7 +587,7 @@ export class AiOrchestrationService {
 
     yield {
       type: 'turn.started',
-      data: { turnId: turn.id, conversationId: turn.conversationId },
+      data: { mode: 'persistent', turnId: turn.id, conversationId: turn.conversationId },
     };
 
     try {
@@ -490,7 +623,11 @@ export class AiOrchestrationService {
           const due = buffer.flushIfDue();
           if (due) {
             const approved = await this.approveSegment(
-              turn,
+              {
+                userId: turn.userId,
+                operationId: turn.id,
+                target: { kind: 'conversation', conversationId: turn.conversationId },
+              },
               due,
               approvedText,
               riskDecision,
@@ -502,7 +639,12 @@ export class AiOrchestrationService {
               segmentSequence += 1;
               yield {
                 type: 'message.segment',
-                data: { turnId: turn.id, sequence: segmentSequence, text: approved },
+                data: {
+                  mode: 'persistent',
+                  turnId: turn.id,
+                  sequence: segmentSequence,
+                  text: approved,
+                },
               };
             }
           }
@@ -552,7 +694,11 @@ export class AiOrchestrationService {
           }
           for (const candidate of buffer.append(event.text)) {
             const approved = await this.approveSegment(
-              turn,
+              {
+                userId: turn.userId,
+                operationId: turn.id,
+                target: { kind: 'conversation', conversationId: turn.conversationId },
+              },
               candidate,
               approvedText,
               riskDecision,
@@ -564,7 +710,12 @@ export class AiOrchestrationService {
               segmentSequence += 1;
               yield {
                 type: 'message.segment',
-                data: { turnId: turn.id, sequence: segmentSequence, text: approved },
+                data: {
+                  mode: 'persistent',
+                  turnId: turn.id,
+                  sequence: segmentSequence,
+                  text: approved,
+                },
               };
             }
           }
@@ -580,7 +731,11 @@ export class AiOrchestrationService {
       const remainder = useFullBuffer ? fullBufferedText : buffer.flush();
       if (remainder) {
         const approved = await this.approveSegment(
-          turn,
+          {
+            userId: turn.userId,
+            operationId: turn.id,
+            target: { kind: 'conversation', conversationId: turn.conversationId },
+          },
           remainder,
           approvedText,
           riskDecision,
@@ -592,7 +747,12 @@ export class AiOrchestrationService {
           segmentSequence += 1;
           yield {
             type: 'message.segment',
-            data: { turnId: turn.id, sequence: segmentSequence, text: approved },
+            data: {
+              mode: 'persistent',
+              turnId: turn.id,
+              sequence: segmentSequence,
+              text: approved,
+            },
           };
         }
       }
@@ -615,6 +775,7 @@ export class AiOrchestrationService {
       yield {
         type: 'turn.completed',
         data: {
+          mode: 'persistent',
           turnId: turn.id,
           assistantMessageId: completed.assistantMessageId,
           finishReason: completedReason,
@@ -656,7 +817,12 @@ export class AiOrchestrationService {
         segmentSequence += 1;
         yield {
           type: 'message.segment',
-          data: { turnId: turn.id, sequence: segmentSequence, text: error.text },
+          data: {
+            mode: 'persistent',
+            turnId: turn.id,
+            sequence: segmentSequence,
+            text: error.text,
+          },
         };
         if (sideEffectError) {
           await this.finishAfterSafetyPersistenceFailure(turn);
@@ -674,6 +840,7 @@ export class AiOrchestrationService {
         yield {
           type: 'turn.completed',
           data: {
+            mode: 'persistent',
             turnId: turn.id,
             assistantMessageId: completed.assistantMessageId,
             finishReason: 'content_filter',
@@ -683,7 +850,8 @@ export class AiOrchestrationService {
       }
       const timedOut =
         error instanceof ProviderEventTimeout ||
-        generationController.signal.reason instanceof ProviderEventTimeout;
+        generationController.signal.reason instanceof ProviderEventTimeout ||
+        generationController.signal.reason instanceof AiExecutionTotalTimeoutError;
       const clientCancelled = clientSignal.aborted && !timedOut;
       const category = timedOut ? 'timeout' : failureCategory(error);
 
@@ -715,7 +883,12 @@ export class AiOrchestrationService {
         throwIfAborted(clientSignal);
         yield {
           type: 'message.segment',
-          data: { turnId: turn.id, sequence: 1, text: fallback.content },
+          data: {
+            mode: 'persistent',
+            turnId: turn.id,
+            sequence: 1,
+            text: fallback.content,
+          },
         };
         if (fallbackFailure) {
           await this.finishAfterSafetyPersistenceFailure(turn);
@@ -728,6 +901,7 @@ export class AiOrchestrationService {
           yield {
             type: 'turn.completed',
             data: {
+              mode: 'persistent',
               turnId: turn.id,
               assistantMessageId: completed.assistantMessageId,
               finishReason: 'content_filter',
@@ -775,6 +949,424 @@ export class AiOrchestrationService {
     }
   }
 
+  async *streamPreparedIncognitoTurn(
+    prepared: Extract<PreparedIncognitoTurn, { kind: 'ready' }>,
+    clientSignal: AbortSignal,
+  ): AsyncIterable<IncognitoAiStreamEvent> {
+    const { context, generation, input, principal, riskDecision } = prepared;
+    const metadata = { userId: principal.userId, turnId: generation.id };
+    const generationStartedAt = Date.now();
+    const generationController = new AbortController();
+    const onRuntimeAbort = (): void =>
+      generationController.abort(generation.signal.reason ?? new Error('incognito_ended'));
+    const onClientAbort = (): void =>
+      generationController.abort(clientSignal.reason ?? new Error('client_disconnect'));
+    generation.signal.addEventListener('abort', onRuntimeAbort, { once: true });
+    clientSignal.addEventListener('abort', onClientAbort, { once: true });
+    if (generation.signal.aborted) onRuntimeAbort();
+    if (clientSignal.aborted) onClientAbort();
+
+    const buffer = new SentenceSegmentBuffer(
+      env.AI_SEGMENT_MAX_CHARACTERS,
+      env.AI_SEGMENT_MAX_WAIT_MS,
+    );
+    const useFullBuffer = riskDecision.bufferingMode === 'full';
+    let fullBufferedText = '';
+    let approvedText = '';
+    let deliveredSegments = 0;
+    let segmentSequence = 0;
+    let providerMetadata = EMPTY_METADATA;
+    let usage = EMPTY_USAGE;
+    let timeToFirstTokenMs: number | null = null;
+    let completedReason: LLMFinishReason | null = null;
+    let providerInvoked = false;
+    let providerIterator: AsyncIterator<LLMProviderStreamEvent> | null = null;
+    let receivedOutputCharacters = 0;
+
+    yield {
+      type: 'turn.started',
+      data: { mode: 'incognito', generationId: generation.id },
+    };
+
+    try {
+      throwIfAborted(generation.signal);
+      const stream = this.provider.streamChat(
+        {
+          requestId: generation.id,
+          messages: context.messages,
+          maxOutputTokens: env.LLM_MAX_OUTPUT_TOKENS,
+        },
+        { signal: generationController.signal },
+      );
+      const iterator = stream[Symbol.asyncIterator]();
+      providerIterator = iterator;
+      providerInvoked = true;
+      let pending = iterator.next();
+      let providerDeadline = Date.now() + env.LLM_FIRST_TOKEN_TIMEOUT_MS;
+      let hasTextDelta = false;
+
+      while (completedReason === null) {
+        const wait = useFullBuffer ? null : buffer.millisecondsUntilFlush();
+        const outcome = await waitForProviderOrFlush(
+          pending,
+          providerDeadline - Date.now(),
+          wait,
+          generationController.signal,
+          hasTextDelta ? 'idle' : 'first_token',
+        );
+
+        if (outcome.type === 'segment_flush') {
+          const due = buffer.flushIfDue();
+          if (due) {
+            const approved = await this.approveSegment(
+              {
+                userId: principal.userId,
+                operationId: generation.id,
+                target: {
+                  kind: 'incognito',
+                  contextId: input.contextId,
+                  sessionId: principal.sessionId,
+                },
+              },
+              due,
+              approvedText,
+              riskDecision,
+              generationController.signal,
+            );
+            throwIfAborted(generation.signal);
+            if (approved.length > 0) {
+              approvedText += approved;
+              deliveredSegments += 1;
+              segmentSequence += 1;
+              yield {
+                type: 'message.segment',
+                data: {
+                  mode: 'incognito',
+                  generationId: generation.id,
+                  sequence: segmentSequence,
+                  text: approved,
+                },
+              };
+            }
+          }
+          continue;
+        }
+
+        if (outcome.item.done) {
+          throw new LLMProviderFailure('malformed_stream', true, providerMetadata.requestId);
+        }
+        const event = outcome.item.value;
+        providerDeadline = hasTextDelta
+          ? Date.now() + env.LLM_STREAM_IDLE_TIMEOUT_MS
+          : generationStartedAt + env.LLM_FIRST_TOKEN_TIMEOUT_MS;
+
+        if (event.type === 'started') {
+          providerMetadata = event.metadata;
+          this.logging.turnStarted(metadata, event.metadata.provider, event.metadata.model);
+          pending = iterator.next();
+          continue;
+        }
+        if (event.type === 'usage') {
+          usage = event.usage;
+          pending = iterator.next();
+          continue;
+        }
+        if (event.type === 'text_delta') {
+          if (!hasTextDelta) {
+            hasTextDelta = true;
+            timeToFirstTokenMs = Date.now() - generationStartedAt;
+            this.logging.firstSegment(metadata, timeToFirstTokenMs);
+          }
+          providerDeadline = Date.now() + env.LLM_STREAM_IDLE_TIMEOUT_MS;
+          receivedOutputCharacters += Array.from(event.text).length;
+          if (
+            receivedOutputCharacters >
+            env.LLM_MAX_OUTPUT_TOKENS * MAX_OUTPUT_CHARACTERS_PER_REQUESTED_TOKEN
+          ) {
+            throw new LLMProviderFailure('malformed_stream', true, providerMetadata.requestId);
+          }
+          if (useFullBuffer) {
+            fullBufferedText += event.text;
+            pending = iterator.next();
+            continue;
+          }
+          for (const candidate of buffer.append(event.text)) {
+            const approved = await this.approveSegment(
+              {
+                userId: principal.userId,
+                operationId: generation.id,
+                target: {
+                  kind: 'incognito',
+                  contextId: input.contextId,
+                  sessionId: principal.sessionId,
+                },
+              },
+              candidate,
+              approvedText,
+              riskDecision,
+              generationController.signal,
+            );
+            throwIfAborted(generation.signal);
+            if (approved.length > 0) {
+              approvedText += approved;
+              deliveredSegments += 1;
+              segmentSequence += 1;
+              yield {
+                type: 'message.segment',
+                data: {
+                  mode: 'incognito',
+                  generationId: generation.id,
+                  sequence: segmentSequence,
+                  text: approved,
+                },
+              };
+            }
+          }
+          pending = iterator.next();
+          continue;
+        }
+
+        providerMetadata = event.metadata;
+        usage = event.usage;
+        completedReason = event.finishReason;
+      }
+
+      const remainder = useFullBuffer ? fullBufferedText : buffer.flush();
+      if (remainder) {
+        const approved = await this.approveSegment(
+          {
+            userId: principal.userId,
+            operationId: generation.id,
+            target: {
+              kind: 'incognito',
+              contextId: input.contextId,
+              sessionId: principal.sessionId,
+            },
+          },
+          remainder,
+          approvedText,
+          riskDecision,
+          generationController.signal,
+        );
+        throwIfAborted(generation.signal);
+        if (approved.length > 0) {
+          approvedText += approved;
+          deliveredSegments += 1;
+          segmentSequence += 1;
+          yield {
+            type: 'message.segment',
+            data: {
+              mode: 'incognito',
+              generationId: generation.id,
+              sequence: segmentSequence,
+              text: approved,
+            },
+          };
+        }
+      }
+
+      if (approvedText.length === 0) {
+        throw new LLMProviderFailure('malformed_stream', true, providerMetadata.requestId);
+      }
+      throwIfAborted(generation.signal);
+      const appended = this.incognitoContexts.append(
+        principal.userId,
+        principal.sessionId,
+        input.contextId,
+        generation.id,
+        { role: 'assistant', content: approvedText },
+        new Date(),
+      );
+      if (!appended) throw new AIIncognitoContextLostError();
+      this.logging.turnCompleted(metadata, {
+        provider: providerMetadata.provider,
+        model: providerMetadata.model,
+        providerRequestId: providerMetadata.requestId,
+        durationMs: Date.now() - generationStartedAt,
+        timeToFirstTokenMs,
+        usage,
+        finishReason: completedReason,
+      });
+      yield {
+        type: 'turn.completed',
+        data: {
+          mode: 'incognito',
+          generationId: generation.id,
+          finishReason: completedReason,
+        },
+      };
+    } catch (error) {
+      buffer.clear();
+      if (error instanceof OutputSafetyReplacement) {
+        if (!generationController.signal.aborted) {
+          generationController.abort(new Error('output_safety_stopped'));
+        }
+        try {
+          await providerIterator?.return?.();
+        } catch {
+          // The trusted replacement is independent of upstream teardown.
+        }
+        providerIterator = null;
+        let sideEffectError: unknown = null;
+        try {
+          if (deliveredSegments === 0) {
+            await this.quota.refundQuota(principal.userId, prepared.quotaIdempotencyKey);
+          }
+          await this.audits.append({
+            actorType: 'system',
+            actorId: null,
+            action: 'safety_output_blocked',
+            resourceType: 'ai_generation',
+            resourceId: generation.id,
+            idempotencyKey: `safety-output-stopped:${generation.id}`,
+            safeMetadata: {},
+            occurredAt: new Date(),
+          });
+        } catch (sideEffectFailure) {
+          sideEffectError = sideEffectFailure;
+        }
+        throwIfAborted(generation.signal);
+        approvedText += error.text;
+        segmentSequence += 1;
+        yield {
+          type: 'message.segment',
+          data: {
+            mode: 'incognito',
+            generationId: generation.id,
+            sequence: segmentSequence,
+            text: error.text,
+          },
+        };
+        if (sideEffectError) throw sideEffectError;
+        const appended = this.incognitoContexts.append(
+          principal.userId,
+          principal.sessionId,
+          input.contextId,
+          generation.id,
+          { role: 'assistant', content: approvedText },
+          new Date(),
+        );
+        if (!appended) throw new AIIncognitoContextLostError();
+        yield {
+          type: 'turn.completed',
+          data: {
+            mode: 'incognito',
+            generationId: generation.id,
+            finishReason: 'content_filter',
+          },
+        };
+        return;
+      }
+
+      const timedOut =
+        error instanceof ProviderEventTimeout ||
+        generationController.signal.reason instanceof ProviderEventTimeout ||
+        prepared.execution.signal.reason instanceof AiExecutionTotalTimeoutError;
+      const cancelled = (clientSignal.aborted || generation.signal.aborted) && !timedOut;
+      const category = timedOut ? 'timeout' : failureCategory(error);
+
+      if (
+        riskDecision.status === 'assessed' &&
+        riskDecision.level === 'HIGH' &&
+        !cancelled &&
+        deliveredSegments === 0 &&
+        !generation.signal.aborted
+      ) {
+        const fallback = this.templates.get('high-generation-fallback');
+        let fallbackFailure: unknown = null;
+        try {
+          await this.quota.refundQuota(principal.userId, prepared.quotaIdempotencyKey);
+          await this.audits.append({
+            actorType: 'system',
+            actorId: null,
+            action: 'trusted_safety_response_created',
+            resourceType: 'ai_generation',
+            resourceId: generation.id,
+            idempotencyKey: `high-generation-fallback:${generation.id}`,
+            safeMetadata: { templateKey: fallback.key, templateVersion: fallback.version },
+            occurredAt: new Date(),
+          });
+        } catch (sideEffectError) {
+          fallbackFailure = sideEffectError;
+        }
+        throwIfAborted(generation.signal);
+        yield {
+          type: 'message.segment',
+          data: {
+            mode: 'incognito',
+            generationId: generation.id,
+            sequence: 1,
+            text: fallback.content,
+          },
+        };
+        if (fallbackFailure) throw fallbackFailure;
+        const appended = this.incognitoContexts.append(
+          principal.userId,
+          principal.sessionId,
+          input.contextId,
+          generation.id,
+          { role: 'assistant', content: fallback.content },
+          new Date(),
+        );
+        if (!appended) throw new AIIncognitoContextLostError();
+        yield {
+          type: 'turn.completed',
+          data: {
+            mode: 'incognito',
+            generationId: generation.id,
+            finishReason: 'content_filter',
+          },
+        };
+        return;
+      }
+
+      const shouldRefund = deliveredSegments === 0 && (!cancelled || !providerInvoked);
+      if (shouldRefund) {
+        await this.quota.refundQuota(principal.userId, prepared.quotaIdempotencyKey);
+      }
+      if (cancelled) {
+        this.logging.turnCancelled(metadata, 'client_disconnect', Date.now() - generationStartedAt);
+        throw new AIProviderError('AI 对话已取消');
+      }
+      this.logging.turnFailed(metadata, category, Date.now() - generationStartedAt);
+      if (timedOut) throw new AIProviderTimeoutError();
+      if (error instanceof AIProviderError) throw error;
+      throw new AIProviderError();
+    } finally {
+      this.releaseIncognitoGeneration(principal, input.contextId, generation.id);
+      prepared.execution.dispose();
+      generation.signal.removeEventListener('abort', onRuntimeAbort);
+      clientSignal.removeEventListener('abort', onClientAbort);
+      if (!generationController.signal.aborted) {
+        generationController.abort(new Error('stream_cleanup'));
+      }
+      await providerIterator?.return?.();
+      buffer.clear();
+    }
+  }
+
+  releasePreparedIncognitoTurn(prepared: PreparedIncognitoTurn): void {
+    this.releaseIncognitoGeneration(
+      prepared.principal,
+      prepared.input.contextId,
+      prepared.generation.id,
+    );
+    prepared.execution.dispose();
+  }
+
+  private releaseIncognitoGeneration(
+    principal: AuthenticatedAiPrincipal,
+    contextId: string,
+    generationId: string,
+  ): void {
+    this.incognitoContexts.releaseGeneration(
+      principal.userId,
+      principal.sessionId,
+      contextId,
+      generationId,
+    );
+  }
+
   private async finishAfterSafetyPersistenceFailure(turn: AiTurnRecord): Promise<void> {
     try {
       await this.aiTurns.finish(turn, 'failed', 'SAFETY_RESPONSE_PERSISTENCE_FAILED', new Date());
@@ -784,7 +1376,11 @@ export class AiOrchestrationService {
   }
 
   private async approveSegment(
-    turn: AiTurnRecord,
+    operation: Readonly<{
+      userId: string;
+      operationId: string;
+      target: import('../safety/safety.types').SafetyTarget;
+    }>,
     candidateSegment: string,
     previouslyApprovedText: string,
     riskDecision: RiskDecision,
@@ -792,9 +1388,9 @@ export class AiOrchestrationService {
   ): Promise<string> {
     const result = await this.postGenerationSafety.approve(
       {
-        userId: turn.userId,
-        turnId: turn.id,
-        conversationId: turn.conversationId,
+        userId: operation.userId,
+        turnId: operation.operationId,
+        target: operation.target,
         candidateSegment,
         previouslyApprovedText,
         riskDecision,
