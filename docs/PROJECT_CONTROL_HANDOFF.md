@@ -89,9 +89,10 @@ None.
 
 ## Immediate Next Step
 
-Resolve the user-facing Consent withdrawal/reactivation lifecycle before extending
-the Privacy experience. Do not begin Phase 5D/5E or Phase 6 work from this status
-file alone.
+After the bounded PR #12 implementation passes final review and is merged, resolve
+the user-facing Consent withdrawal/reactivation lifecycle before extending the
+Privacy experience. Do not begin Phase 5D/5E or Phase 6 work from this status file
+alone.
 
 ## Source of Truth
 
