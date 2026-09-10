@@ -569,12 +569,13 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     const auth = await createAuth();
     const contextId = await createContext(auth);
     const clientRequestId = randomUUID();
-    const response = await stream(auth, {
+    const requestBody = {
       mode: 'incognito',
       contextId,
       clientRequestId,
       message: '合成的首段前 Provider 故障输入',
-    }).expect(200);
+    };
+    const response = await stream(auth, requestBody).expect(200);
 
     const events = parseSse(response.text);
     expect(events.map((event) => event.type)).toEqual(['turn.started', 'turn.failed']);
@@ -589,6 +590,46 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     expect(contexts.get(auth.userId, auth.sessionId, contextId)?.messages).toEqual([
       { role: 'user', content: '合成的首段前 Provider 故障输入' },
     ]);
+
+    const replay = await stream(auth, requestBody).expect(409);
+    expect(replay.body.error.code).toBe('AI_INCOGNITO_CONTEXT_LOST');
+    expect(provider.streamCalls).toBe(1);
+    expect(riskClassifier.calls).toBe(1);
+  });
+
+  it('rejects a refunded request after its context is lost across a quota day boundary', async () => {
+    const auth = await createAuth();
+    const beforeMidnight = new Date('2026-09-09T15:59:59.999Z');
+    const afterMidnight = new Date('2026-09-09T16:00:00.000Z');
+    const context = contexts.create(
+      auth.userId,
+      auth.sessionId,
+      new Date('2026-09-10T16:00:00.000Z'),
+      beforeMidnight,
+    );
+    const clientRequestId = randomUUID();
+    const key = deriveIncognitoQuotaIdempotencyKey(auth.userId, auth.sessionId, clientRequestId);
+    await quota.consumeQuota(auth.userId, key, beforeMidnight);
+    await expect(quota.refundQuota(auth.userId, key, afterMidnight)).resolves.toBe(true);
+    contexts.end(auth.userId, auth.sessionId, context.id);
+
+    await expect(
+      orchestration.prepareIncognitoTurn(
+        { userId: auth.userId, sessionId: auth.sessionId },
+        {
+          mode: 'incognito',
+          contextId: context.id,
+          clientRequestId,
+          message: '合成的跨日退款后旧上下文请求',
+        },
+        new AbortController().signal,
+        afterMidnight,
+      ),
+    ).rejects.toMatchObject({ code: 'AI_INCOGNITO_CONTEXT_LOST', statusCode: 409 });
+    expect(provider.streamCalls).toBe(0);
+    expect(riskClassifier.calls).toBe(0);
+    expect(await quota.getUsage(auth.userId, beforeMidnight)).toMatchObject({ usedCount: 0 });
+    expect(await quota.getUsage(auth.userId, afterMidnight)).toMatchObject({ usedCount: 0 });
   });
 
   it('keeps one quota consumption when the client cancels after Provider dispatch', async () => {

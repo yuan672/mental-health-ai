@@ -171,36 +171,75 @@ describe('Phase 2B conversation and quota integration', () => {
     expect(ledgerCount?.value).toBe(1);
   });
 
-  it('deduplicates one stable request key across the Asia/Shanghai day boundary', async () => {
+  it('deduplicates and refunds a stable key on its original Asia/Shanghai usage date', async () => {
     const retryUserId = randomUUID();
-    const idempotencyKey = randomUUID();
+    const originalKey = randomUUID();
+    const secondDayKey = randomUUID();
+    const newSecondDayKey = randomUUID();
     const beforeMidnight = new Date('2026-09-09T15:59:59.999Z');
     const afterMidnight = new Date('2026-09-09T16:00:00.000Z');
     await databaseService.database.insert(users).values({ id: retryUserId });
 
-    await Promise.all([
-      quotaService.consumeQuota(retryUserId, idempotencyKey, beforeMidnight),
-      quotaService.consumeQuota(retryUserId, idempotencyKey, afterMidnight),
-    ]);
+    const first = await quotaService.consumeQuotaOnce(retryUserId, originalKey, beforeMidnight);
+    const replay = await quotaService.consumeQuotaOnce(retryUserId, originalKey, afterMidnight);
+
+    expect(first).toMatchObject({
+      status: 'consumed',
+      usage: { usageDate: '2026-09-09', usedCount: 1 },
+    });
+    expect(replay).toMatchObject({
+      status: 'already_consumed',
+      usage: { usageDate: '2026-09-09', usedCount: 1 },
+    });
+    expect(await quotaService.getUsage(retryUserId, afterMidnight)).toMatchObject({
+      usageDate: '2026-09-10',
+      usedCount: 0,
+    });
+
+    await quotaService.consumeQuota(retryUserId, secondDayKey, afterMidnight);
+    const refundResults = await Promise.all(
+      Array.from({ length: 10 }, () =>
+        quotaService.refundQuota(retryUserId, originalKey, afterMidnight),
+      ),
+    );
+
+    expect(refundResults.filter(Boolean)).toHaveLength(1);
+    expect(await quotaService.getUsage(retryUserId, beforeMidnight)).toMatchObject({
+      usageDate: '2026-09-09',
+      usedCount: 0,
+    });
+    expect(await quotaService.getUsage(retryUserId, afterMidnight)).toMatchObject({
+      usageDate: '2026-09-10',
+      usedCount: 1,
+    });
+
+    const secondDayNewConsumption = await quotaService.consumeQuotaOnce(
+      retryUserId,
+      newSecondDayKey,
+      afterMidnight,
+    );
+    expect(secondDayNewConsumption).toMatchObject({
+      status: 'consumed',
+      usage: { usageDate: '2026-09-10', usedCount: 2 },
+    });
 
     const [ledgerCount] = await databaseService.database
       .select({ value: count() })
       .from(quotaConsumptions)
       .where(eq(quotaConsumptions.userId, retryUserId));
     const aggregates = await databaseService.database
-      .select({ usedCount: dailyUsageQuotas.usedCount })
+      .select({ usageDate: dailyUsageQuotas.usageDate, usedCount: dailyUsageQuotas.usedCount })
       .from(dailyUsageQuotas)
       .where(eq(dailyUsageQuotas.userId, retryUserId));
 
-    expect(ledgerCount?.value).toBe(1);
-    expect(aggregates.reduce((sum, aggregate) => sum + aggregate.usedCount, 0)).toBe(1);
-
-    await expect(
-      quotaService.refundQuota(retryUserId, idempotencyKey, afterMidnight),
-    ).resolves.toBe(true);
-    await expect(
-      quotaService.refundQuota(retryUserId, idempotencyKey, afterMidnight),
-    ).resolves.toBe(false);
+    expect(ledgerCount?.value).toBe(2);
+    expect(aggregates).toEqual(
+      expect.arrayContaining([
+        { usageDate: '2026-09-09', usedCount: 0 },
+        { usageDate: '2026-09-10', usedCount: 2 },
+      ]),
+    );
+    expect(aggregates.every((aggregate) => aggregate.usedCount >= 0)).toBe(true);
   });
 
   it('refunds one consumption transactionally and never decrements twice or below zero', async () => {
