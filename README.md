@@ -1,6 +1,6 @@
 # 心理健康 AI 支持系统
 
-面向中国大陆 18 岁及以上成年用户的 Web AI 心理健康支持系统工程项目。Engineering Bootstrap、Phase 2、Phase 3 和 **Phase 4 — AI Safety** 已完成工程范围验收；Phase 5A Conversation Access API 正在审查，Phase 6 尚未开始。Production Safety Lock 仍然生效，生产 AI Chat 仍然禁用，`productionSafe=false`。
+面向中国大陆 18 岁及以上成年用户的 Web AI 心理健康支持系统工程项目。Engineering Bootstrap、Phase 2、Phase 3、**Phase 4 — AI Safety** 和 Phase 5A Conversation Access API 已完成工程范围验收；Phase 5B–5E 与 Phase 6 尚未开始实现。Production Safety Lock 仍然生效，生产 AI Chat 仍然禁用，`productionSafe=false`。
 
 > 本产品定位为心理健康支持工具，不是心理医生、精神科医生、医疗诊断系统、药物处方系统或真人心理咨询师的替代品。
 
