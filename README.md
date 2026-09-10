@@ -137,6 +137,7 @@ pnpm format:check
 pnpm lint
 pnpm typecheck
 pnpm test
+pnpm test:e2e
 pnpm build
 ```
 
@@ -213,8 +214,11 @@ surface remains limited to `POST /ai/chat/stream`.
 
 Phase 5A adds authenticated, owner-scoped ordinary Conversation history/detail,
 Message history, Save/Delete/Delete-All, Quota, and public Capability reads. It does
-not expose direct message writes, an empty-conversation create route, a public
-Incognito lifecycle, or a Chat UI. See `docs/api/conversation-access.md`.
+not expose direct message writes, an empty-conversation create route, or a public
+Incognito lifecycle. Phase 5B adds the routed Web product shell, session-aware Chat
+UI, safe registration availability contract, history actions, streaming lifecycle,
+responsive accessibility baseline, and isolated synthetic Chromium P0 tests. See
+`docs/api/conversation-access.md` and `docs/web/chat-product-experience.md`.
 
 Phase 4 adds hybrid risk detection, deterministic Crisis Flow, isolated Risk Event
 retention, an internal Human Review Queue boundary, restricted Audit Log, and

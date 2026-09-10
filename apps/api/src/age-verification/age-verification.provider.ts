@@ -22,3 +22,13 @@ export class AgeVerificationProviderUnavailableError extends Error {
     this.name = AgeVerificationProviderUnavailableError.name;
   }
 }
+
+export class UnconfiguredAgeVerificationProvider implements AgeVerificationProvider {
+  verify(): Promise<AgeVerificationResult> {
+    return Promise.reject(new AgeVerificationProviderUnavailableError());
+  }
+
+  async healthCheck(): Promise<boolean> {
+    return false;
+  }
+}

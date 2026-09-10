@@ -1,7 +1,8 @@
 import type { AiPublicFinishReason, AiStreamEvent } from '@mental-health/types';
 
 export type ChatStreamState = Readonly<{
-  status: 'idle' | 'streaming' | 'completed' | 'failed';
+  status: 'idle' | 'submitting' | 'streaming' | 'completed' | 'failed' | 'cancelled';
+  persistence: 'uncommitted' | 'committed' | 'persistence-failed';
   turnId: string | null;
   conversationId: string | null;
   assistantMessageId: string | null;
@@ -13,6 +14,7 @@ export type ChatStreamState = Readonly<{
 
 export const initialChatStreamState: ChatStreamState = {
   status: 'idle',
+  persistence: 'uncommitted',
   turnId: null,
   conversationId: null,
   assistantMessageId: null,
@@ -21,6 +23,32 @@ export const initialChatStreamState: ChatStreamState = {
   finishReason: null,
   error: null,
 };
+
+export function beginChatStream(): ChatStreamState {
+  return { ...initialChatStreamState, status: 'submitting' };
+}
+
+export function cancelChatStream(state: ChatStreamState): ChatStreamState {
+  return {
+    ...state,
+    status: 'cancelled',
+    persistence: state.text ? 'persistence-failed' : 'uncommitted',
+    error: null,
+  };
+}
+
+export function failChatStream(
+  state: ChatStreamState,
+  code: string,
+  message: string,
+): ChatStreamState {
+  return {
+    ...state,
+    status: 'failed',
+    persistence: state.text ? 'persistence-failed' : 'uncommitted',
+    error: { code, message },
+  };
+}
 
 export function reduceChatStreamEvent(
   state: ChatStreamState,
@@ -31,6 +59,7 @@ export function reduceChatStreamEvent(
       return {
         ...initialChatStreamState,
         status: 'streaming',
+        persistence: 'uncommitted',
         turnId: event.data.turnId,
         conversationId: event.data.conversationId,
       };
@@ -54,6 +83,7 @@ export function reduceChatStreamEvent(
       return {
         ...state,
         status: 'completed',
+        persistence: 'committed',
         assistantMessageId: event.data.assistantMessageId,
         finishReason: event.data.finishReason,
       };
@@ -64,6 +94,7 @@ export function reduceChatStreamEvent(
       return {
         ...state,
         status: 'failed',
+        persistence: state.text ? 'persistence-failed' : 'uncommitted',
         turnId: event.data.turnId,
         error: { code: event.data.code, message: event.data.message },
       };

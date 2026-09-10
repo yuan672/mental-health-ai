@@ -13,7 +13,7 @@ export default defineConfig(({ mode }) => {
   const loaded = loadEnv(mode, envDir, '');
 
   publicEnvSchema.parse({
-    VITE_API_BASE_URL: loaded.VITE_API_BASE_URL ?? process.env.VITE_API_BASE_URL,
+    VITE_API_BASE_URL: process.env.VITE_API_BASE_URL ?? loaded.VITE_API_BASE_URL,
   });
 
   return {
@@ -25,6 +25,7 @@ export default defineConfig(({ mode }) => {
     test: {
       environment: 'jsdom',
       setupFiles: './src/test-setup.ts',
+      exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
     },
   };
 });

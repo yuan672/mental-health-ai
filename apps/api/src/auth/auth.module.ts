@@ -11,6 +11,7 @@ import { CsrfGuard } from './csrf.guard';
 import { PasswordHasherService } from './password-hasher.service';
 import { SessionsService } from './sessions.service';
 import { TrustedOriginGuard } from './trusted-origin.guard';
+import { RegistrationRequirementsService } from './registration-requirements.service';
 
 @Module({
   imports: [AgeVerificationModule, ConsentsModule, IncognitoRuntimeModule, UsersModule],
@@ -20,6 +21,7 @@ import { TrustedOriginGuard } from './trusted-origin.guard';
     AuthenticatedSessionGuard,
     CsrfGuard,
     PasswordHasherService,
+    RegistrationRequirementsService,
     SessionsService,
     TrustedOriginGuard,
   ],

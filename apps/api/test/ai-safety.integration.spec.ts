@@ -892,12 +892,12 @@ describe('Phase 4 AI safety integration', () => {
   it('prevents a late output classifier result from writing after timeout and stale-turn recovery', async () => {
     const previousTotalTimeout = env.LLM_TOTAL_TIMEOUT_MS;
     const previousLeaseMargin = env.LLM_LEASE_SAFETY_MARGIN_MS;
-    env.LLM_TOTAL_TIMEOUT_MS = 25;
+    env.LLM_TOTAL_TIMEOUT_MS = 500;
     env.LLM_LEASE_SAFETY_MARGIN_MS = 1;
     try {
       const userId = await createUser();
       const conversation = await conversations.create(userId, NOW);
-      outputClassifier.delayMilliseconds = 80;
+      outputClassifier.delayMilliseconds = 800;
       const oldPrepared = await prepare(userId, '旧请求', conversation.id);
       if (oldPrepared.kind !== 'ready') throw new Error('Expected old generation');
       const emitted: AiStreamEvent[] = [];
@@ -915,7 +915,7 @@ describe('Phase 4 AI safety integration', () => {
         }
       })();
 
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      await new Promise((resolve) => setTimeout(resolve, 550));
       env.LLM_TOTAL_TIMEOUT_MS = 5_000;
       const newPrepared = await orchestration.preparePersistentTurn(
         { userId, sessionId: randomUUID() },

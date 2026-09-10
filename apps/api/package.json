@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pretest": "pnpm --filter @mental-health/database build",
     "test": "jest --runInBand",
+    "seed:e2e": "pnpm --filter @mental-health/database build && pnpm run build && node dist/src/commands/seed-phase5b-e2e.js",
     "cleanup:conversations": "pnpm run build && node dist/src/commands/purge-conversations.js",
     "cleanup:safety": "pnpm run build && node dist/src/commands/purge-safety-data.js"
   },

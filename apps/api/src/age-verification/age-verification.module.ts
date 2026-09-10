@@ -1,20 +1,27 @@
 import { Module } from '@nestjs/common';
 import { env } from '../config/env';
-import { AGE_VERIFICATION_PROVIDER } from './age-verification.provider';
+import {
+  AGE_VERIFICATION_PROVIDER,
+  UnconfiguredAgeVerificationProvider,
+} from './age-verification.provider';
 import { MockAgeVerificationProvider } from './mock-age-verification.provider';
 
 @Module({
   providers: [
     MockAgeVerificationProvider,
+    UnconfiguredAgeVerificationProvider,
     {
       provide: AGE_VERIFICATION_PROVIDER,
-      inject: [MockAgeVerificationProvider],
-      useFactory: (mockProvider: MockAgeVerificationProvider) => {
+      inject: [MockAgeVerificationProvider, UnconfiguredAgeVerificationProvider],
+      useFactory: (
+        mockProvider: MockAgeVerificationProvider,
+        unconfiguredProvider: UnconfiguredAgeVerificationProvider,
+      ) => {
         if (env.AGE_VERIFICATION_PROVIDER === 'mock') {
           return mockProvider;
         }
 
-        throw new Error('AGE_VERIFICATION_PROVIDER must select a configured provider');
+        return unconfiguredProvider;
       },
     },
   ],

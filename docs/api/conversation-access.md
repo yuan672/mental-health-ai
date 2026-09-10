@@ -77,6 +77,16 @@ not-yet-purged ordinary conversation owned by the user, including saved and expi
 conversations, and writes one aggregate audit entry. Risk Event and Audit retention
 remain independent from ordinary chat-history deletion.
 
+The delete-all response uses the server-computed transaction result; the browser
+must not estimate it from the currently loaded history page:
+
+```json
+{
+  "success": true,
+  "data": { "deleted": true, "conversationCount": 3 }
+}
+```
+
 The browser must not persist chat bodies in `localStorage` or IndexedDB. This API
 does not provide a public Incognito lifecycle; that remains a later Phase 5 scope.
 

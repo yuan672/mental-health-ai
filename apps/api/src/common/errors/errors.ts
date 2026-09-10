@@ -91,6 +91,12 @@ export class AgeVerificationUnavailableError extends AppError {
   }
 }
 
+export class RegistrationUnavailableError extends AppError {
+  constructor(message = '注册暂不可用') {
+    super(ERROR_CODES.REGISTRATION_UNAVAILABLE, 503, message);
+  }
+}
+
 export class ConsentRequiredError extends AppError {
   constructor(message = '请接受当前版本的必要条款') {
     super(ERROR_CODES.CONSENT_REQUIRED, 400, message);

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { subscribeSessionInvalidated } from '../api/session-events';
 import { parseAiEventStream, startAiChatStream } from './chat-stream-client';
 
 const TURN_ID = '11111111-1111-4111-8111-111111111111';
@@ -113,5 +114,29 @@ describe('AI fetch stream client', () => {
         assistantMessageId: null,
       },
     });
+  });
+
+  it('invalidates the Web session when streaming returns 401', async () => {
+    document.cookie = 'mh_csrf=csrf-test-token; Path=/';
+    const invalidated = vi.fn();
+    const unsubscribe = subscribeSessionInvalidated(invalidated);
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        Response.json(
+          { success: false, error: { code: 'UNAUTHENTICATED', message: '请先登录' } },
+          { status: 401 },
+        ),
+      );
+
+    await expect(
+      startAiChatStream(
+        { clientRequestId: TURN_ID, message: 'synthetic-test' },
+        new AbortController().signal,
+        fetcher,
+      ),
+    ).rejects.toMatchObject({ code: 'UNAUTHENTICATED', status: 401 });
+    expect(invalidated).toHaveBeenCalledTimes(1);
+    unsubscribe();
   });
 });
