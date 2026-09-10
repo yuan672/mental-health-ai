@@ -953,7 +953,11 @@ describe('Phase 3 AI foundation integration', () => {
     await request(app.getHttpServer())
       .post('/ai/chat/stream')
       .set('Origin', 'http://localhost:5173')
-      .send({ mode: 'persistent', clientRequestId: randomUUID(), message: 'synthetic-unauthorized' })
+      .send({
+        mode: 'persistent',
+        clientRequestId: randomUUID(),
+        message: 'synthetic-unauthorized',
+      })
       .expect(401)
       .expect({
         success: false,
