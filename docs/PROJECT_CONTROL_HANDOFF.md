@@ -34,7 +34,7 @@ safety, or validation for clinical use.
 ## Current Documentation Work
 
 - Branch: `feature/project-docs-reconciliation`
-- Pull request: pending creation
+- Pull request: [#7](https://github.com/yuan672/mental-health-ai/pull/7)
 - Scope: status reconciliation and stable agent/project-control instructions only
 
 ## Production Readiness Blockers
