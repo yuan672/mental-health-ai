@@ -602,7 +602,7 @@ describe('Phase 5A conversation access API integration', () => {
   it('does not create a second conversation when the first-message request is retried', async () => {
     const auth = await createAuthContext(true);
     const clientRequestId = randomUUID();
-    const body = { clientRequestId, message: '合成的首次对话重试测试消息。' };
+    const body = { mode: 'persistent', clientRequestId, message: '合成的首次对话重试测试消息。' };
 
     const first = await authenticatedPost(auth, '/ai/chat/stream').send(body).expect(200);
     expect(first.headers['content-type']).toContain('text/event-stream');

@@ -574,6 +574,7 @@ describe('Phase 4 AI safety integration', () => {
       .set('Cookie', `mh_session=${rawToken}; mh_csrf=synthetic-csrf`)
       .set('x-csrf-token', 'synthetic-csrf')
       .send({
+        mode: 'persistent',
         clientRequestId: randomUUID(),
         conversationId: conversation.id,
         message: '合成的危机路由测试输入',
@@ -610,6 +611,7 @@ describe('Phase 4 AI safety integration', () => {
             .set('Cookie', `mh_session=${rawToken}; mh_csrf=synthetic-csrf`)
             .set('x-csrf-token', 'synthetic-csrf')
             .send({
+              mode: 'persistent',
               clientRequestId,
               conversationId: conversation.id,
               message: '合成的危机持久化故障输入',
@@ -657,6 +659,7 @@ describe('Phase 4 AI safety integration', () => {
         .set('Cookie', `mh_session=${rawToken}; mh_csrf=synthetic-csrf`)
         .set('x-csrf-token', 'synthetic-csrf')
         .send({
+          mode: 'persistent',
           clientRequestId,
           conversationId: conversation.id,
           message: '同一请求重试不得重建安全副作用',
@@ -1039,7 +1042,7 @@ describe('Phase 4 AI safety integration', () => {
     const clientRequestId = randomUUID();
     riskClassifier.reset('CRITICAL');
 
-    const results = await Promise.all(
+    const results = await Promise.allSettled(
       Array.from({ length: 20 }, () =>
         incognito.claim({
           userId,
@@ -1052,7 +1055,21 @@ describe('Phase 4 AI safety integration', () => {
         }),
       ),
     );
-    expect(results.every((result) => result.kind === 'trusted')).toBe(true);
+    const fulfilled = results.filter(
+      (result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof incognito.claim>>> =>
+        result.status === 'fulfilled',
+    );
+    expect(fulfilled).toHaveLength(1);
+    expect(fulfilled[0]?.value.kind).toBe('trusted');
+    expect(riskClassifier.calls).toBe(1);
+    if (fulfilled[0]) {
+      incognitoStore.releaseGeneration(
+        userId,
+        sessionId,
+        runtimeContext.id,
+        fulfilled[0].value.generation.id,
+      );
+    }
     const [eventCount] = await database.database
       .select({ value: count() })
       .from(riskEvents)
