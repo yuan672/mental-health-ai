@@ -14,6 +14,7 @@ import {
   sessions,
   users,
 } from '@mental-health/database';
+import type { AiStreamEvent } from '@mental-health/types';
 import type { INestApplication } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { resolve } from 'node:path';
@@ -567,7 +568,16 @@ describe('Phase 4 AI safety integration', () => {
     const prepared = await prepare(userId);
     if (prepared.kind !== 'ready') throw new Error('Expected generation');
 
-    const events = await collect(prepared);
+    const events: AiStreamEvent[] = [];
+    for await (const event of orchestration.streamPreparedTurn(
+      prepared,
+      new AbortController().signal,
+    )) {
+      if (event.type === 'message.segment') {
+        expect(provider.readersReleased).toBe(1);
+      }
+      events.push(event);
+    }
     const replacement = events.find((event) => event.type === 'message.segment');
     expect(replacement?.type === 'message.segment' ? replacement.data.text : '').not.toContain(
       '候选但未批准',

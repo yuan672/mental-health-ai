@@ -553,6 +553,12 @@ export class AiOrchestrationService {
         if (!generationController.signal.aborted) {
           generationController.abort(new Error('output_safety_stopped'));
         }
+        try {
+          await providerIterator?.return?.();
+        } catch {
+          // Safety replacement remains trusted even if upstream teardown reports an error.
+        }
+        providerIterator = null;
         let sideEffectError: unknown = null;
         try {
           if (deliveredSegments === 0) {
