@@ -473,19 +473,28 @@ describe('Phase 5C Incognito and privacy API integration', () => {
   });
 
   it('allows only one of 20 concurrent submissions with the same clientRequestId', async () => {
+    provider.reset('wait-for-release');
     const auth = await createAuth();
     const contextId = await createContext(auth);
     const clientRequestId = randomUUID();
-    const responses = await Promise.all(
-      Array.from({ length: 20 }, () =>
-        stream(auth, {
-          mode: 'incognito',
-          contextId,
-          clientRequestId,
-          message: '合成并发幂等输入',
-        }),
-      ),
-    );
+    const requestBody = {
+      mode: 'incognito',
+      contextId,
+      clientRequestId,
+      message: '合成并发幂等输入',
+    };
+    const firstResponsePromise = stream(auth, requestBody).then((response) => response);
+    await provider.dispatched.promise;
+
+    let duplicateResponses: Awaited<ReturnType<typeof stream>>[];
+    try {
+      duplicateResponses = await Promise.all(
+        Array.from({ length: 19 }, () => stream(auth, requestBody)),
+      );
+    } finally {
+      provider.releaseLateResult();
+    }
+    const responses = [await firstResponsePromise, ...duplicateResponses];
 
     expect(responses.filter((response) => response.status === 200)).toHaveLength(1);
     expect(responses.filter((response) => response.status === 409)).toHaveLength(19);
