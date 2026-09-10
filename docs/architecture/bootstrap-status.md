@@ -8,6 +8,11 @@
 - Pull request: [#1](https://github.com/yuan672/mental-health-ai/pull/1)
 - Hosted CI run: [34316440526](https://github.com/yuan672/mental-health-ai/actions/runs/34316440526)
 
+> This is the historical Bootstrap completion record. Its “intentionally not
+> implemented” section describes the Bootstrap scope boundary at that checkpoint,
+> not the repository's current implementation state. See
+> `docs/PROJECT_CONTROL_HANDOFF.md` for current project control status.
+
 ## Verified environment
 
 - Node.js 24.14.1

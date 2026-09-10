@@ -1,5 +1,11 @@
 # Codex 接手文档 — Engineering Bootstrap
 
+> **Historical handoff:** This document preserves the project state and operating
+> instructions at the Engineering Bootstrap checkpoint. Bootstrap and Phases 2–4
+> have since completed their engineering scopes. Do not interpret the progress
+> statements below as current status; use `docs/PROJECT_CONTROL_HANDOFF.md` for the
+> current control state. `docs/HANDOFF.md` remains the highest requirements baseline.
+
 版本：Codex Handoff V1.0  
 日期：2026-09-09  
 当前阶段：**技术栈已确定 + Engineering Bootstrap 首批骨架已生成，尚未完成真实环境验收**
