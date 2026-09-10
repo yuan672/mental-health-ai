@@ -1,0 +1,66 @@
+import { z } from 'zod';
+import { trustedTemplateKeySchema } from '../templates/trusted-safety-template.registry';
+
+export const auditActorTypeSchema = z.enum(['system', 'human_reviewer']);
+export const auditResourceTypeSchema = z.enum(['ai_turn', 'risk_event', 'review_queue_item']);
+export const auditActionSchema = z.enum([
+  'risk_event_created',
+  'crisis_flow_triggered',
+  'review_queue_created',
+  'review_started',
+  'review_resolved',
+  'safety_output_blocked',
+  'safety_assessment_unavailable',
+  'trusted_safety_response_created',
+]);
+
+export type AuditActorType = z.infer<typeof auditActorTypeSchema>;
+export type AuditResourceType = z.infer<typeof auditResourceTypeSchema>;
+export type AuditAction = z.infer<typeof auditActionSchema>;
+
+const emptyMetadataSchema = z.object({}).strict();
+const templateMetadataSchema = z
+  .object({
+    templateKey: trustedTemplateKeySchema,
+    templateVersion: z.string().min(1).max(64),
+  })
+  .strict();
+const reviewQueueCreatedMetadataSchema = z
+  .object({
+    priority: z.enum(['high', 'urgent']),
+  })
+  .strict();
+const reviewResolvedMetadataSchema = z
+  .object({
+    resolutionCode: z.enum([
+      'confirmed_risk',
+      'false_positive',
+      'unable_to_determine',
+      'action_recorded',
+    ]),
+  })
+  .strict();
+const failureMetadataSchema = z
+  .object({
+    failureCategory: z.enum(['timeout', 'provider', 'malformed', 'unsupported', 'internal']),
+  })
+  .strict();
+
+export function parseAuditMetadata(
+  action: AuditAction,
+  metadata: unknown,
+): Record<string, string | number | boolean | null> {
+  if (action === 'crisis_flow_triggered' || action === 'trusted_safety_response_created') {
+    return templateMetadataSchema.parse(metadata);
+  }
+  if (action === 'review_queue_created') {
+    return reviewQueueCreatedMetadataSchema.parse(metadata);
+  }
+  if (action === 'review_resolved') {
+    return reviewResolvedMetadataSchema.parse(metadata);
+  }
+  if (action === 'safety_assessment_unavailable') {
+    return failureMetadataSchema.parse(metadata);
+  }
+  return emptyMetadataSchema.parse(metadata);
+}

@@ -64,6 +64,29 @@ const environmentSchema = z
     AI_SEGMENT_MAX_CHARACTERS: z.coerce.number().int().positive().default(200),
     AI_SEGMENT_MAX_WAIT_MS: z.coerce.number().int().positive().default(500),
     INCOGNITO_CONTEXT_TTL_SECONDS: z.coerce.number().int().positive().default(1_800),
+    SAFETY_CONTEXT_MAX_MESSAGES: z.coerce.number().int().positive().max(40).default(8),
+    SAFETY_CONTEXT_TOKEN_BUDGET: z.coerce.number().int().positive().default(2_000),
+    SAFETY_CONTEXT_MAX_CHARACTERS: z.coerce.number().int().positive().default(6_000),
+    RISK_CLASSIFIER_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.65),
+    SAFETY_CLASSIFIER_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+    RISK_EVENT_RETENTION_DAYS: z.coerce.number().int().positive().default(180),
+    AUDIT_RETENTION_DAYS: z.coerce.number().int().positive(),
+    SAFETY_PROVIDER_PRIVACY_APPROVED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+    SAFETY_CONSENT_APPROVED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+    SAFETY_REVIEWER_ACCESS_READY: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+    SAFETY_CORPUS_REVIEWED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
   })
   .superRefine((value, context) => {
     if (

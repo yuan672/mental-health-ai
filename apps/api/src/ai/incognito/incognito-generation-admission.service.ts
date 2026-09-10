@@ -1,8 +1,19 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { AIChatDisabledError, AIIncognitoContextLostError } from '../../common/errors';
+import {
+  AIChatDisabledError,
+  AIIncognitoContextLostError,
+  QuotaExceededError,
+} from '../../common/errors';
 import { env } from '../../config/env';
 import { ConsentsService } from '../../consents/consents.service';
 import { QuotaService } from '../../quota/quota.service';
+import {
+  CrisisFlowService,
+  type TrustedSafetyResponse,
+} from '../../safety/crisis/crisis-flow.service';
+import { RiskEventService } from '../../safety/persistence/risk-event.service';
+import type { RiskDecision } from '../../safety/safety.types';
+import { TrustedSafetyTemplateRegistry } from '../../safety/templates/trusted-safety-template.registry';
 import { PRE_GENERATION_SAFETY_GATE, type PreGenerationSafetyGate } from '../safety/safety-gates';
 import {
   deriveIncognitoQuotaIdempotencyKey,
@@ -11,10 +22,19 @@ import {
   type IncognitoContextStore,
 } from './incognito-context.store';
 
-export type IncognitoGenerationAdmission = Readonly<{
-  context: IncognitoContext;
-  quotaIdempotencyKey: string;
-}>;
+export type IncognitoGenerationAdmission =
+  | Readonly<{
+      kind: 'generation';
+      context: IncognitoContext;
+      quotaIdempotencyKey: string;
+      riskDecision: RiskDecision;
+    }>
+  | Readonly<{
+      kind: 'trusted';
+      context: IncognitoContext;
+      response: TrustedSafetyResponse;
+      riskDecision: RiskDecision;
+    }>;
 
 @Injectable()
 export class IncognitoGenerationAdmissionService {
@@ -22,9 +42,12 @@ export class IncognitoGenerationAdmissionService {
     private readonly consents: ConsentsService,
     @Inject(INCOGNITO_CONTEXT_STORE)
     private readonly contexts: IncognitoContextStore,
+    private readonly crisisFlow: CrisisFlowService,
     @Inject(PRE_GENERATION_SAFETY_GATE)
     private readonly preGenerationSafety: PreGenerationSafetyGate,
     private readonly quota: QuotaService,
+    private readonly riskEvents: RiskEventService,
+    private readonly templates: TrustedSafetyTemplateRegistry,
   ) {}
 
   async claim(input: {
@@ -37,9 +60,7 @@ export class IncognitoGenerationAdmissionService {
     now?: Date;
   }): Promise<IncognitoGenerationAdmission> {
     const now = input.now ?? new Date();
-    if (!env.AI_CHAT_ENABLED) {
-      throw new AIChatDisabledError();
-    }
+    if (!env.AI_CHAT_ENABLED) throw new AIChatDisabledError();
     await this.consents.ensureRequiredConsentsActive(input.userId);
 
     const quotaIdempotencyKey = deriveIncognitoQuotaIdempotencyKey(
@@ -47,37 +68,94 @@ export class IncognitoGenerationAdmissionService {
       input.sessionId,
       input.clientRequestId,
     );
-    const existingContext = this.contexts.get(input.userId, input.sessionId, input.contextId, now);
-
     if (await this.quota.hasConsumption(input.userId, quotaIdempotencyKey)) {
       throw new AIIncognitoContextLostError();
     }
-    if (!existingContext) {
-      throw new AIIncognitoContextLostError();
-    }
-    if (input.signal.aborted) {
-      throw input.signal.reason;
-    }
-    await this.preGenerationSafety.check(
+    const context = this.contexts.get(input.userId, input.sessionId, input.contextId, now);
+    if (!context) throw new AIIncognitoContextLostError();
+    if (input.signal.aborted) throw input.signal.reason;
+
+    const quotaAvailable = await this.quota.canUseAI(input.userId, now);
+    const riskDecision = await this.preGenerationSafety.check(
       {
+        turnId: input.clientRequestId,
         userId: input.userId,
-        target: { kind: 'incognito', contextId: input.contextId },
+        target: {
+          kind: 'incognito',
+          contextId: input.contextId,
+          sessionId: input.sessionId,
+        },
         message: input.message,
+        now,
       },
       input.signal,
     );
 
+    const trusted = await this.resolveTrustedResponse(
+      input,
+      context,
+      riskDecision,
+      quotaAvailable,
+      now,
+    );
+    if (trusted) return trusted;
+
+    await this.riskEvents.persistIncognito({
+      userId: input.userId,
+      clientRequestId: input.clientRequestId,
+      decision: riskDecision,
+      now,
+    });
+    if (!quotaAvailable) throw new QuotaExceededError();
+
     const consumption = await this.quota.consumeQuotaOnce(input.userId, quotaIdempotencyKey, now);
-    if (consumption.status === 'already_consumed') {
-      throw new AIIncognitoContextLostError();
-    }
+    if (consumption.status === 'already_consumed') throw new AIIncognitoContextLostError();
 
     const currentContext = this.contexts.get(input.userId, input.sessionId, input.contextId, now);
     if (!currentContext) {
       await this.quota.refundQuota(input.userId, quotaIdempotencyKey, now);
       throw new AIIncognitoContextLostError();
     }
+    return {
+      kind: 'generation',
+      context: currentContext,
+      quotaIdempotencyKey,
+      riskDecision,
+    };
+  }
 
-    return { context: currentContext, quotaIdempotencyKey };
+  private async resolveTrustedResponse(
+    input: { userId: string; clientRequestId: string; now?: Date },
+    context: IncognitoContext,
+    decision: RiskDecision,
+    quotaAvailable: boolean,
+    now: Date,
+  ): Promise<Extract<IncognitoGenerationAdmission, { kind: 'trusted' }> | null> {
+    let response: TrustedSafetyResponse | null = null;
+    if (decision.status === 'unavailable') {
+      response = this.toResponse(this.templates.get('classifier-unavailable'));
+    } else if (decision.level === 'CRITICAL') {
+      response = this.crisisFlow.build(decision.harmSubject);
+    } else if (decision.level === 'HIGH' && !quotaAvailable) {
+      response = this.toResponse(this.templates.get('high-quota-fallback'));
+    }
+    if (!response) return null;
+
+    await this.riskEvents.persistIncognito({
+      userId: input.userId,
+      clientRequestId: input.clientRequestId,
+      decision,
+      response,
+      now,
+    });
+    return { kind: 'trusted', context, response, riskDecision: decision };
+  }
+
+  private toResponse(template: Readonly<{ key: string; version: string; content: string }>) {
+    return {
+      templateKey: template.key,
+      templateVersion: template.version,
+      content: template.content,
+    };
   }
 }

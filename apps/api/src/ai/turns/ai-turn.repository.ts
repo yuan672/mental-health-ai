@@ -16,6 +16,9 @@ import {
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service';
 import { QuotaLimitReachedError, QuotaRepository } from '../../quota/quota.repository';
+import { AuditLogRepository } from '../../safety/audit/audit-log.repository';
+import { RiskEventRepository } from '../../safety/persistence/risk-event.repository';
+import { requiresRiskEvent, type RiskDecision } from '../../safety/safety.types';
 
 export type AiTurnRecord = {
   id: string;
@@ -53,8 +56,10 @@ function activeOwnedConversation(userId: string, conversationId: string, now: Da
 @Injectable()
 export class AiTurnRepository {
   constructor(
+    private readonly audits: AuditLogRepository,
     private readonly databaseService: DatabaseService,
     private readonly quotaRepository: QuotaRepository,
+    private readonly riskEvents: RiskEventRepository,
   ) {}
 
   async findByClientRequestId(
@@ -159,6 +164,9 @@ export class AiTurnRepository {
     userMessageContent: string;
     usageDate: string;
     dailyLimit: number;
+    promptKey: string;
+    promptVersion: string;
+    riskDecision: RiskDecision;
     now: Date;
   }): Promise<AiTurnRecord | null> {
     return this.databaseService.database.transaction(async (transaction) => {
@@ -203,12 +211,179 @@ export class AiTurnRepository {
         createdAt: input.now,
       });
 
+      if (requiresRiskEvent(input.riskDecision)) {
+        await this.riskEvents.persistWithinTransaction(transaction, {
+          userId: input.userId,
+          conversationId: input.conversationId,
+          aiTurnId: input.turnId,
+          triggerMessageId: input.userMessageId,
+          clientRequestId: turn.clientRequestId,
+          isIncognito: false,
+          decision: input.riskDecision,
+          createdAt: input.now,
+        });
+      }
+
       const [started] = await transaction
         .update(aiTurns)
-        .set({ status: 'streaming', userMessageId: input.userMessageId })
+        .set({
+          status: 'streaming',
+          userMessageId: input.userMessageId,
+          promptKey: input.promptKey,
+          promptVersion: input.promptVersion,
+        })
         .where(eq(aiTurns.id, input.turnId))
         .returning();
       return started ?? null;
+    });
+  }
+
+  async completeTrusted(input: {
+    turnId: string;
+    userId: string;
+    conversationId: string;
+    userMessageId: string;
+    userMessageContent: string;
+    assistantMessageId: string;
+    assistantContent: string;
+    promptKey: string;
+    promptVersion: string;
+    riskDecision: RiskDecision;
+    templateKey: string;
+    templateVersion: string;
+    now: Date;
+  }): Promise<AiTurnRecord | null> {
+    return this.databaseService.database.transaction(async (transaction) => {
+      const [conversation] = await transaction
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(activeOwnedConversation(input.userId, input.conversationId, input.now))
+        .limit(1)
+        .for('update');
+      if (!conversation) return null;
+
+      const [turn] = await transaction
+        .select()
+        .from(aiTurns)
+        .where(
+          and(
+            eq(aiTurns.id, input.turnId),
+            eq(aiTurns.userId, input.userId),
+            eq(aiTurns.status, 'claimed'),
+          ),
+        )
+        .limit(1)
+        .for('update');
+      if (!turn) return null;
+
+      const userSequence = await this.nextMessageSequence(transaction, input.conversationId);
+      await transaction.insert(messages).values({
+        id: input.userMessageId,
+        conversationId: input.conversationId,
+        role: 'user',
+        sequenceNumber: userSequence,
+        content: input.userMessageContent,
+        createdAt: input.now,
+      });
+      const assistantSequence = await this.nextMessageSequence(transaction, input.conversationId);
+      await transaction.insert(messages).values({
+        id: input.assistantMessageId,
+        conversationId: input.conversationId,
+        role: 'assistant',
+        sequenceNumber: assistantSequence,
+        content: input.assistantContent,
+        createdAt: input.now,
+      });
+
+      if (requiresRiskEvent(input.riskDecision)) {
+        await this.riskEvents.persistWithinTransaction(transaction, {
+          userId: input.userId,
+          conversationId: input.conversationId,
+          aiTurnId: input.turnId,
+          triggerMessageId: input.userMessageId,
+          clientRequestId: turn.clientRequestId,
+          isIncognito: false,
+          decision: input.riskDecision,
+          createdAt: input.now,
+          trustedAction: {
+            action:
+              input.riskDecision.level === 'CRITICAL'
+                ? 'crisis_flow_triggered'
+                : 'trusted_safety_response_created',
+            templateKey: input.templateKey,
+            templateVersion: input.templateVersion,
+          },
+        });
+      } else if (input.riskDecision.status === 'unavailable') {
+        await this.audits.appendWithinTransaction(transaction, {
+          actorType: 'system',
+          actorId: null,
+          action: 'safety_assessment_unavailable',
+          resourceType: 'ai_turn',
+          resourceId: input.turnId,
+          idempotencyKey: `safety-assessment-unavailable:${input.turnId}`,
+          safeMetadata: { failureCategory: input.riskDecision.failureCategory },
+          occurredAt: input.now,
+        });
+      }
+
+      const [completed] = await transaction
+        .update(aiTurns)
+        .set({
+          status: 'completed',
+          userMessageId: input.userMessageId,
+          assistantMessageId: input.assistantMessageId,
+          promptKey: input.promptKey,
+          promptVersion: input.promptVersion,
+          failureCode: null,
+          completedAt: input.now,
+        })
+        .where(eq(aiTurns.id, input.turnId))
+        .returning();
+      return completed ?? null;
+    });
+  }
+
+  async failAfterSafetyDecision(input: {
+    turnId: string;
+    userId: string;
+    conversationId: string;
+    decision: RiskDecision;
+    failureCode: string;
+    now: Date;
+  }): Promise<void> {
+    await this.databaseService.database.transaction(async (transaction) => {
+      const [turn] = await transaction
+        .select()
+        .from(aiTurns)
+        .where(
+          and(
+            eq(aiTurns.id, input.turnId),
+            eq(aiTurns.userId, input.userId),
+            eq(aiTurns.status, 'claimed'),
+          ),
+        )
+        .limit(1)
+        .for('update');
+      if (!turn) return;
+
+      if (requiresRiskEvent(input.decision)) {
+        await this.riskEvents.persistWithinTransaction(transaction, {
+          userId: input.userId,
+          conversationId: input.conversationId,
+          aiTurnId: input.turnId,
+          triggerMessageId: null,
+          clientRequestId: turn.clientRequestId,
+          isIncognito: false,
+          decision: input.decision,
+          createdAt: input.now,
+        });
+      }
+
+      await transaction
+        .update(aiTurns)
+        .set({ status: 'failed', failureCode: input.failureCode, completedAt: input.now })
+        .where(eq(aiTurns.id, input.turnId));
     });
   }
 

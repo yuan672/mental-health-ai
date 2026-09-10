@@ -1,14 +1,13 @@
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import {
-  LLMProviderFailure,
-  LLMUnsupportedCapabilityError,
-} from '../src/ai/providers/llm-provider';
+import { LLMProviderFailure } from '../src/ai/providers/llm-provider';
 import { SiliconFlowProvider } from '../src/ai/providers/siliconflow.provider';
 
 type Scenario =
   | 'chat'
+  | 'risk'
+  | 'malformed-risk'
   | 'stream'
   | 'malformed'
   | 'authentication'
@@ -87,6 +86,38 @@ describe('SiliconFlowProvider', () => {
           model: 'test-model',
           choices: [{ message: { content: 'synthetic-answer' }, finish_reason: 'stop' }],
           usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 },
+        }),
+      );
+      return;
+    }
+    if (scenario === 'risk' || scenario === 'malformed-risk') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          model: 'test-model',
+          choices: [
+            {
+              message: {
+                content:
+                  scenario === 'malformed-risk'
+                    ? '{"candidateLevel":"UNBOUNDED"}'
+                    : JSON.stringify({
+                        candidateLevel: 'HIGH',
+                        harmSubject: 'OTHER',
+                        harmTargets: ['SELF_HARM'],
+                        temporality: 'CURRENT',
+                        ideation: 'ACTIVE',
+                        intent: 'UNKNOWN',
+                        plan: 'UNKNOWN',
+                        means: 'UNKNOWN',
+                        immediacy: 'POTENTIAL',
+                        confidence: 0.82,
+                        reasonCodes: ['THIRD_PARTY_REPORT'],
+                      }),
+              },
+              finish_reason: 'stop',
+            },
+          ],
         }),
       );
       return;
@@ -211,14 +242,45 @@ describe('SiliconFlowProvider', () => {
     ).resolves.toMatchObject({ status: 'healthy' });
   });
 
-  it('reports Phase 4 and embedding capabilities as intentionally unsupported', async () => {
+  it('normalizes a strict structured risk-classification response', async () => {
     const instance = provider();
+    scenario = 'risk';
     await expect(
       instance.classifyRisk(
-        { requestId: REQUEST.requestId, messages: REQUEST.messages },
+        {
+          requestId: REQUEST.requestId,
+          messages: REQUEST.messages,
+          maxOutputTokens: 128,
+        },
         { signal: new AbortController().signal },
       ),
-    ).rejects.toBeInstanceOf(LLMUnsupportedCapabilityError);
+    ).resolves.toMatchObject({
+      candidateLevel: 'HIGH',
+      harmSubject: 'OTHER',
+      harmTargets: ['SELF_HARM'],
+      reasonCodes: ['THIRD_PARTY_REPORT'],
+      metadata: { provider: 'siliconflow', requestId: 'safe-trace-id' },
+    });
+    expect(JSON.parse(receivedBody)).toMatchObject({
+      stream: false,
+      temperature: 0,
+      response_format: { type: 'json_object' },
+    });
+  });
+
+  it('rejects malformed risk classification and keeps embedding explicitly unsupported', async () => {
+    const instance = provider();
+    scenario = 'malformed-risk';
+    await expect(
+      instance.classifyRisk(
+        {
+          requestId: REQUEST.requestId,
+          messages: REQUEST.messages,
+          maxOutputTokens: 128,
+        },
+        { signal: new AbortController().signal },
+      ),
+    ).rejects.toMatchObject({ category: 'malformed_response' });
     await expect(
       instance.embed(
         { requestId: REQUEST.requestId, inputs: ['synthetic'] },

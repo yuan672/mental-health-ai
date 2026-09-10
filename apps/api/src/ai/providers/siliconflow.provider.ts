@@ -72,6 +72,22 @@ const streamResponseSchema = z
   })
   .passthrough();
 
+const riskCandidateSchema = z
+  .object({
+    candidateLevel: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']),
+    harmSubject: z.enum(['SELF', 'OTHER', 'UNKNOWN']),
+    harmTargets: z.array(z.enum(['SELF_HARM', 'HARM_TO_OTHERS'])).max(2),
+    temporality: z.enum(['CURRENT', 'HISTORICAL', 'HYPOTHETICAL', 'UNKNOWN']),
+    ideation: z.enum(['NONE', 'PASSIVE', 'ACTIVE', 'UNKNOWN']),
+    intent: z.enum(['ABSENT', 'PRESENT', 'UNKNOWN']),
+    plan: z.enum(['ABSENT', 'PRESENT', 'UNKNOWN']),
+    means: z.enum(['ABSENT', 'PRESENT', 'UNKNOWN']),
+    immediacy: z.enum(['NONE', 'POTENTIAL', 'IMMINENT', 'IN_PROGRESS', 'UNKNOWN']),
+    confidence: z.number().min(0).max(1),
+    reasonCodes: z.array(z.string().min(1).max(64)).max(16),
+  })
+  .strict();
+
 const EMPTY_USAGE: LLMTokenUsage = {
   inputTokens: null,
   outputTokens: null,
@@ -252,13 +268,39 @@ export class SiliconFlowProvider implements LLMProvider {
     yield { type: 'completed', finishReason, usage, metadata };
   }
 
-  classifyRisk(
+  async classifyRisk(
     request: LLMRiskClassificationRequest,
     options: LLMCallOptions,
   ): Promise<LLMRiskClassificationCandidate> {
-    void request;
-    void options;
-    return Promise.reject(new LLMUnsupportedCapabilityError('classifyRisk'));
+    const response = await this.fetchCompletion(
+      {
+        requestId: request.requestId,
+        messages: request.messages,
+        maxOutputTokens: request.maxOutputTokens,
+        temperature: 0,
+        responseFormat: 'json',
+      },
+      options.signal,
+      false,
+    );
+    let parsed: z.infer<typeof chatResponseSchema>;
+    try {
+      parsed = chatResponseSchema.parse(await response.json());
+      const content = parsed.choices[0]?.message.content;
+      if (!content) {
+        throw new Error('Missing classifier result');
+      }
+      return {
+        ...riskCandidateSchema.parse(JSON.parse(content)),
+        metadata: providerMetadata(this.config, response, parsed.model),
+      };
+    } catch {
+      throw new LLMProviderFailure(
+        'malformed_response',
+        true,
+        response.headers.get('x-siliconcloud-trace-id'),
+      );
+    }
   }
 
   embed(request: LLMEmbeddingRequest, options: LLMCallOptions): Promise<LLMEmbeddingResult> {
@@ -312,6 +354,10 @@ export class SiliconFlowProvider implements LLMProvider {
           messages: request.messages,
           max_tokens: request.maxOutputTokens,
           stream,
+          ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
+          ...(request.responseFormat === 'json'
+            ? { response_format: { type: 'json_object' } }
+            : {}),
         }),
         signal,
       });

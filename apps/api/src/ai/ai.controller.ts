@@ -84,6 +84,51 @@ export class AiController {
     response.flushHeaders();
 
     let eventSequence = 0;
+    if (prepared.kind === 'trusted' || prepared.kind === 'unpersisted_trusted') {
+      writeSse(
+        response,
+        {
+          type: 'turn.started',
+          data: { turnId: prepared.turn.id, conversationId: prepared.turn.conversationId },
+        },
+        ++eventSequence,
+      );
+      writeSse(
+        response,
+        {
+          type: 'message.segment',
+          data: { turnId: prepared.turn.id, sequence: 1, text: prepared.response.content },
+        },
+        ++eventSequence,
+      );
+      if (prepared.kind === 'trusted') {
+        writeSse(
+          response,
+          {
+            type: 'turn.completed',
+            data: {
+              turnId: prepared.turn.id,
+              assistantMessageId: prepared.turn.assistantMessageId,
+              finishReason: 'content_filter',
+            },
+          },
+          eventSequence + 1,
+        );
+      } else {
+        writeSse(
+          response,
+          failedEvent(
+            prepared.turn.id,
+            new AppError(ERROR_CODES.DATABASE_ERROR, 500, '安全响应未能保存'),
+          ),
+          eventSequence + 1,
+        );
+      }
+      response.removeListener('close', onClose);
+      if (!response.writableEnded && !response.destroyed) response.end();
+      return;
+    }
+
     try {
       for await (const event of this.orchestration.streamPreparedTurn(
         prepared,

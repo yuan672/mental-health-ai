@@ -120,6 +120,16 @@ metadata. User-initiated deletion removes message content immediately before thi
 cleanup runs. A deployment scheduler is intentionally not included yet; automatic
 scheduling is mandatory before production chat launch.
 
+Phase 4 adds a separate bounded cleanup command for expired Risk Events and audit
+records:
+
+```bash
+pnpm data:purge-safety
+```
+
+Risk Event and audit retention are independent. This command is not a production
+scheduler; automatic scheduling remains required before production AI launch.
+
 ## Quality Commands
 
 ```bash
