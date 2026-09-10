@@ -107,10 +107,10 @@ describe('Phase 2B conversation and quota integration', () => {
     );
   });
 
-  it('does not expose Phase 3 or Phase 5 HTTP APIs', async () => {
-    await request(app.getHttpServer()).get('/quota').expect(404);
-    await request(app.getHttpServer()).get('/conversations').expect(404);
+  it('does not expose message writes or Incognito lifecycle HTTP APIs', async () => {
     await request(app.getHttpServer()).post('/conversations').send({}).expect(404);
+    await request(app.getHttpServer()).post('/conversations/example/messages').send({}).expect(404);
+    await request(app.getHttpServer()).post('/incognito').send({}).expect(404);
   });
 
   it('reports an unconsumed configured daily quota', async () => {

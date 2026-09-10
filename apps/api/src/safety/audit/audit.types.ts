@@ -1,9 +1,17 @@
 import { z } from 'zod';
 import { trustedTemplateKeySchema } from '../templates/trusted-safety-template.registry';
 
-export const auditActorTypeSchema = z.enum(['system', 'human_reviewer']);
-export const auditResourceTypeSchema = z.enum(['ai_turn', 'risk_event', 'review_queue_item']);
+export const auditActorTypeSchema = z.enum(['system', 'user', 'human_reviewer']);
+export const auditResourceTypeSchema = z.enum([
+  'ai_turn',
+  'conversation',
+  'conversation_history',
+  'risk_event',
+  'review_queue_item',
+]);
 export const auditActionSchema = z.enum([
+  'conversation_deleted',
+  'conversation_history_deleted',
   'risk_event_created',
   'risk_event_viewed',
   'crisis_flow_triggered',
@@ -46,6 +54,12 @@ const failureMetadataSchema = z
     failureCategory: z.enum(['timeout', 'provider', 'malformed', 'unsupported', 'internal']),
   })
   .strict();
+const conversationHistoryDeletedMetadataSchema = z
+  .object({
+    conversationCount: z.number().int().positive(),
+    messageCount: z.number().int().nonnegative(),
+  })
+  .strict();
 
 export function parseAuditMetadata(
   action: AuditAction,
@@ -62,6 +76,9 @@ export function parseAuditMetadata(
   }
   if (action === 'safety_assessment_unavailable') {
     return failureMetadataSchema.parse(metadata);
+  }
+  if (action === 'conversation_history_deleted') {
+    return conversationHistoryDeletedMetadataSchema.parse(metadata);
   }
   return emptyMetadataSchema.parse(metadata);
 }

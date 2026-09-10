@@ -11,8 +11,7 @@ import {
 } from '../ai/safety/safety-gates';
 import { ConversationModule } from '../conversations/conversation.module';
 import { MessageModule } from '../messages/message.module';
-import { AuditLogRepository } from './audit/audit-log.repository';
-import { AuditLogService } from './audit/audit-log.service';
+import { AuditModule } from './audit/audit.module';
 import { SafetyContextBuilder } from './context/safety-context.builder';
 import { CrisisFlowService } from './crisis/crisis-flow.service';
 import { CrisisResourceRegistry } from './crisis/crisis-resource.registry';
@@ -25,10 +24,7 @@ import {
 import { OutputSafetyCheck } from './output/output-safety-check.service';
 import { RiskEventRepository } from './persistence/risk-event.repository';
 import { RiskEventService } from './persistence/risk-event.service';
-import {
-  AuditRetentionPolicy,
-  RiskEventRetentionPolicy,
-} from './persistence/safety-retention.policy';
+import { RiskEventRetentionPolicy } from './persistence/safety-retention.policy';
 import { SafetyProductionReadinessService } from './readiness/safety-production-readiness.service';
 import { DeterministicSignalDetector } from './risk/deterministic-signal-detector';
 import { LlmRiskClassifier, RISK_CLASSIFIER } from './risk/risk-classifier';
@@ -45,15 +41,13 @@ import { TrustedSafetyTemplateRegistry } from './templates/trusted-safety-templa
 @Module({
   imports: [
     ConversationModule,
+    AuditModule,
     IncognitoRuntimeModule,
     LlmProviderModule,
     MessageModule,
     PromptModule,
   ],
   providers: [
-    AuditLogRepository,
-    AuditLogService,
-    AuditRetentionPolicy,
     ConservativeTokenEstimator,
     CrisisFlowService,
     CrisisResourceRegistry,
@@ -86,8 +80,7 @@ import { TrustedSafetyTemplateRegistry } from './templates/trusted-safety-templa
     },
   ],
   exports: [
-    AuditLogRepository,
-    AuditLogService,
+    AuditModule,
     CrisisFlowService,
     HumanReviewQueueService,
     POST_GENERATION_SAFETY_GATE,

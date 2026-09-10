@@ -1,7 +1,8 @@
 # Phase 2B Conversation and Quota Foundation
 
-Phase 2B adds internal application-service and repository boundaries. It does not
-add public HTTP routes.
+Phase 2B established internal application-service and repository boundaries. Phase
+5A later exposed the bounded read, save, delete, quota, and capability routes
+documented in `docs/api/conversation-access.md`.
 
 ## Internal services
 
@@ -19,18 +20,19 @@ Expired and deleted conversations are unavailable to business reads.
 parent conversation inside the transaction before allocating a monotonically
 increasing sequence number. Message lifetime derives from the parent conversation.
 
-## No public Phase 2B routes
+## Public-boundary history
 
-The following routes are intentionally not implemented in Phase 2B:
+Phase 2B intentionally did not expose HTTP routes. Phase 5A now exposes ordinary
+conversation list/detail/message reads, save/delete/delete-all, quota reads, and a
+minimal capability read. The following operations remain unavailable:
 
-- conversation history/list/detail;
-- conversation save or delete;
-- message append or history;
-- quota reads or consumption;
+- creating an empty conversation directly;
+- direct message append outside the AI orchestration path;
+- public quota consumption;
 - incognito conversation operations.
 
-Phase 3 AI orchestration will consume the internal quota and message-write services.
-Phase 5 will define user-facing conversation history, save, and delete APIs.
+Phase 3 AI orchestration consumes the internal quota and message-write services.
+Phase 5A public access remains a separate owner-scoped application boundary.
 
 ## Incognito boundary
 

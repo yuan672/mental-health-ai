@@ -1,6 +1,6 @@
 # 心理健康 AI 支持系统
 
-面向中国大陆 18 岁及以上成年用户的 Web AI 心理健康支持系统工程项目。Engineering Bootstrap、Phase 2、Phase 3 和 **Phase 4 — AI Safety** 已完成工程范围验收；Phase 5/6 尚未开始。Production Safety Lock 仍然生效，生产 AI Chat 仍然禁用，`productionSafe=false`。
+面向中国大陆 18 岁及以上成年用户的 Web AI 心理健康支持系统工程项目。Engineering Bootstrap、Phase 2、Phase 3 和 **Phase 4 — AI Safety** 已完成工程范围验收；Phase 5A Conversation Access API 正在审查，Phase 6 尚未开始。Production Safety Lock 仍然生效，生产 AI Chat 仍然禁用，`productionSafe=false`。
 
 > 本产品定位为心理健康支持工具，不是心理医生、精神科医生、医疗诊断系统、药物处方系统或真人心理咨询师的替代品。
 
@@ -208,9 +208,13 @@ quota, ordinary-conversation, message-ordering, ownership and retention primitiv
 
 Phase 3 adds the provider abstraction, SiliconFlow adapter, AI-turn orchestration,
 prompt/context services, true HTTP streaming, quota compensation, internal
-incognito runtime storage, and a minimal Web stream client. The public AI surface is
-limited to `POST /ai/chat/stream`; Phase 5 conversation-history/save/delete and
-incognito lifecycle APIs are not exposed.
+incognito runtime storage, and a minimal Web stream client. The public AI generation
+surface remains limited to `POST /ai/chat/stream`.
+
+Phase 5A adds authenticated, owner-scoped ordinary Conversation history/detail,
+Message history, Save/Delete/Delete-All, Quota, and public Capability reads. It does
+not expose direct message writes, an empty-conversation create route, a public
+Incognito lifecycle, or a Chat UI. See `docs/api/conversation-access.md`.
 
 Phase 4 adds hybrid risk detection, deterministic Crisis Flow, isolated Risk Event
 retention, an internal Human Review Queue boundary, restricted Audit Log, and
