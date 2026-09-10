@@ -23,7 +23,9 @@ response. Clients cannot supply a trusted user ID.
 
 Sensitive conversation, message, and quota responses set
 `Cache-Control: private, no-store`. The capability response contains only the
-public `aiChatEnabled` boolean and sets `Cache-Control: no-store`.
+public `aiChatEnabled` boolean and sets `Cache-Control: no-store`. JSON error
+responses also set `Cache-Control: private, no-store`, including authentication and
+owner-scoped `404` failures.
 
 ## Conversation history
 

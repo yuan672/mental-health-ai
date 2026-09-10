@@ -189,9 +189,16 @@ describe('Phase 5A conversation access API integration', () => {
   }
 
   it('requires authentication for conversation, quota, and capability reads', async () => {
-    await request(app.getHttpServer()).get('/conversations').expect(401);
-    await request(app.getHttpServer()).get('/quota').expect(401);
-    await request(app.getHttpServer()).get('/capabilities').expect(401);
+    const conversationsResponse = await request(app.getHttpServer())
+      .get('/conversations')
+      .expect(401);
+    const quotaResponse = await request(app.getHttpServer()).get('/quota').expect(401);
+    const capabilitiesResponse = await request(app.getHttpServer())
+      .get('/capabilities')
+      .expect(401);
+    expect(conversationsResponse.headers['cache-control']).toBe('private, no-store');
+    expect(quotaResponse.headers['cache-control']).toBe('private, no-store');
+    expect(capabilitiesResponse.headers['cache-control']).toBe('private, no-store');
   });
 
   it('returns metadata-only active history with stable descending cursor pagination', async () => {
@@ -296,10 +303,19 @@ describe('Phase 5A conversation access API integration', () => {
       expiresAt: active.expiresAt?.toISOString(),
       isSaved: false,
     });
-    await authenticatedGet(other, `/conversations/${active.id}`).expect(404);
-    await authenticatedGet(auth, `/conversations/${expired.id}`).expect(404);
-    await authenticatedGet(auth, `/conversations/${deleted.id}`).expect(404);
-    await authenticatedGet(auth, `/conversations/${randomUUID()}`).expect(404);
+    const notOwned = await authenticatedGet(other, `/conversations/${active.id}`).expect(404);
+    const expiredResponse = await authenticatedGet(auth, `/conversations/${expired.id}`).expect(
+      404,
+    );
+    const deletedResponse = await authenticatedGet(auth, `/conversations/${deleted.id}`).expect(
+      404,
+    );
+    const missingResponse = await authenticatedGet(auth, `/conversations/${randomUUID()}`).expect(
+      404,
+    );
+    for (const hiddenResponse of [notOwned, expiredResponse, deletedResponse, missingResponse]) {
+      expect(hiddenResponse.headers['cache-control']).toBe('private, no-store');
+    }
   });
 
   it('pages owned messages by sequence and exposes no internal AI or safety fields', async () => {
