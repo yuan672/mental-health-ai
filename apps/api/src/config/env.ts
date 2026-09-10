@@ -64,6 +64,14 @@ const environmentSchema = z
     AI_SEGMENT_MAX_CHARACTERS: z.coerce.number().int().positive().default(200),
     AI_SEGMENT_MAX_WAIT_MS: z.coerce.number().int().positive().default(500),
     INCOGNITO_CONTEXT_TTL_SECONDS: z.coerce.number().int().positive().default(1_800),
+    INCOGNITO_CONTEXT_CLEANUP_INTERVAL_MS: z.coerce.number().int().positive().default(30_000),
+    INCOGNITO_CONTEXT_MAX_GLOBAL: z.coerce.number().int().positive().default(1_000),
+    INCOGNITO_CONTEXT_MAX_PER_USER: z.coerce.number().int().positive().default(10),
+    INCOGNITO_CONTEXT_MAX_PER_SESSION: z.coerce.number().int().positive().default(3),
+    INCOGNITO_CONTEXT_MAX_REQUESTS: z.coerce.number().int().positive().default(20),
+    INCOGNITO_CONTEXT_MAX_MESSAGES: z.coerce.number().int().positive().default(40),
+    INCOGNITO_CONTEXT_MAX_CHARACTERS: z.coerce.number().int().positive().default(32_000),
+    INCOGNITO_CONTEXT_MAX_MESSAGE_CHARACTERS: z.coerce.number().int().positive().default(16_384),
     SAFETY_CONTEXT_MAX_MESSAGES: z.coerce.number().int().positive().max(40).default(8),
     SAFETY_CONTEXT_TOKEN_BUDGET: z.coerce.number().int().positive().default(2_000),
     SAFETY_CONTEXT_MAX_CHARACTERS: z.coerce.number().int().positive().default(6_000),
@@ -130,6 +138,28 @@ const environmentSchema = z
         code: 'custom',
         path: ['LLM_STREAM_IDLE_TIMEOUT_MS'],
         message: 'Stream idle timeout cannot exceed total timeout',
+      });
+    }
+
+    if (value.INCOGNITO_CONTEXT_MAX_PER_SESSION > value.INCOGNITO_CONTEXT_MAX_PER_USER) {
+      context.addIssue({
+        code: 'custom',
+        path: ['INCOGNITO_CONTEXT_MAX_PER_SESSION'],
+        message: 'Incognito per-session context limit cannot exceed the per-user limit',
+      });
+    }
+    if (value.INCOGNITO_CONTEXT_MAX_PER_USER > value.INCOGNITO_CONTEXT_MAX_GLOBAL) {
+      context.addIssue({
+        code: 'custom',
+        path: ['INCOGNITO_CONTEXT_MAX_PER_USER'],
+        message: 'Incognito per-user context limit cannot exceed the global limit',
+      });
+    }
+    if (value.INCOGNITO_CONTEXT_MAX_MESSAGE_CHARACTERS > value.INCOGNITO_CONTEXT_MAX_CHARACTERS) {
+      context.addIssue({
+        code: 'custom',
+        path: ['INCOGNITO_CONTEXT_MAX_MESSAGE_CHARACTERS'],
+        message: 'Incognito single-message limit cannot exceed the context character limit',
       });
     }
   });

@@ -971,11 +971,26 @@ describe('Phase 3 AI foundation integration', () => {
       createdAt: BASE_NOW,
       expiresAt: new Date(BASE_NOW.getTime() + 60_000),
     });
-    const context = incognitoStore.create(userId, sessionId, BASE_NOW);
+    const context = incognitoStore.create(
+      userId,
+      sessionId,
+      new Date(BASE_NOW.getTime() + 60_000),
+      BASE_NOW,
+    );
+    const generation = incognitoStore.claimGeneration(
+      userId,
+      sessionId,
+      context.id,
+      randomUUID(),
+      new AbortController().signal,
+      BASE_NOW,
+    );
+    if (!generation) throw new Error('Expected an Incognito generation claim');
     incognitoStore.append(
       userId,
       sessionId,
       context.id,
+      generation.id,
       { role: 'user', content: 'ephemeral-only' },
       BASE_NOW,
     );
@@ -994,7 +1009,12 @@ describe('Phase 3 AI foundation integration', () => {
     const userId = await createUser();
     const sessionId = randomUUID();
     const clientRequestId = randomUUID();
-    const context = incognitoStore.create(userId, sessionId, BASE_NOW);
+    const context = incognitoStore.create(
+      userId,
+      sessionId,
+      new Date(BASE_NOW.getTime() + 60_000),
+      BASE_NOW,
+    );
     const quotaIdempotencyKey = deriveIncognitoQuotaIdempotencyKey(
       userId,
       sessionId,

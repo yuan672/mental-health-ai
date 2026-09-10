@@ -45,10 +45,27 @@ describe('Phase 3 AI foundation units', () => {
   it('keeps incognito context isolated by user/session and removes it on TTL/end/logout', () => {
     const store = new InMemoryIncognitoContextStore();
     const now = new Date('2026-09-09T00:00:00.000Z');
-    const first = store.create('user-1', 'session-1', now);
-    const second = store.create('user-1', 'session-2', now);
+    const sessionExpiresAt = new Date(now.getTime() + 120_000);
+    const first = store.create('user-1', 'session-1', sessionExpiresAt, now);
+    const second = store.create('user-1', 'session-2', sessionExpiresAt, now);
+    const generation = store.claimGeneration(
+      'user-1',
+      'session-1',
+      first.id,
+      'request-1',
+      new AbortController().signal,
+      now,
+    );
+    if (!generation) throw new Error('Expected an Incognito generation claim');
     expect(
-      store.append('user-1', 'session-1', first.id, { role: 'user', content: 'private' }, now),
+      store.append(
+        'user-1',
+        'session-1',
+        first.id,
+        generation.id,
+        { role: 'user', content: 'private' },
+        now,
+      ),
     ).toMatchObject({ messages: [{ role: 'user', content: 'private' }] });
     expect(store.get('user-2', 'session-1', first.id, now)).toBeNull();
     expect(store.get('user-1', 'session-2', first.id, now)).toBeNull();
@@ -57,7 +74,7 @@ describe('Phase 3 AI foundation units', () => {
     ).toBeNull();
     expect(store.end('user-1', 'session-2', second.id)).toBe(true);
 
-    const third = store.create('user-1', 'session-3', now);
+    const third = store.create('user-1', 'session-3', sessionExpiresAt, now);
     expect(store.clearSession('user-1', 'session-3')).toBe(1);
     expect(store.get('user-1', 'session-3', third.id, now)).toBeNull();
     store.onModuleDestroy();

@@ -1030,7 +1030,12 @@ describe('Phase 4 AI safety integration', () => {
   it('deduplicates 20 concurrent Incognito CRITICAL events without persisting content', async () => {
     const userId = await createUser();
     const sessionId = randomUUID();
-    const runtimeContext = incognitoStore.create(userId, sessionId, NOW);
+    const runtimeContext = incognitoStore.create(
+      userId,
+      sessionId,
+      new Date(NOW.getTime() + 60_000),
+      NOW,
+    );
     const clientRequestId = randomUUID();
     riskClassifier.reset('CRITICAL');
 
@@ -1380,19 +1385,45 @@ describe('Phase 4 AI safety integration', () => {
   it('isolates Incognito safety context by both user and session', async () => {
     const userId = await createUser();
     const sessionId = randomUUID();
-    const own = incognitoStore.create(userId, sessionId, NOW);
+    const own = incognitoStore.create(userId, sessionId, new Date(NOW.getTime() + 60_000), NOW);
+    const ownGeneration = incognitoStore.claimGeneration(
+      userId,
+      sessionId,
+      own.id,
+      randomUUID(),
+      new AbortController().signal,
+      NOW,
+    );
+    if (!ownGeneration) throw new Error('Expected an Incognito generation claim');
     incognitoStore.append(
       userId,
       sessionId,
       own.id,
+      ownGeneration.id,
       { role: 'user', content: '自己的最近上下文' },
       NOW,
     );
-    const other = incognitoStore.create(userId, randomUUID(), NOW);
+    incognitoStore.releaseGeneration(userId, sessionId, own.id, ownGeneration.id);
+    const other = incognitoStore.create(
+      userId,
+      randomUUID(),
+      new Date(NOW.getTime() + 60_000),
+      NOW,
+    );
+    const otherGeneration = incognitoStore.claimGeneration(
+      userId,
+      other.sessionId,
+      other.id,
+      randomUUID(),
+      new AbortController().signal,
+      NOW,
+    );
+    if (!otherGeneration) throw new Error('Expected an Incognito generation claim');
     incognitoStore.append(
       userId,
       other.sessionId,
       other.id,
+      otherGeneration.id,
       { role: 'user', content: '不得泄露的其他会话内容' },
       NOW,
     );
