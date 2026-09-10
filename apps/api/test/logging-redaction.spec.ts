@@ -70,9 +70,27 @@ describe('sensitive logging redaction', () => {
   });
 
   it('keeps an operational route shape without logging an Incognito context id', () => {
-    expect(safeOperationalPath('/incognito-contexts/11111111-1111-4111-8111-111111111111')).toBe(
+    const contextId = '11111111-1111-4111-8111-111111111111';
+    expect(safeOperationalPath(`/incognito-contexts/${contextId}`)).toBe(
       '/incognito-contexts/:contextId',
     );
+    expect(safeOperationalPath(`/incognito-contexts/${contextId}/`)).toBe(
+      '/incognito-contexts/:contextId/',
+    );
+    expect(safeOperationalPath(`/incognito-contexts/${contextId}/unexpected`)).toBe(
+      '/incognito-contexts/:contextId/unexpected',
+    );
+    expect(safeOperationalPath(`/incognito-contexts/${contextId}?private=query`)).toBe(
+      '/incognito-contexts/:contextId',
+    );
+    for (const unsafePath of [
+      `/incognito-contexts/${contextId}`,
+      `/incognito-contexts/${contextId}/`,
+      `/incognito-contexts/${contextId}/unexpected`,
+      `/incognito-contexts/${contextId}?private=query`,
+    ]) {
+      expect(safeOperationalPath(unsafePath)).not.toContain(contextId);
+    }
     expect(safeOperationalPath('/conversations?cursor=private')).toBe('/conversations');
   });
 });
