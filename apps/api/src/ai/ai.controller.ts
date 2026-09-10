@@ -132,7 +132,7 @@ export class AiController {
     }
 
     if (prepared.execution.signal.aborted || response.destroyed || response.writableEnded) {
-      prepared.execution.dispose();
+      await this.orchestration.cancelPreparedPersistentTurnBeforeProvider(prepared);
       response.removeListener('close', onClose);
       return;
     }
@@ -263,7 +263,7 @@ export class AiController {
     }
 
     if (prepared.generation.signal.aborted || response.destroyed || response.writableEnded) {
-      this.orchestration.releasePreparedIncognitoTurn(prepared);
+      await this.orchestration.cancelPreparedIncognitoTurnBeforeProvider(prepared);
       response.removeListener('close', onClose);
       return;
     }

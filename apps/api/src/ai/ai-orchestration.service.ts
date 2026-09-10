@@ -1359,6 +1359,42 @@ export class AiOrchestrationService {
     prepared.execution.dispose();
   }
 
+  async cancelPreparedIncognitoTurnBeforeProvider(prepared: PreparedIncognitoTurn): Promise<void> {
+    try {
+      if (prepared.kind === 'ready') {
+        await this.quota.refundQuota(prepared.principal.userId, prepared.quotaIdempotencyKey);
+      }
+    } finally {
+      this.releasePreparedIncognitoTurn(prepared);
+    }
+  }
+
+  async cancelPreparedPersistentTurnBeforeProvider(prepared: PreparedAiTurn): Promise<void> {
+    let failure: unknown = null;
+    try {
+      if (prepared.kind === 'ready') {
+        try {
+          await this.quota.refundQuota(prepared.turn.userId, prepared.turn.id);
+        } catch (error) {
+          failure = error;
+        }
+        try {
+          await this.aiTurns.finish(
+            prepared.turn,
+            'cancelled',
+            'CANCELLED_BEFORE_PROVIDER',
+            new Date(),
+          );
+        } catch (error) {
+          failure ??= error;
+        }
+      }
+    } finally {
+      if (prepared.kind !== 'existing') prepared.execution.dispose();
+    }
+    if (failure) throw failure;
+  }
+
   private releaseIncognitoGeneration(
     principal: AuthenticatedAiPrincipal,
     contextId: string,
