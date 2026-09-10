@@ -1,3 +1,7 @@
+import type { ConsentType } from './consents.js';
+
+export * from './consents.js';
+
 export type AppEnvironment = 'development' | 'staging' | 'production';
 
 export type ApiErrorResponse = {
@@ -23,7 +27,7 @@ export type AuthSessionResponse = ApiSuccessResponse<AuthSession>;
 export type LoginResponse = AuthSessionResponse;
 
 export type RegistrationRequirement = {
-  type: 'terms_of_service' | 'privacy_policy';
+  type: ConsentType;
   version: string;
   displayKey: 'consent.termsOfService' | 'consent.privacyPolicy';
 };
@@ -42,7 +46,7 @@ export type RegistrationResponse = ApiSuccessResponse<{
     verifiedAt: string;
   };
   consents: Array<{
-    consentType: string;
+    consentType: ConsentType;
     consentVersion: string;
     status: 'accepted';
     acceptedAt: string;

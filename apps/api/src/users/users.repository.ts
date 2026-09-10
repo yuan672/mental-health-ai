@@ -2,7 +2,11 @@ import {
   ageVerifications,
   and,
   consents,
+  desc,
   eq,
+  inArray,
+  lt,
+  or,
   passwordCredentials,
   sessions,
   users,
@@ -48,6 +52,11 @@ export type ConsentRecord = {
   acceptedAt: Date;
   withdrawnAt: Date | null;
 };
+
+export type ConsentHistoryCursor = Readonly<{
+  acceptedAt: Date;
+  id: string;
+}>;
 
 @Injectable()
 export class UsersRepository {
@@ -136,6 +145,41 @@ export class UsersRepository {
       .from(consents)
       .where(eq(consents.userId, userId))
       .orderBy(consents.acceptedAt);
+  }
+
+  listConsentHistoryPage(
+    userId: string,
+    knownConsentTypes: readonly [string, ...string[]],
+    limit: number,
+    cursor: ConsentHistoryCursor | null,
+  ): Promise<ConsentRecord[]> {
+    const cursorPredicate = cursor
+      ? or(
+          lt(consents.acceptedAt, cursor.acceptedAt),
+          and(eq(consents.acceptedAt, cursor.acceptedAt), lt(consents.id, cursor.id)),
+        )
+      : undefined;
+
+    return this.databaseService.database
+      .select({
+        id: consents.id,
+        userId: consents.userId,
+        consentType: consents.consentType,
+        consentVersion: consents.consentVersion,
+        status: consents.status,
+        acceptedAt: consents.acceptedAt,
+        withdrawnAt: consents.withdrawnAt,
+      })
+      .from(consents)
+      .where(
+        and(
+          eq(consents.userId, userId),
+          inArray(consents.consentType, [...knownConsentTypes]),
+          cursorPredicate,
+        ),
+      )
+      .orderBy(desc(consents.acceptedAt), desc(consents.id))
+      .limit(limit);
   }
 
   async findConsent(

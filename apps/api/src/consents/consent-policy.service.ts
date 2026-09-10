@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { ConsentType } from '@mental-health/types';
 import { Injectable } from '@nestjs/common';
 import { ConsentRequiredError } from '../common/errors';
 import { env } from '../config/env';
@@ -7,7 +8,17 @@ import type { RegistrationConsent } from '../users/users.repository';
 export const CONSENT_TYPES = {
   TERMS_OF_SERVICE: 'terms_of_service',
   PRIVACY_POLICY: 'privacy_policy',
-} as const;
+} as const satisfies Record<string, ConsentType>;
+
+export const CONSENT_TYPE_VALUES = [
+  CONSENT_TYPES.TERMS_OF_SERVICE,
+  CONSENT_TYPES.PRIVACY_POLICY,
+] as const;
+
+export type RequiredConsentPolicy = Readonly<{
+  consentType: ConsentType;
+  consentVersion: string;
+}>;
 
 export type RequiredConsentInput = {
   consentType: string;
@@ -17,7 +28,7 @@ export type RequiredConsentInput = {
 
 @Injectable()
 export class ConsentPolicyService {
-  private readonly requiredPolicies = [
+  private readonly requiredPolicies: readonly RequiredConsentPolicy[] = [
     {
       consentType: CONSENT_TYPES.TERMS_OF_SERVICE,
       consentVersion: env.REQUIRED_TERMS_VERSION,
@@ -52,10 +63,17 @@ export class ConsentPolicyService {
     }));
   }
 
-  getRequiredPolicies(): readonly Readonly<{
-    consentType: string;
-    consentVersion: string;
-  }>[] {
+  getRequiredPolicies(): readonly RequiredConsentPolicy[] {
     return this.requiredPolicies;
+  }
+
+  isKnownConsentType(consentType: string): consentType is ConsentType {
+    return CONSENT_TYPE_VALUES.some((knownType) => knownType === consentType);
+  }
+
+  isCurrentRequiredPolicy(consentType: ConsentType, consentVersion: string): boolean {
+    return this.requiredPolicies.some(
+      (policy) => policy.consentType === consentType && policy.consentVersion === consentVersion,
+    );
   }
 }
