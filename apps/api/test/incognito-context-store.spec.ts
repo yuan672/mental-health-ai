@@ -84,7 +84,7 @@ describe('bounded Incognito context runtime', () => {
     store.onModuleDestroy();
   });
 
-  it('refreshes inactivity TTL only on generation claim and append, never beyond session expiry', () => {
+  it('refreshes inactivity TTL only on accepted message activity, never on claim or beyond session expiry', () => {
     setLimits({ INCOGNITO_CONTEXT_TTL_SECONDS: 1 });
     const store = new InMemoryIncognitoContextStore();
     const expiresAt = sessionExpiry(3_000);
@@ -105,23 +105,32 @@ describe('bounded Incognito context runtime', () => {
     if (!claim) throw new Error('Expected a generation claim');
     expect(
       store.get('user', 'session', created.id, new Date(NOW.getTime() + 900))?.expiresAt,
-    ).toEqual(new Date(NOW.getTime() + 1_800));
+    ).toEqual(created.expiresAt);
     const appended = store.append(
       'user',
       'session',
       created.id,
       claim.id,
       { role: 'user', content: 'synthetic' },
-      new Date(NOW.getTime() + 1_700),
+      new Date(NOW.getTime() + 900),
     );
-    expect(appended?.expiresAt).toEqual(new Date(NOW.getTime() + 2_700));
-    const capped = store.append(
+    expect(appended?.expiresAt).toEqual(new Date(NOW.getTime() + 1_900));
+    const extended = store.append(
       'user',
       'session',
       created.id,
       claim.id,
       { role: 'assistant', content: 'synthetic' },
-      new Date(NOW.getTime() + 2_600),
+      new Date(NOW.getTime() + 1_800),
+    );
+    expect(extended?.expiresAt).toEqual(new Date(NOW.getTime() + 2_800));
+    const capped = store.append(
+      'user',
+      'session',
+      created.id,
+      claim.id,
+      { role: 'assistant', content: 'synthetic-again' },
+      new Date(NOW.getTime() + 2_700),
     );
     expect(capped?.expiresAt).toEqual(expiresAt);
     store.onModuleDestroy();

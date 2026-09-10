@@ -221,7 +221,6 @@ export class InMemoryIncognitoContextStore implements IncognitoContextStore, OnM
     };
     context.usedClientRequestIds.add(clientRequestId);
     context.activeGeneration = active;
-    this.refreshExpiry(context, now);
     return this.generationSnapshot(contextId, active);
   }
 
