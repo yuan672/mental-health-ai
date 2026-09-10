@@ -9,8 +9,8 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
 - Phase 2 — Core Backend Foundation: Complete
 - Phase 3 — AI Foundation: Complete
 - Phase 4 — AI Safety: Engineering scope complete
-- Phase 5 — User Features: In progress; Phase 5A Conversation Access API complete
-- Phase 5B — Chat Product Experience: Not started
+- Phase 5 — User Features: In progress; Phase 5A and Phase 5B complete
+- Phase 5B — Chat Product Experience: Product UI engineering complete
 - Phase 6 — Admin and operations features: Not started
 
 ## Current Production State
@@ -33,12 +33,13 @@ safety, or validation for clinical use.
 - [PR #6](https://github.com/yuan672/mental-health-ai/pull/6) — Phase 4 completion status
 - [PR #7](https://github.com/yuan672/mental-health-ai/pull/7) — Documentation reconciliation
 - [PR #8](https://github.com/yuan672/mental-health-ai/pull/8) — Conversation Access API
+- [PR #10](https://github.com/yuan672/mental-health-ai/pull/10) — Chat Product Experience
 
 ## Current Feature Status
 
 - Phase 5A is merged into `develop` and its post-merge CI passed.
-- Phase 5B has not started implementation.
-- Chat UI, public Incognito lifecycle, Mood, Profile, Privacy UI, Knowledge Base,
+- Phase 5B is merged into `develop` and its post-merge quality and browser E2E CI passed.
+- Public Incognito lifecycle, Mood, Profile, Privacy UI, Knowledge Base,
   Admin/Reviewer features, and production enablement remain outside completed scope.
 
 ## Production Readiness Blockers
@@ -66,9 +67,9 @@ None.
 
 ## Immediate Next Step
 
-Begin Phase 5B with architecture and product design review only when explicitly
-authorized. Do not begin Phase 5B implementation or Phase 5C/5D/5E work from this
-status file alone.
+Proceed to Phase 5C Incognito and Privacy Experience design review only when
+explicitly authorized. Do not begin Phase 5C implementation or Phase 5D/5E work
+from this status file alone.
 
 ## Source of Truth
 
