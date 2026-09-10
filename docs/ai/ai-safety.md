@@ -65,15 +65,30 @@ AI Chat remains fail-closed while readiness is incomplete.
 No Admin/Reviewer UI, live human takeover, SLA, notification system, Redis/queue,
 or field-level encryption framework is implemented in Phase 4.
 
-## Final merge-readiness audit (pre-merge)
+## Phase 4 completion status
 
-The 2026-09-10 engineering audit validates the feature branch before PR #5 is
-merged. It does not claim that the pull request is already merged or that
-production AI is ready. The audit covers transactional crisis fallback failures,
-reviewer authorization plus mandatory access audit, whole-turn deadlines,
-classifier cancellation and late-result rejection, SSE backpressure, retention,
-idempotency, and empty-database migrations. The complete local suite contains
-168 API tests and 8 Web tests; the Phase 4-focused subset contains 80 API tests.
+- Phase 4 — AI Safety: Complete (engineering scope)
+- Final merge-readiness audit: Passed
+- Verified: 2026-09-10
+- Pull request: [#5](https://github.com/yuan672/mental-health-ai/pull/5)
+- Merge commit: [`23320839`](https://github.com/yuan672/mental-health-ai/commit/233208395682a917f09448bbf1589381118932f7)
+- Hosted CI: [34443340270](https://github.com/yuan672/mental-health-ai/actions/runs/34443340270)
+
+Phase 4 is complete within its engineering scope, but the system is not ready to
+enable production AI. The Production Safety Lock remains enforced, Production AI
+Chat remains disabled, and `productionSafe` remains `false` until every production
+readiness prerequisite is independently satisfied.
+
+## Final merge-readiness audit evidence
+
+The 2026-09-10 engineering audit validated PR #5 at head commit `d8bc10f8`, after
+which the pull request was merged normally into `develop` as `23320839`. The
+merge commit's hosted CI passed. This status does not claim that production AI is
+ready. The audit covers transactional crisis fallback failures, reviewer
+authorization plus mandatory access audit, whole-turn deadlines, classifier
+cancellation and late-result rejection, SSE backpressure, retention, idempotency,
+and empty-database migrations. The complete local suite contains 168 API tests and
+8 Web tests; the Phase 4-focused subset contains 80 API tests.
 
 The 28 table-driven Simplified Chinese corpus rows are engineering fixtures:
 
