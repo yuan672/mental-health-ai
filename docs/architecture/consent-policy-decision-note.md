@@ -29,6 +29,14 @@ This is an implementation consequence, not a newly approved product or legal
 policy. User-facing withdrawal copy must not promise same-version restoration
 unless a later decision changes the lifecycle.
 
+The current backend applies a conservative runtime boundary to every successful
+withdrawal of a known owned Consent record: it cancels this process's active AI
+executions for the user and clears that user's Incognito contexts. Future request
+eligibility is still determined only by the current required versions. Because
+this batch exposes no withdrawal UI, whether a historical-only withdrawal should
+continue to interrupt otherwise eligible active use remains an explicit product
+decision rather than an implied toggle behavior.
+
 ## Policy options requiring a future decision
 
 The project may retain the current irreversible-per-version rule, allow repeated
