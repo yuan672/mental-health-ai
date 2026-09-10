@@ -1,4 +1,5 @@
 import { parseEnvironment } from '../src/config/env';
+import { assertE2eSeedEnvironment } from '../src/commands/e2e-seed-guard';
 
 const baseEnvironment: NodeJS.ProcessEnv = {
   DATABASE_URL: 'postgresql://test:test@localhost:5432/mental_health_test',
@@ -12,6 +13,24 @@ const baseEnvironment: NodeJS.ProcessEnv = {
 };
 
 describe('identity environment validation', () => {
+  it('fails the destructive E2E seed closed outside test and for non-test databases', () => {
+    expect(() =>
+      assertE2eSeedEnvironment(
+        'production',
+        'postgresql://test:test@localhost:5432/mental_health_test',
+      ),
+    ).toThrow('APP_ENV=test');
+    expect(() =>
+      assertE2eSeedEnvironment(
+        'test',
+        'postgresql://test:test@localhost:5432/mental_health_development',
+      ),
+    ).toThrow('ending in _test');
+    expect(() =>
+      assertE2eSeedEnvironment('test', 'postgresql://test:test@localhost:5432/mental_health_test'),
+    ).not.toThrow();
+  });
+
   it.each(['development', 'test'] as const)('allows the mock provider in %s', (appEnvironment) => {
     expect(
       parseEnvironment({

@@ -10,22 +10,16 @@ import {
   users,
 } from '@mental-health/database';
 import { argon2id, hash } from 'argon2';
+import { assertE2eSeedEnvironment } from './e2e-seed-guard';
 
 const E2E_USER_ID = '51000000-0000-4000-8000-000000000001';
 const E2E_EMAIL = 'phase5b-e2e@example.test';
 const E2E_PASSWORD = 'Synthetic-E2E-Password-9!';
 
-function assertDedicatedTestDatabase(connectionString: string): void {
-  const databaseName = new URL(connectionString).pathname.slice(1);
-  if (!databaseName.endsWith('_test')) {
-    throw new Error('Phase 5B E2E seed requires a dedicated database ending in _test');
-  }
-}
-
 async function run(): Promise<void> {
   const connectionString = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
   if (!connectionString) throw new Error('TEST_DATABASE_URL is required');
-  assertDedicatedTestDatabase(connectionString);
+  assertE2eSeedEnvironment(process.env.APP_ENV, connectionString);
 
   const client = createDatabaseClient(connectionString);
   try {

@@ -52,3 +52,7 @@ must end in `_test`. Setup migrates that database from zero, seeds one synthetic
 adult account with required consent, and starts a local OpenAI-compatible HTTP/SSE
 fixture. No real provider key, external model call, or real psychological content is
 used.
+
+Production hosting must validate SPA deep-link fallback for routes such as
+`/app/chat/:conversationId`. The deployment platform is not yet selected, so this
+repository does not add provider-specific rewrite configuration in Phase 5B.

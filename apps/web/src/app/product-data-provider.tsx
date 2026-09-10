@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { getCapabilities, getQuota } from '../api/product';
@@ -25,16 +26,19 @@ export function ProductDataProvider({ children }: { children: ReactNode }) {
   const [quota, setQuota] = useState<QuotaResponse['data']['quota'] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
 
   const refreshQuota = useCallback(async () => {
     const response = await getQuota();
-    setQuota(response.data.quota);
+    if (mountedRef.current) setQuota(response.data.quota);
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     const controller = new AbortController();
     void Promise.all([getCapabilities(controller.signal), getQuota(controller.signal)])
       .then(([capabilitiesResponse, quotaResponse]) => {
+        if (controller.signal.aborted || !mountedRef.current) return;
         setCapabilities(capabilitiesResponse.data);
         setQuota(quotaResponse.data.quota);
       })
@@ -46,7 +50,10 @@ export function ProductDataProvider({ children }: { children: ReactNode }) {
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
-    return () => controller.abort();
+    return () => {
+      mountedRef.current = false;
+      controller.abort();
+    };
   }, []);
 
   const value = useMemo(

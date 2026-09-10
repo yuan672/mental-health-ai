@@ -456,6 +456,164 @@ describe('Phase 5B product flows', () => {
     expect(screen.getByLabelText('输入消息')).toHaveValue('');
   });
 
+  it('clears authenticated chat and ignores stale work after a protected API returns 401', async () => {
+    document.cookie = 'mh_csrf=synthetic-csrf; Path=/';
+    const initialSensitiveText = '仅属于已过期会话用户的合成正文';
+    const lateSensitiveText = '失效后迟到的合成正文';
+    const encoder = new TextEncoder();
+    let resolveOlderMessages!: (response: Response) => void;
+    const olderMessages = new Promise<Response>((resolve) => {
+      resolveOlderMessages = resolve;
+    });
+    const streamState: {
+      controller?: ReadableStreamDefaultController<Uint8Array>;
+      signal?: AbortSignal;
+    } = {};
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamState.controller = controller;
+        controller.enqueue(
+          encoder.encode(
+            `event: turn.started\ndata: {"turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\nevent: message.segment\ndata: {"turnId":"${TURN_ID}","sequence":1,"text":"合成流式敏感正文"}\n\n`,
+          ),
+        );
+      },
+    });
+    const metadata = {
+      id: CONVERSATION_ID,
+      createdAt: CREATED_AT,
+      expiresAt: '2026-12-09T08:00:00.000Z',
+      isSaved: false,
+    };
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/auth/session') return session(USER_A);
+      if (url.pathname === '/capabilities') return success({ aiChatEnabled: true });
+      if (url.pathname === '/quota') {
+        return success({
+          quota: { dailyLimit: 20, used: 0, remaining: 20, usageDate: '2026-09-10' },
+        });
+      }
+      if (url.pathname === '/conversations' && url.search === '?limit=20') {
+        return success({ conversations: [metadata], nextCursor: null });
+      }
+      if (url.pathname === `/conversations/${CONVERSATION_ID}`) {
+        return success({ conversation: metadata });
+      }
+      if (url.pathname === `/conversations/${CONVERSATION_ID}/messages`) {
+        if (url.searchParams.has('cursor')) return olderMessages;
+        return success({
+          messages: [
+            {
+              id: ASSISTANT_ID,
+              role: 'assistant',
+              content: initialSensitiveText,
+              sequence: 2,
+              createdAt: CREATED_AT,
+            },
+          ],
+          nextCursor: 'synthetic-message-cursor',
+        });
+      }
+      if (url.pathname === '/ai/chat/stream') {
+        if (init?.signal) {
+          streamState.signal = init.signal;
+          init.signal.addEventListener('abort', () =>
+            streamState.controller?.error(init.signal?.reason),
+          );
+        }
+        return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
+      }
+      if (url.pathname === `/conversations/${CONVERSATION_ID}/save`) {
+        return Response.json(
+          { success: false, error: { code: 'UNAUTHENTICATED', message: '登录已过期' } },
+          { status: 401 },
+        );
+      }
+      throw new Error(`Unhandled request ${String(input)}`);
+    });
+    vi.stubGlobal('fetch', fetcher);
+    renderProduct(`/app/chat/${CONVERSATION_ID}`);
+
+    expect(await screen.findByText(initialSensitiveText)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '加载更早消息' }));
+    await waitFor(() =>
+      expect(fetcher.mock.calls.some(([request]) => String(request).includes('cursor='))).toBe(
+        true,
+      ),
+    );
+    await userEvent.type(screen.getByLabelText('输入消息'), '合成会话失效测试');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(await screen.findByText('合成流式敏感正文')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '保留对话' }));
+
+    expect(await screen.findByRole('heading', { name: '登录' })).toBeInTheDocument();
+    expect(streamState.signal?.aborted).toBe(true);
+    expect(screen.queryByText(initialSensitiveText)).not.toBeInTheDocument();
+    expect(screen.queryByText('合成流式敏感正文')).not.toBeInTheDocument();
+
+    resolveOlderMessages(
+      success({
+        messages: [
+          {
+            id: '66666666-6666-4666-8666-666666666667',
+            role: 'assistant',
+            content: lateSensitiveText,
+            sequence: 1,
+            createdAt: CREATED_AT,
+          },
+        ],
+        nextCursor: null,
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId('location')).toHaveTextContent(
+        `/login?returnTo=%2Fapp%2Fchat%2F${CONVERSATION_ID}`,
+      ),
+    );
+    expect(screen.queryByText(lateSensitiveText)).not.toBeInTheDocument();
+  });
+
+  it('renders message-shaped HTML and script payloads only as plain text', async () => {
+    const payload = '<img src=x onerror=alert(1)><script>alert(1)</script>';
+    const metadata = {
+      id: CONVERSATION_ID,
+      createdAt: CREATED_AT,
+      expiresAt: '2026-12-09T08:00:00.000Z',
+      isSaved: false,
+    };
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      const base = baseJsonResponse(url.pathname + url.search);
+      if (base) return base;
+      if (url.pathname === `/conversations/${CONVERSATION_ID}`) {
+        return success({ conversation: metadata });
+      }
+      if (url.pathname === `/conversations/${CONVERSATION_ID}/messages`) {
+        return success({
+          messages: [
+            {
+              id: ASSISTANT_ID,
+              role: 'assistant',
+              content: payload,
+              sequence: 1,
+              createdAt: CREATED_AT,
+            },
+          ],
+          nextCursor: null,
+        });
+      }
+      throw new Error(`Unhandled request ${String(input)}`);
+    });
+    vi.stubGlobal('fetch', fetcher);
+    renderProduct(`/app/chat/${CONVERSATION_ID}`);
+
+    expect(await screen.findByText(payload)).toBeInTheDocument();
+    const messageRegion = screen.getByRole('region', { name: '聊天消息' });
+    expect(messageRegion.querySelector('img')).toBeNull();
+    expect(messageRegion.querySelector('script')).toBeNull();
+  });
+
   it('ignores stale conversation responses after a rapid route selection', async () => {
     const conversationB = '44444444-4444-4444-8444-444444444445';
     let resolveDetailA!: (response: Response) => void;

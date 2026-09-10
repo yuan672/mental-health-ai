@@ -98,6 +98,13 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
   const activePromiseRef = useRef<Promise<void> | null>(null);
   const loadAbortRef = useRef<AbortController | null>(null);
   const loadGenerationRef = useRef(0);
+  const mountedRef = useRef(true);
+
+  const invalidateConversationLoad = useCallback(() => {
+    loadAbortRef.current?.abort();
+    loadAbortRef.current = null;
+    ++loadGenerationRef.current;
+  }, []);
 
   const updateStream = useCallback((next: ChatStreamState) => {
     streamRef.current = next;
@@ -176,6 +183,7 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
     }
     const activePromise = activePromiseRef.current;
     if (activePromise) await activePromise.catch(() => undefined);
+    if (!mountedRef.current) return;
     if (streamRef.current.status !== 'completed') {
       updateStream(cancelChatStream(streamRef.current));
     }
@@ -301,6 +309,7 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
           await loadConversationData(conversationId, true);
         }
       } catch (error) {
+        if (!mountedRef.current) return;
         if (controller.signal.aborted || isAbortError(error)) {
           updateStream(cancelChatStream(streamRef.current));
         } else {
@@ -317,7 +326,9 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
         }
       } finally {
         if (streamAbortRef.current === controller) streamAbortRef.current = null;
-        await Promise.allSettled([refreshHistory(), refreshQuota()]);
+        if (mountedRef.current) {
+          await Promise.allSettled([refreshHistory(), refreshQuota()]);
+        }
       }
     },
     [aiChatEnabled, loadConversationData, navigate, refreshHistory, refreshQuota, updateStream],
@@ -336,16 +347,16 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
     [executeSubmission],
   );
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
       streamAbortRef.current?.abort(new DOMException('Session ended', 'AbortError'));
-      loadAbortRef.current?.abort();
-      ++loadGenerationRef.current;
+      invalidateConversationLoad();
       conversationIdRef.current = null;
       streamRef.current = initialChatStreamState;
-    },
-    [],
-  );
+    };
+  }, [invalidateConversationLoad]);
 
   const value = useMemo<ChatWorkspaceContextValue>(
     () => ({
@@ -372,7 +383,7 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
         try {
           setLoadError(null);
           const response = await listMessages(conversationId, nextMessageCursor);
-          if (conversationIdRef.current !== conversationId) return;
+          if (!mountedRef.current || conversationIdRef.current !== conversationId) return;
           setMessages((current) => {
             const ids = new Set(current.map((item) => item.id));
             return [...response.data.messages.filter((item) => !ids.has(item.id)), ...current];
@@ -402,6 +413,7 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
       startNewChat: async () => {
         if (lastSubmission?.uncertain) return;
         if (streamAbortRef.current) await cancel();
+        if (!mountedRef.current) return;
         setNotice(null);
         clearConversationMemory();
         setLoadStatus('idle');
@@ -411,6 +423,7 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
         const conversationId = conversationIdRef.current;
         if (!conversationId) return;
         const response = await saveConversation(conversationId);
+        if (!mountedRef.current) return;
         setConversation(response.data.conversation);
         updateHistory(response.data.conversation);
       },
@@ -418,7 +431,9 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
         const conversationId = conversationIdRef.current;
         if (!conversationId) return;
         if (streamAbortRef.current) await cancel();
+        if (!mountedRef.current) return;
         await deleteConversation(conversationId);
+        if (!mountedRef.current) return;
         removeHistory(conversationId);
         clearConversationMemory();
         setLoadStatus('idle');
@@ -426,7 +441,9 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
       },
       deleteAll: async () => {
         if (streamAbortRef.current) await cancel();
+        if (!mountedRef.current) return 0;
         const response = await deleteAllConversations();
+        if (!mountedRef.current) return response.data.conversationCount;
         clearHistory();
         clearConversationMemory();
         setLoadStatus('idle');
