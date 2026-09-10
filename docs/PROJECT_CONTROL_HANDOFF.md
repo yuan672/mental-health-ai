@@ -58,11 +58,13 @@ history. Incognito ordinary text remains outside browser persistent storage and
 ordinary Conversation, Message, and AI Turn tables. Necessary minimal Risk Event
 and Audit records remain possible under ADR-014.
 
-ADR-011 remains unchanged. The batch provides no Consent withdrawal/reaccept UI and
-does not redefine Consent types, versions, legal copy, or same-version lifecycle.
-The product flow for withdrawal, later reopening, account deletion/export, backup
-deletion, and final safety/audit retention remains unresolved. The decision note is
-Proposed only.
+ADR-016 is Accepted as the target Consent lifecycle architecture. It narrowly
+supersedes ADR-011's single-lifecycle/no-reaccept constraint and ADR-015's broad
+all-user withdrawal cleanup rule; all other decisions in those ADRs remain
+Accepted. The backend ledger, dispatch coordination, and Privacy
+withdrawal/reaccept controls are not yet implemented. Consent types, formal legal
+copy, production document approval, retention, account deletion/export, backup
+deletion, and cross-instance cancellation remain unresolved production matters.
 
 ## Production Readiness Blockers
 

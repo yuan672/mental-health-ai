@@ -1,16 +1,18 @@
 # Consent Lifecycle Product and Technical Decision Note
 
-- Status: Proposed — product/legal decision pending
+- Status: Engineering/product architecture accepted — backend implementation and
+  production policy/legal approvals pending
 - Scope: Phase 5C Consent lifecycle design only
-- Current source of truth: ADR-011 remains Accepted and unchanged
-- Related proposal: ADR-016 (Proposed)
+- Current source of truth: ADR-016 (Accepted), with the documented narrow partial
+  supersession of ADR-011 and ADR-015
 
 ## 1. Purpose and limits
 
-This note proposes a concrete, implementable lifecycle for accepting,
-withdrawing, and later re-accepting a current Consent version. It does not change
-the current application, database schema, registration requirements, production
-safety state, or any Accepted ADR.
+This note records the accepted engineering/product lifecycle for accepting,
+withdrawing, and later re-accepting a current Consent version. The backend
+implementation, database migration, Privacy controls, and production content are
+not yet complete. Acceptance of the design does not change production safety
+state or imply legal approval.
 
 The proposal separates product behavior from legal approval. Policy copy,
 third-party AI processing notices, retention, and the legal classification of
@@ -80,8 +82,9 @@ being delivered after cancellation. Cross-instance cancellation is not provided.
 - Registration requirements provide display keys, not an approved policy-content
   repository.
 
-These are current implementation facts. The same-version recovery flow below is
-only a proposal.
+These are current implementation facts. The accepted same-version recovery flow
+below remains unimplemented until the dedicated backend and Privacy UI batches
+land.
 
 ## 3. Recommended product decisions
 
@@ -982,20 +985,19 @@ Phase 5D/5E/6 work is implied.
   Provider payload, or arbitrary DTO.
 - Decision records contain only the allowlisted evidence fields.
 
-## 15. Decisions still requiring confirmation
+## 15. Accepted implementation basis and remaining decisions
 
-Only these engineering/product architecture decisions are needed before
-implementation with synthetic Development/Test documents:
+The engineering/product architecture is accepted for implementation with
+synthetic Development/Test documents:
 
-1. Approve same-version re-acceptance as a new immutable decision and the partial
-   supersession of ADR-011.
-2. Approve dependency-scoped historical withdrawal rather than cancelling all
-   current executions.
-3. Approve the action-discriminated mutation contract, operation-replay ordering,
-   projection/ledger relationship, and same-process dispatch coordination model.
-4. Approve a code-owned document registry with explicit `test_fixture` and
-   `production_reviewed` eligibility; concrete production documents are not a
-   prerequisite for engineering implementation.
+1. Same-version re-acceptance creates a new immutable applied decision and
+   narrowly supersedes ADR-011's single-lifecycle rule.
+2. Historical withdrawal is dependency-scoped instead of cancelling unrelated
+   current work.
+3. Mutations use the action-discriminated contract, operation-first replay,
+   projection/ledger relationships, and single-process dispatch coordination.
+4. The code-owned Registry enforces `test_fixture` versus
+   `production_reviewed` environment isolation.
 
 The following are independent production-enablement decisions, not blockers to
 implementing and testing the architecture with synthetic fixtures:
@@ -1008,7 +1010,8 @@ implementing and testing the architecture with synthetic fixtures:
 - Consent decision/account-deletion/backup retention and deletion policy.
 - Cross-instance cancellation requirements and implementation.
 
-Until the proposed architecture decisions are accepted, current ADR-011 behavior
-remains authoritative. The production-only decisions do not prevent engineering
-validation with synthetic fixtures, but they continue to keep production
-acceptance and AI use fail closed.
+These production-only decisions do not prevent engineering validation with
+synthetic fixtures, but they continue to keep production acceptance and AI use
+fail closed. Until the backend implementation and migration land, the currently
+deployed ADR-011 behavior remains the runtime behavior even though ADR-016 is now
+the accepted target architecture.

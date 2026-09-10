@@ -1,6 +1,6 @@
 # ADR-016: Consent Lifecycle and Policy Evidence
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-10
 - Decision owners: Product, Privacy/Legal, and Engineering
 - Related: ADR-011, ADR-013, ADR-014, ADR-015
@@ -21,14 +21,14 @@ The current mutable row cannot represent repeated decisions without erasing or
 overwriting prior evidence. The current broad cancellation behavior also
 interrupts work after withdrawal of an unrelated historical version.
 
-## Proposed decision
+## Decision
 
-If accepted, this ADR would partially supersede only the Consent lifecycle and
-same-version re-acceptance constraints in ADR-011. It would also narrowly
-supersede the ADR-015 Phase 5C addendum rule that every withdrawal cancels all of
-a user's executions and Incognito contexts, replacing that rule with
-authorization-revision-scoped cancellation. ADR-015's remaining Conversation,
-Incognito, client-data, and public-protocol decisions remain unchanged.
+This ADR partially supersedes only the Consent lifecycle and same-version
+re-acceptance constraints in ADR-011. It also narrowly supersedes the ADR-015
+Phase 5C addendum rule that every withdrawal cancels all of a user's executions
+and Incognito contexts, replacing that rule with authorization-revision-scoped
+cancellation. ADR-015's remaining Conversation, Incognito, client-data, and
+public-protocol decisions remain unchanged.
 
 ### Same-version re-acceptance
 
@@ -260,7 +260,8 @@ This proposal does not supersede ADR-011 decisions concerning:
 - mock age-verification restrictions; or
 - data minimization outside the Consent decision evidence described here.
 
-ADR-011 remains Accepted in full unless and until this proposed ADR is approved.
+ADR-011 remains Accepted except for the narrowly superseded Consent lifecycle and
+same-version re-acceptance constraints identified above.
 
 ## Consequences
 
@@ -307,19 +308,20 @@ clear evidence and efficient admission without adopting general event sourcing.
 Rejected because it interrupts executions that do not depend on the withdrawn
 authorization. Dependency-scoped cancellation is the minimum accurate behavior.
 
-## Adoption condition
+## Accepted scope and remaining approvals
 
-This ADR must remain Proposed until the named owners approve the engineering and
-product architecture: same-version re-acceptance, action-discriminated mutations,
-the projection/ledger model and deletion relationships, operation replay,
-dependency-scoped cancellation, and the single-process dispatch guarantee. The
-implementation plan must cover lossless migration, exact-replay/concurrency
-tests, runtime cancellation/cleanup regression, and synthetic document fixtures.
+The accepted engineering/product architecture covers same-version re-acceptance,
+action-discriminated mutations, the projection/ledger model and deletion
+relationships, operation replay, dependency-scoped cancellation, the
+single-process dispatch guarantee, and clearly labelled Development/Test
+synthetic document fixtures. Implementation must still complete lossless
+migration, exact-replay/concurrency tests, runtime cancellation/cleanup
+regression, and the documented environment isolation before this Phase 5C backend
+batch is complete.
 
-ADR adoption would authorize engineering implementation with clearly labelled
-Development/Test fixtures. It would **not** approve legal copy, certify the two
-existing Consent types as legally sufficient, approve production document
-identities or retention/account-deletion/backup policy, provide cross-instance
-cancellation, enable Production AI, or satisfy production readiness. Those remain
-independent human product/legal and production-enablement decisions. Until this
-ADR's architecture is accepted, ADR-011 remains authoritative.
+Acceptance of this ADR does **not** approve legal copy, certify the two existing
+Consent types as legally sufficient, approve production document identities or
+retention/account-deletion/backup policy, provide cross-instance cancellation,
+enable Production AI, or satisfy production readiness. Those remain independent
+human product/legal and production-enablement decisions. No approval record for
+those matters is implied or created by this ADR.
