@@ -3,17 +3,26 @@
 All endpoints return JSON and use the shared error contract in
 docs/api/error-format.md. The only public Phase 2A endpoints are:
 
-| Method | Path           | Authentication | CSRF requirement             |
-| ------ | -------------- | -------------- | ---------------------------- |
-| POST   | /auth/register | No             | Trusted Origin/Referer       |
-| POST   | /auth/login    | No             | Trusted Origin/Referer       |
-| POST   | /auth/logout   | Session cookie | Origin + double-submit token |
-| GET    | /auth/session  | Session cookie | None (read-only)             |
-| POST   | /consents      | Session cookie | Origin + double-submit token |
-| GET    | /consents      | Session cookie | None (read-only)             |
+| Method | Path                            | Authentication | CSRF requirement             |
+| ------ | ------------------------------- | -------------- | ---------------------------- |
+| GET    | /auth/registration-requirements | No             | None (read-only)             |
+| POST   | /auth/register                  | No             | Trusted Origin/Referer       |
+| POST   | /auth/login                     | No             | Trusted Origin/Referer       |
+| POST   | /auth/logout                    | Session cookie | Origin + double-submit token |
+| GET    | /auth/session                   | Session cookie | None (read-only)             |
+| POST   | /consents                       | Session cookie | Origin + double-submit token |
+| GET    | /consents                       | Session cookie | None (read-only)             |
 
 There is no public age-verification endpoint. Registration invokes the
 configured provider internally.
+
+`GET /auth/registration-requirements` is a public, read-only product contract.
+It returns only whether registration is enabled, the minimum age, and the current
+required consent type/version/display key pairs. It never returns the configured
+provider, internal readiness blockers, credentials, or policy internals. When a
+real registration prerequisite is unavailable, it returns
+`registrationEnabled=false`; `POST /auth/register` then fails closed with
+`REGISTRATION_UNAVAILABLE`.
 
 ## Registration
 
@@ -48,7 +57,8 @@ session; use /auth/login afterward.
 For local Development/Test only, the mock provider recognizes mock-adult,
 mock-underage, and mock-provider-error. These values are test fixtures and are
 not real age verification. Configuring the mock provider in Staging or
-Production fails startup.
+Production is rejected. An unconfigured provider keeps non-registration API
+capabilities available while registration remains disabled.
 
 ## Login and session
 

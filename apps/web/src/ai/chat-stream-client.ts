@@ -1,5 +1,7 @@
-import type { AiStreamEvent, ApiErrorResponse } from '@mental-health/types';
+import type { AiStreamEvent } from '@mental-health/types';
 import { z } from 'zod';
+import { parseApiError, readCsrfToken } from '../api/client';
+import { notifySessionInvalidated } from '../api/session-events';
 import { publicEnv } from '../config/env';
 
 const aiStreamEventSchema = z.discriminatedUnion('type', [
@@ -47,11 +49,6 @@ const existingTurnResponseSchema = z.object({
   }),
 });
 
-const apiErrorSchema = z.object({
-  success: z.literal(false),
-  error: z.object({ code: z.string(), message: z.string() }),
-});
-
 export type AiChatStreamInput = Readonly<{
   clientRequestId: string;
   conversationId?: string;
@@ -73,16 +70,6 @@ export class AiChatRequestError extends Error {
     super(message);
     this.name = AiChatRequestError.name;
   }
-}
-
-function getCsrfToken(cookie = document.cookie): string | null {
-  for (const item of cookie.split(';')) {
-    const [name, ...value] = item.trim().split('=');
-    if (name === 'mh_csrf') {
-      return decodeURIComponent(value.join('='));
-    }
-  }
-  return null;
 }
 
 function nextFrame(buffer: string): { frame: string; remainder: string } | null {
@@ -150,7 +137,7 @@ export async function startAiChatStream(
   signal: AbortSignal,
   fetcher: typeof fetch = globalThis.fetch,
 ): Promise<AiChatConnection> {
-  const csrfToken = getCsrfToken();
+  const csrfToken = readCsrfToken();
   if (!csrfToken) {
     throw new AiChatRequestError('CSRF_TOKEN_MISSING', '安全校验信息缺失，请刷新后重试', 400);
   }
@@ -169,14 +156,9 @@ export async function startAiChatStream(
   const contentType = response.headers.get('content-type') ?? '';
 
   if (!response.ok) {
-    let error: ApiErrorResponse['error'] = {
-      code: 'REQUEST_FAILED',
-      message: '请求失败，请稍后重试',
-    };
-    try {
-      error = apiErrorSchema.parse(await response.json()).error;
-    } catch {
-      // The safe generic error is intentionally retained for malformed responses.
+    const error = await parseApiError(response);
+    if (response.status === 401) {
+      notifySessionInvalidated();
     }
     throw new AiChatRequestError(error.code, error.message, response.status);
   }

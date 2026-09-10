@@ -18,6 +18,7 @@ import { AppModule } from '../src/app.module';
 import { PasswordHasherService } from '../src/auth/password-hasher.service';
 import { hashSessionToken } from '../src/auth/sessions.service';
 import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
+import { env } from '../src/config/env';
 import { DatabaseService } from '../src/database/database.service';
 import { UsersRepository } from '../src/users/users.repository';
 
@@ -131,6 +132,56 @@ describe('Phase 2A identity and access integration', () => {
         'consents',
       ]),
     );
+  });
+
+  it('publishes only safe registration requirements and fails closed when unavailable', async () => {
+    const enabled = await request(app.getHttpServer())
+      .get('/auth/registration-requirements')
+      .expect('Cache-Control', 'no-store')
+      .expect(200);
+    expect(enabled.body).toEqual({
+      success: true,
+      data: {
+        registrationEnabled: true,
+        minimumAge: 18,
+        requiredConsents: [
+          {
+            type: 'terms_of_service',
+            version: '1.0',
+            displayKey: 'consent.termsOfService',
+          },
+          {
+            type: 'privacy_policy',
+            version: '1.0',
+            displayKey: 'consent.privacyPolicy',
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(enabled.body)).not.toMatch(/provider|blocker|secret|internal/iu);
+
+    const previousProvider = env.AGE_VERIFICATION_PROVIDER;
+    env.AGE_VERIFICATION_PROVIDER = 'unconfigured';
+    try {
+      const disabled = await request(app.getHttpServer())
+        .get('/auth/registration-requirements')
+        .expect(200);
+      expect(disabled.body.data.registrationEnabled).toBe(false);
+
+      const before = await counts();
+      const response = await request(app.getHttpServer())
+        .post('/auth/register')
+        .set('Origin', WEB_ORIGIN)
+        .send(registrationBody(`disabled-${randomUUID()}@example.test`))
+        .expect(503);
+      expect(response.body).toEqual({
+        success: false,
+        error: { code: 'REGISTRATION_UNAVAILABLE', message: '注册暂不可用' },
+      });
+      expect(await counts()).toEqual(before);
+    } finally {
+      env.AGE_VERIFICATION_PROVIDER = previousProvider;
+    }
   });
 
   it('registers an age-verified adult atomically without leaking credential storage', async () => {

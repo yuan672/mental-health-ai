@@ -13,6 +13,44 @@ export type ApiSuccessResponse<T> = {
   data: T;
 };
 
+export type AuthSession = {
+  user: { id: string };
+  session: { id: string; expiresAt: string };
+};
+
+export type AuthSessionResponse = ApiSuccessResponse<AuthSession>;
+
+export type LoginResponse = AuthSessionResponse;
+
+export type RegistrationRequirement = {
+  type: 'terms_of_service' | 'privacy_policy';
+  version: string;
+  displayKey: 'consent.termsOfService' | 'consent.privacyPolicy';
+};
+
+export type RegistrationRequirementsResponse = ApiSuccessResponse<{
+  registrationEnabled: boolean;
+  minimumAge: 18;
+  requiredConsents: RegistrationRequirement[];
+}>;
+
+export type RegistrationResponse = ApiSuccessResponse<{
+  user: { id: string };
+  ageVerification: {
+    verified: true;
+    method: string;
+    verifiedAt: string;
+  };
+  consents: Array<{
+    consentType: string;
+    consentVersion: string;
+    status: 'accepted';
+    acceptedAt: string;
+  }>;
+}>;
+
+export type LogoutResponse = ApiSuccessResponse<{ loggedOut: true }>;
+
 export type ConversationMetadata = {
   id: string;
   createdAt: string;

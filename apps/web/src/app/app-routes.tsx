@@ -1,0 +1,25 @@
+import { Navigate, Route, Routes } from 'react-router';
+import { ChatPage } from '../features/chat/chat-page';
+import { LandingPage } from '../routes/landing-page';
+import { LoginPage } from '../routes/login-page';
+import { NotFoundPage } from '../routes/not-found-page';
+import { RegisterPage } from '../routes/register-page';
+import { AppShell } from './app-shell';
+import { ProtectedLayout } from './protected-layout';
+
+export function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
+      <Route element={<ProtectedLayout />}>
+        <Route path="/app" element={<AppShell />}>
+          <Route index element={<Navigate replace to="chat" />} />
+          <Route path="chat/:conversationId?" element={<ChatPage />} />
+        </Route>
+      </Route>
+      <Route path="*" element={<NotFoundPage />} />
+    </Routes>
+  );
+}

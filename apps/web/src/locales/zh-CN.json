@@ -1,5 +1,10 @@
 {
   "app": {
-    "name": "心理健康 AI 支持系统"
+    "name": "心理健康 AI 支持系统",
+    "shortName": "安心支持"
+  },
+  "consent": {
+    "termsOfService": "服务条款",
+    "privacyPolicy": "隐私政策"
   }
 }

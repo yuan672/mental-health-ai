@@ -1,12 +1,27 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 
 describe('App', () => {
-  it('renders the bootstrap status without claiming medical capability', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('renders the public product landing without requesting authenticated capabilities', async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        Response.json(
+          { success: false, error: { code: 'UNAUTHENTICATED', message: '请先登录' } },
+          { status: 401 },
+        ),
+      );
+    vi.stubGlobal('fetch', fetcher);
+
     render(<App />);
 
-    expect(screen.getByRole('heading', { name: '心理健康 AI 支持系统' })).toBeInTheDocument();
-    expect(screen.getByText(/不是医疗诊断系统/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '在这里，慢慢说也可以。' })).toBeInTheDocument();
+    expect(screen.getByText(/不提供医疗诊断/)).toBeInTheDocument();
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    expect(String(fetcher.mock.calls[0]?.[0])).toContain('/auth/session');
+    expect(String(fetcher.mock.calls[0]?.[0])).not.toContain('/capabilities');
   });
 });

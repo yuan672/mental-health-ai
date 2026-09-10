@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Header, HttpCode, Post, Req, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { clearAuthenticationCookies, setAuthenticationCookies } from '../common/http/cookies';
 import { ZodValidationPipe } from '../common/validation/zod-validation.pipe';
@@ -15,6 +15,7 @@ import {
 import { CsrfGuard } from './csrf.guard';
 import { SessionsService } from './sessions.service';
 import { TrustedOriginGuard } from './trusted-origin.guard';
+import { RegistrationRequirementsService } from './registration-requirements.service';
 
 @Controller('auth')
 export class AuthController {
@@ -22,11 +23,19 @@ export class AuthController {
     private readonly authService: AuthService,
     private readonly sessionsService: SessionsService,
     private readonly securityLogger: SecurityLoggingService,
+    private readonly registrationRequirements: RegistrationRequirementsService,
   ) {}
+
+  @Get('registration-requirements')
+  @Header('Cache-Control', 'no-store')
+  getRegistrationRequirements() {
+    return this.registrationRequirements.get();
+  }
 
   @Post('register')
   @UseGuards(TrustedOriginGuard)
   async register(@Body(new ZodValidationPipe(registerSchema)) body: RegisterRequest) {
+    this.registrationRequirements.ensureEnabled();
     const result = await this.authService.register(body);
     return { success: true, data: result };
   }

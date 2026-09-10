@@ -35,6 +35,19 @@ describe('identity environment validation', () => {
     },
   );
 
+  it.each(['staging', 'production'] as const)(
+    'allows the API to start with registration unavailable in %s',
+    (appEnvironment) => {
+      expect(
+        parseEnvironment({
+          ...baseEnvironment,
+          APP_ENV: appEnvironment,
+          AGE_VERIFICATION_PROVIDER: 'unconfigured',
+        }).AGE_VERIFICATION_PROVIDER,
+      ).toBe('unconfigured');
+    },
+  );
+
   it('rejects a non-seven-day Phase 2A session lifetime', () => {
     expect(() =>
       parseEnvironment({
