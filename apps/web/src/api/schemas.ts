@@ -29,6 +29,9 @@ export const registrationRequirementsResponseSchema = z
               type: z.enum(['terms_of_service', 'privacy_policy']),
               version: z.string().min(1).max(64),
               displayKey: z.enum(['consent.termsOfService', 'consent.privacyPolicy']),
+              documentKey: z.string().min(1).max(128),
+              documentRevision: z.string().min(1).max(64),
+              documentUrl: z.string().url(),
             })
             .strict(),
         ),
@@ -153,15 +156,35 @@ export const capabilitiesResponseSchema = z
   })
   .strict();
 
-const consentHistoryItemSchema = z
-  .object({
-    consentType: z.enum(['terms_of_service', 'privacy_policy']),
-    consentVersion: z.string().min(1).max(64),
-    status: z.enum(['accepted', 'withdrawn']),
-    acceptedAt: z.string().datetime({ offset: true }),
-    withdrawnAt: z.string().datetime({ offset: true }).nullable(),
-  })
-  .strict();
+const consentDecisionBase = {
+  operationId: z.string().uuid(),
+  outcome: z.enum(['applied', 'no_change']),
+  consentType: z.enum(['terms_of_service', 'privacy_policy']),
+  consentVersion: z.string().min(1).max(64),
+  priorRevision: z.number().int().nonnegative(),
+  resultingRevision: z.number().int().nonnegative(),
+  occurredAt: z.string().datetime({ offset: true }),
+  decisionSource: z.enum(['registration', 'privacy_ui', 'legacy_backfill']),
+};
+
+const consentHistoryItemSchema = z.discriminatedUnion('action', [
+  z
+    .object({
+      ...consentDecisionBase,
+      action: z.literal('accept'),
+      documentKey: z.string().min(1).max(128).nullable(),
+      documentRevision: z.string().min(1).max(64).nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      ...consentDecisionBase,
+      action: z.literal('withdraw'),
+      targetDocumentKey: z.string().min(1).max(128).nullable(),
+      targetDocumentRevision: z.string().min(1).max(64).nullable(),
+    })
+    .strict(),
+]);
 
 export const consentHistoryResponseSchema = z
   .object({
@@ -174,8 +197,17 @@ export const consentHistoryResponseSchema = z
               consentType: z.enum(['terms_of_service', 'privacy_policy']),
               consentVersion: z.string().min(1).max(64),
               status: z.enum(['accepted', 'withdrawn', 'not_accepted']),
+              stateRevision: z.number().int().nonnegative(),
+              effectiveAt: z.string().datetime({ offset: true }).nullable(),
               acceptedAt: z.string().datetime({ offset: true }).nullable(),
               withdrawnAt: z.string().datetime({ offset: true }).nullable(),
+              documentKey: z.string().min(1).max(128).nullable(),
+              documentRevision: z.string().min(1).max(64).nullable(),
+              documentUrl: z.string().url().nullable(),
+              displayKey: z.enum(['consent.termsOfService', 'consent.privacyPolicy']),
+              authorizationStatus: z.enum(['active', 'confirmation_required', 'inactive']),
+              acceptanceEnabled: z.boolean(),
+              withdrawalEnabled: z.boolean(),
             })
             .strict(),
         ),

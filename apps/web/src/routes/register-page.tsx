@@ -41,6 +41,8 @@ export function RegisterPage() {
         consents: requirements.requiredConsents.map((consent) => ({
           consentType: consent.type,
           consentVersion: consent.version,
+          documentKey: consent.documentKey,
+          documentRevision: consent.documentRevision,
           accepted: true,
         })),
       });
@@ -141,7 +143,11 @@ export function RegisterPage() {
                         })
                       }
                     />
-                    我已阅读并接受{label}（版本 {consent.version}）
+                    我已阅读并接受
+                    <a href={consent.documentUrl} target="_blank" rel="noreferrer">
+                      {label}
+                    </a>
+                    （版本 {consent.version}）
                   </label>
                 );
               })}

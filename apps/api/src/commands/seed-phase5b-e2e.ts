@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   ageVerifications,
+  consentDecisions,
   consents,
   createDatabaseClient,
   migrate,
@@ -66,6 +67,8 @@ async function run(): Promise<void> {
           status: 'accepted',
           acceptedAt: now,
           withdrawnAt: null,
+          stateRevision: 1,
+          effectiveAt: now,
         },
         {
           id: '51000000-0000-4000-8000-000000000012',
@@ -75,6 +78,44 @@ async function run(): Promise<void> {
           status: 'accepted',
           acceptedAt: now,
           withdrawnAt: null,
+          stateRevision: 1,
+          effectiveAt: now,
+        },
+      ]);
+      await transaction.insert(consentDecisions).values([
+        {
+          id: '51000000-0000-4000-8000-000000000021',
+          consentId: '51000000-0000-4000-8000-000000000011',
+          userId: E2E_USER_ID,
+          consentType: 'terms_of_service',
+          consentVersion: process.env.REQUIRED_TERMS_VERSION ?? '1.0',
+          operationId: '51000000-0000-4000-8000-000000000031',
+          decision: 'accepted',
+          outcome: 'applied',
+          priorRevision: 0,
+          resultingRevision: 1,
+          occurredAt: now,
+          documentKey: 'synthetic.terms-of-service',
+          documentRevision: 'test-revision-1',
+          targetAcceptanceDecisionId: null,
+          decisionSource: 'registration',
+        },
+        {
+          id: '51000000-0000-4000-8000-000000000022',
+          consentId: '51000000-0000-4000-8000-000000000012',
+          userId: E2E_USER_ID,
+          consentType: 'privacy_policy',
+          consentVersion: process.env.REQUIRED_PRIVACY_VERSION ?? '1.0',
+          operationId: '51000000-0000-4000-8000-000000000032',
+          decision: 'accepted',
+          outcome: 'applied',
+          priorRevision: 0,
+          resultingRevision: 1,
+          occurredAt: now,
+          documentKey: 'synthetic.privacy-policy',
+          documentRevision: 'test-revision-1',
+          targetAcceptanceDecisionId: null,
+          decisionSource: 'registration',
         },
       ]);
     });
