@@ -2,6 +2,8 @@ import { Inject, Injectable } from '@nestjs/common';
 import {
   AIChatDisabledError,
   AIIncognitoContextLostError,
+  AITurnInProgressError,
+  RateLimitError,
   QuotaExceededError,
 } from '../../common/errors';
 import { env } from '../../config/env';
@@ -23,8 +25,8 @@ import {
   type IncognitoGenerationClaim,
   IncognitoGenerationAlreadyClaimedError,
   IncognitoGenerationInProgressError,
+  IncognitoContextLimitError,
 } from './incognito-context.store';
-import { AITurnInProgressError } from '../../common/errors';
 
 export type IncognitoGenerationAdmission =
   | Readonly<{
@@ -84,6 +86,9 @@ export class IncognitoGenerationAdmissionService {
       }
       if (error instanceof IncognitoGenerationAlreadyClaimedError) {
         throw new AIIncognitoContextLostError('该无痕请求已结束，请重新开始本轮请求');
+      }
+      if (error instanceof IncognitoContextLimitError) {
+        throw new RateLimitError('无痕对话上下文已达到当前请求限制');
       }
       throw error;
     }

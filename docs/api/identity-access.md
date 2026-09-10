@@ -92,6 +92,15 @@ authenticated user's known consent history:
     {
       "success": true,
       "data": {
+        "currentRequiredConsents": [
+          {
+            "consentType": "privacy_policy",
+            "consentVersion": "1.0",
+            "status": "accepted",
+            "acceptedAt": "2026-09-10T00:00:00.000Z",
+            "withdrawnAt": null
+          }
+        ],
         "consents": [
           {
             "consentType": "privacy_policy",
@@ -105,7 +114,9 @@ authenticated user's known consent history:
       }
     }
 
-The page limit defaults to 20 and is capped at 50. The cursor is an opaque,
+`currentRequiredConsents` is derived from the server-configured required policy
+versions and uses `not_accepted` when the current version has no lifecycle record.
+The history page limit defaults to 20 and is capped at 50. The cursor is an opaque,
 versioned pagination token. The response deliberately excludes persistence IDs
 and `userId`, and uses `Cache-Control: private, no-store`.
 

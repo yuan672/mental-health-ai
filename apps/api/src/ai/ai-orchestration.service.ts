@@ -13,6 +13,7 @@ import {
   InternalServerError,
   QuotaExceededError,
   AIIncognitoContextLostError,
+  ValidationError,
 } from '../common/errors';
 import { env } from '../config/env';
 import { ConsentsService } from '../consents/consents.service';
@@ -61,6 +62,7 @@ import {
   INCOGNITO_CONTEXT_STORE,
   type IncognitoContextStore,
   type IncognitoGenerationClaim,
+  IncognitoContextLimitError,
 } from './incognito/incognito-context.store';
 
 export type AuthenticatedAiPrincipal = Readonly<{
@@ -341,6 +343,9 @@ export class AiOrchestrationService {
       }
       this.releaseIncognitoGeneration(principal, input.contextId, admission.generation.id);
       execution.dispose();
+      if (error instanceof IncognitoContextLimitError) {
+        throw new ValidationError('无痕对话上下文已达到容量限制，请重新开始');
+      }
       throw error;
     }
   }

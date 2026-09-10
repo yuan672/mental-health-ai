@@ -125,6 +125,51 @@ Privacy UI, Knowledge Base, Admin, or Reviewer capability.
 - Phase 5B and Phase 5C can build client experiences on explicit public boundaries
   without weakening the Phase 3/4 AI safety path.
 
+## Phase 5C implementation addendum
+
+Phase 5C exposes `POST /incognito-contexts` and idempotent
+`DELETE /incognito-contexts/:contextId`. Context identifiers are server-generated,
+opaque, scoped to the authenticated user and session, and are not authentication
+credentials. There is no public list, read, resume, status, or history endpoint.
+Create requires current required consent and enabled AI capability; end remains
+available after either condition changes so cleanup cannot be blocked.
+
+The chat request is now a strict discriminated union. Persistent requests use
+`mode: "persistent"`; Incognito requests use `mode: "incognito"` and a runtime
+`contextId`. The existing four SSE event names remain stable, while each payload is
+also discriminated by mode. Incognito events expose only a runtime `generationId`;
+they never fabricate a Conversation, Message, AI Turn, or assistant-message ID.
+
+The in-process Incognito store is deliberately bounded globally, per user, per
+session, per context, per message, and per generation. It stores whole messages in
+memory only, uses a sliding inactivity TTL capped by the authenticated session
+expiry, permits one active generation per context, and keeps a bounded set of used
+client request IDs for the context lifetime. Expiry, explicit end, logout, session
+invalidity, and required-consent withdrawal abort active work before clearing the
+context. Late classifier/provider results cannot append or emit after termination.
+There is no silent eviction of an active context.
+
+AI executions register before the consent query, and Incognito generation claims
+occur before classifier or provider work. Consent withdrawal commits first and
+then cancels active executions and clears all of the user's runtime contexts; a
+cleanup failure does not roll back the legal withdrawal. Cross-process cancellation
+and recovery remain unsupported. Refresh, process restart, or TTL expiry can lose
+the context and the product must ask the user to start again. The browser keeps
+Incognito content and identifiers in React memory only and does not use
+`sendBeacon`, browser persistent storage, or URL parameters for best-effort cleanup.
+
+The quota idempotency key contains only server-known user, session, and client
+request identifiers. The database ledger enforces one key per user across date
+boundaries; it contains no content fingerprint. Missing runtime state combined with
+an existing consumption fails closed and never calls the provider again.
+
+Consent history is an authenticated, private/no-store, sanitized, bounded cursor
+view. It reports server-configured current required versions and their status plus
+known historical records, without internal record or user IDs. Phase 5C does not
+define new consent types, legal copy, same-version reacceptance, or a user-facing
+withdraw/reopen workflow. Those product-policy questions remain Proposed in the
+separate decision note and do not change ADR-011.
+
 ## Alternatives considered
 
 ### Persist or generate Conversation titles in Phase 5A
