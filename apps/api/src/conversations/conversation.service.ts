@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { DatabaseError, NotFoundError, ValidationError } from '../common/errors';
 import { ConversationLoggingService } from './conversation-logging.service';
-import { ConversationRepository, type ConversationRecord } from './conversation.repository';
+import {
+  ConversationRepository,
+  type ConversationListCursor,
+  type ConversationRecord,
+  type DeleteAllConversationsResult,
+} from './conversation.repository';
 import { ConversationRetentionPolicy } from './conversation-retention.policy';
 
 @Injectable()
@@ -48,6 +53,22 @@ export class ConversationService {
     return conversation;
   }
 
+  async list(
+    userId: string,
+    options: Readonly<{ now: Date; limit: number; cursor: ConversationListCursor | null }>,
+  ): Promise<ConversationRecord[]> {
+    try {
+      return await this.repository.listActiveOwned(
+        userId,
+        options.now,
+        options.limit,
+        options.cursor,
+      );
+    } catch {
+      throw new DatabaseError();
+    }
+  }
+
   async save(
     userId: string,
     conversationId: string,
@@ -79,6 +100,17 @@ export class ConversationService {
       throw new NotFoundError('对话不存在');
     }
     this.logging.conversationDeleted(userId, conversationId);
+  }
+
+  async deleteAll(userId: string, now = new Date()): Promise<DeleteAllConversationsResult> {
+    let result: DeleteAllConversationsResult;
+    try {
+      result = await this.repository.deleteAll(userId, now);
+    } catch {
+      throw new DatabaseError();
+    }
+    this.logging.conversationHistoryDeleted(userId, result.conversationCount);
+    return result;
   }
 
   async purgeExpired(now: Date, batchSize: number): Promise<number> {

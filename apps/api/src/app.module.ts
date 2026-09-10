@@ -3,6 +3,8 @@ import { Module } from '@nestjs/common';
 import { LoggerModule } from 'nestjs-pino';
 import { AuthModule } from './auth/auth.module';
 import { AiModule } from './ai/ai.module';
+import { CapabilitiesModule } from './capabilities/capabilities.module';
+import { ConversationAccessModule } from './conversation-access/conversation-access.module';
 import { ConversationModule } from './conversations/conversation.module';
 import { DatabaseModule } from './database/database.module';
 import { env } from './config/env';
@@ -80,7 +82,9 @@ export const LOG_REDACT_PATHS = [
     SecurityModule,
     HealthModule,
     AuthModule,
+    CapabilitiesModule,
     AiModule,
+    ConversationAccessModule,
     ConversationModule,
     MessageModule,
     QuotaModule,

@@ -20,6 +20,10 @@ export class ConversationLoggingService {
     this.logger.info({ event: 'conversation_deleted', userId, conversationId });
   }
 
+  conversationHistoryDeleted(userId: string, conversationCount: number): void {
+    this.logger.info({ event: 'conversation_history_deleted', userId, conversationCount });
+  }
+
   messageAppended(
     userId: string,
     conversationId: string,

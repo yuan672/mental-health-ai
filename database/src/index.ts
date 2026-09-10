@@ -4,7 +4,21 @@ export {
   type AppTransaction,
   type DatabaseClient,
 } from './client.js';
-export { and, asc, count, eq, gt, inArray, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
+export {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  or,
+  sql,
+} from 'drizzle-orm';
 export { migrate } from 'drizzle-orm/node-postgres/migrator';
 export {
   ageVerifications,

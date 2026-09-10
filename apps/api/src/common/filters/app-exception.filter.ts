@@ -78,6 +78,9 @@ export class AppExceptionFilter implements ExceptionFilter {
       },
     };
 
+    if (!response.headersSent) {
+      response.setHeader('Cache-Control', 'private, no-store');
+    }
     response.status(appError.statusCode).json(payload);
   }
 }

@@ -2,9 +2,11 @@ import {
   and,
   asc,
   conversations,
+  desc,
   eq,
   gt,
   isNull,
+  lt,
   messages,
   or,
   sql,
@@ -101,5 +103,35 @@ export class MessageRepository {
       .from(messages)
       .where(eq(messages.conversationId, conversationId))
       .orderBy(asc(messages.sequenceNumber));
+  }
+
+  async readActiveOwnedPage(
+    userId: string,
+    conversationId: string,
+    now: Date,
+    limit: number,
+    beforeSequence: number | null,
+  ): Promise<MessageRecord[] | null> {
+    const [conversation] = await this.databaseService.database
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(activeOwnedConversation(userId, conversationId, now))
+      .limit(1);
+
+    if (!conversation) {
+      return null;
+    }
+
+    return this.databaseService.database
+      .select()
+      .from(messages)
+      .where(
+        and(
+          eq(messages.conversationId, conversationId),
+          beforeSequence === null ? undefined : lt(messages.sequenceNumber, beforeSequence),
+        ),
+      )
+      .orderBy(desc(messages.sequenceNumber))
+      .limit(limit);
   }
 }

@@ -2,11 +2,14 @@ import { randomUUID } from 'node:crypto';
 import {
   aiTurns,
   and,
+  auditLogs,
   consents,
+  conversations,
   count,
   createDatabaseClient,
   eq,
   migrate,
+  messages,
   quotaConsumptions,
   sessions,
   users,
@@ -65,6 +68,7 @@ type FakeMode =
   | 'fail-after-segment'
   | 'wait-for-abort'
   | 'wait-after-segment'
+  | 'wait-before-completion'
   | 'stream-until-abort';
 
 class FakeStreamingProvider implements LLMProvider {
@@ -72,13 +76,30 @@ class FakeStreamingProvider implements LLMProvider {
   streamCalls = 0;
   dispatched: Promise<void> = Promise.resolve();
   private resolveDispatched: (() => void) | null = null;
+  private completionReleased: Promise<void> = Promise.resolve();
+  private resolveCompletion: (() => void) | null = null;
 
   reset(mode: FakeMode): void {
+    this.resolveCompletion?.();
     this.mode = mode;
     this.streamCalls = 0;
     this.dispatched = new Promise((resolve) => {
       this.resolveDispatched = resolve;
     });
+    this.completionReleased =
+      mode === 'wait-before-completion'
+        ? new Promise((resolve) => {
+            this.resolveCompletion = resolve;
+          })
+        : Promise.resolve();
+    if (mode !== 'wait-before-completion') {
+      this.resolveCompletion = null;
+    }
+  }
+
+  releaseCompletion(): void {
+    this.resolveCompletion?.();
+    this.resolveCompletion = null;
   }
 
   chat(): Promise<LLMChatResult> {
@@ -140,6 +161,9 @@ class FakeStreamingProvider implements LLMProvider {
     }
     if (this.mode === 'fail-after-segment') {
       throw new LLMProviderFailure('network', true, PROVIDER_METADATA.requestId);
+    }
+    if (this.mode === 'wait-before-completion') {
+      await this.completionReleased;
     }
     yield { type: 'text_delta', text: '这是第二句。' };
     yield {
@@ -545,6 +569,99 @@ describe('Phase 3 AI foundation integration', () => {
     const persisted = await messagesService.readMessages(userId, conversation.id, BASE_NOW);
     expect(persisted).toHaveLength(1);
     expect(persisted[0]).toMatchObject({ role: 'user', content: 'synthetic-partial' });
+  });
+
+  it('does not persist a late assistant response after its conversation is deleted', async () => {
+    provider.reset('wait-before-completion');
+    const userId = await createUser();
+    const conversation = await conversationsService.create(userId, BASE_NOW);
+    const rawToken = `synthetic-delete-race-${randomUUID()}`;
+    const csrfToken = 'synthetic-delete-race-csrf';
+    await databaseService.database.insert(sessions).values({
+      id: randomUUID(),
+      userId,
+      tokenHash: hashSessionToken(rawToken),
+      createdAt: BASE_NOW,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+
+    const prepared = await orchestration.preparePersistentTurn(
+      { userId, sessionId: randomUUID() },
+      {
+        clientRequestId: randomUUID(),
+        conversationId: conversation.id,
+        message: 'synthetic-delete-race-user-content',
+      },
+      new AbortController().signal,
+      BASE_NOW,
+    );
+    if (prepared.kind !== 'ready') throw new Error('Expected a ready turn');
+    const stream = orchestration.streamPreparedTurn(prepared, new AbortController().signal);
+    const iterator = stream[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'turn.started' } });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'message.segment' } });
+    const pendingProviderCompletion = iterator.next();
+    await provider.dispatched;
+
+    await request(app.getHttpServer())
+      .delete(`/conversations/${conversation.id}`)
+      .set('Origin', 'http://localhost:5173')
+      .set('Cookie', `mh_session=${rawToken}; mh_csrf=${csrfToken}`)
+      .set('x-csrf-token', csrfToken)
+      .expect(200);
+    expect(
+      await databaseService.database
+        .select()
+        .from(messages)
+        .where(eq(messages.conversationId, conversation.id)),
+    ).toHaveLength(0);
+    await request(app.getHttpServer())
+      .get(`/conversations/${conversation.id}`)
+      .set('Cookie', `mh_session=${rawToken}; mh_csrf=${csrfToken}`)
+      .expect(404)
+      .expect('Cache-Control', 'private, no-store');
+
+    provider.releaseCompletion();
+    await expect(pendingProviderCompletion).resolves.toMatchObject({
+      value: { type: 'message.segment' },
+    });
+    await expect(iterator.next()).rejects.toMatchObject({ code: 'AI_PROVIDER_UNAVAILABLE' });
+
+    expect(
+      await databaseService.database
+        .select()
+        .from(messages)
+        .where(eq(messages.conversationId, conversation.id)),
+    ).toHaveLength(0);
+    const [deletedConversation] = await databaseService.database
+      .select()
+      .from(conversations)
+      .where(eq(conversations.id, conversation.id));
+    expect(deletedConversation?.deletedAt).not.toBeNull();
+    const [failedTurn] = await databaseService.database
+      .select()
+      .from(aiTurns)
+      .where(eq(aiTurns.id, prepared.turn.id));
+    expect(failedTurn).toMatchObject({ status: 'failed', assistantMessageId: null });
+    expect(await quotaService.getUsage(userId, BASE_NOW)).toMatchObject({ usedCount: 1 });
+    const [ledgerCount] = await databaseService.database
+      .select({ value: count() })
+      .from(quotaConsumptions)
+      .where(
+        and(
+          eq(quotaConsumptions.userId, userId),
+          eq(quotaConsumptions.idempotencyKey, prepared.turn.id),
+        ),
+      );
+    expect(ledgerCount?.value).toBe(1);
+    const deletionAudits = await databaseService.database
+      .select()
+      .from(auditLogs)
+      .where(eq(auditLogs.resourceId, conversation.id));
+    expect(deletionAudits).toHaveLength(1);
+    expect(JSON.stringify(deletionAudits)).not.toMatch(
+      /delete-race-user-content|已批准|这是第二句/u,
+    );
   });
 
   it('refunds cancellation before provider dispatch', async () => {

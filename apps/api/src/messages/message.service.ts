@@ -63,4 +63,29 @@ export class MessageService {
 
     return records;
   }
+
+  async readMessagePage(
+    userId: string,
+    conversationId: string,
+    options: Readonly<{ now: Date; limit: number; beforeSequence: number | null }>,
+  ): Promise<MessageRecord[]> {
+    let records: MessageRecord[] | null;
+    try {
+      records = await this.repository.readActiveOwnedPage(
+        userId,
+        conversationId,
+        options.now,
+        options.limit,
+        options.beforeSequence,
+      );
+    } catch {
+      throw new DatabaseError();
+    }
+
+    if (!records) {
+      throw new NotFoundError('对话不存在');
+    }
+
+    return records;
+  }
 }
