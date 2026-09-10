@@ -8,6 +8,7 @@ const baseEnvironment: NodeJS.ProcessEnv = {
   REQUIRED_PRIVACY_VERSION: '1.0',
   FREE_DAILY_AI_LIMIT: '20',
   QUOTA_TIME_ZONE: 'Asia/Shanghai',
+  AUDIT_RETENTION_DAYS: '90',
 };
 
 describe('identity environment validation', () => {

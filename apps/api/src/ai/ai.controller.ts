@@ -9,10 +9,38 @@ import { ZodValidationPipe } from '../common/validation/zod-validation.pipe';
 import { AiOrchestrationService } from './ai-orchestration.service';
 import { aiChatRequestSchema, type AiChatRequest } from './ai.schemas';
 
-function writeSse(response: Response, event: AiStreamEvent, sequence: number): void {
-  response.write(`id: ${event.data.turnId}:${sequence}\n`);
-  response.write(`event: ${event.type}\n`);
-  response.write(`data: ${JSON.stringify(event.data)}\n\n`);
+export async function writeSse(
+  response: Response,
+  event: AiStreamEvent,
+  sequence: number,
+  signal: AbortSignal,
+): Promise<void> {
+  if (signal.aborted) throw signal.reason ?? new Error('AI stream aborted');
+  if (response.destroyed || response.writableEnded) throw new Error('AI stream is not writable');
+  const frame = `id: ${event.data.turnId}:${sequence}\nevent: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`;
+  if (response.write(frame)) return;
+
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = (): void => {
+      response.removeListener('drain', onDrain);
+      response.removeListener('close', onClose);
+      response.removeListener('error', onError);
+      signal.removeEventListener('abort', onAbort);
+    };
+    const finish = (callback: () => void): void => {
+      cleanup();
+      callback();
+    };
+    const onDrain = (): void => finish(resolve);
+    const onClose = (): void => finish(() => reject(new Error('AI stream closed')));
+    const onError = (error: Error): void => finish(() => reject(error));
+    const onAbort = (): void =>
+      finish(() => reject(signal.reason ?? new Error('AI stream aborted')));
+    response.once('drain', onDrain);
+    response.once('close', onClose);
+    response.once('error', onError);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function failedEvent(turnId: string, error: unknown): AiStreamEvent {
@@ -76,6 +104,12 @@ export class AiController {
       return;
     }
 
+    if (prepared.execution.signal.aborted || response.destroyed || response.writableEnded) {
+      prepared.execution.dispose();
+      response.removeListener('close', onClose);
+      return;
+    }
+
     response.status(200);
     response.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     response.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -84,18 +118,82 @@ export class AiController {
     response.flushHeaders();
 
     let eventSequence = 0;
+    if (prepared.kind === 'trusted' || prepared.kind === 'unpersisted_trusted') {
+      try {
+        await writeSse(
+          response,
+          {
+            type: 'turn.started',
+            data: { turnId: prepared.turn.id, conversationId: prepared.turn.conversationId },
+          },
+          ++eventSequence,
+          prepared.execution.signal,
+        );
+        await writeSse(
+          response,
+          {
+            type: 'message.segment',
+            data: { turnId: prepared.turn.id, sequence: 1, text: prepared.response.content },
+          },
+          ++eventSequence,
+          prepared.execution.signal,
+        );
+        if (prepared.kind === 'trusted') {
+          await writeSse(
+            response,
+            {
+              type: 'turn.completed',
+              data: {
+                turnId: prepared.turn.id,
+                assistantMessageId: prepared.turn.assistantMessageId,
+                finishReason: 'content_filter',
+              },
+            },
+            eventSequence + 1,
+            prepared.execution.signal,
+          );
+        } else {
+          await writeSse(
+            response,
+            failedEvent(
+              prepared.turn.id,
+              new AppError(ERROR_CODES.DATABASE_ERROR, 500, '安全响应未能保存'),
+            ),
+            eventSequence + 1,
+            prepared.execution.signal,
+          );
+        }
+      } catch {
+        // A disconnected, cancelled, or expired request must not receive late safety events.
+      } finally {
+        prepared.execution.dispose();
+        response.removeListener('close', onClose);
+        if (!response.writableEnded && !response.destroyed) response.end();
+      }
+      return;
+    }
+
     try {
       for await (const event of this.orchestration.streamPreparedTurn(
         prepared,
         abortController.signal,
       )) {
         eventSequence += 1;
-        writeSse(response, event, eventSequence);
+        await writeSse(response, event, eventSequence, prepared.execution.signal);
       }
     } catch (error) {
       if (!response.destroyed && !response.writableEnded) {
         eventSequence += 1;
-        writeSse(response, failedEvent(prepared.turn.id, error), eventSequence);
+        try {
+          await writeSse(
+            response,
+            failedEvent(prepared.turn.id, error),
+            eventSequence,
+            prepared.execution.signal,
+          );
+        } catch {
+          // Do not write after cancellation, deadline expiry, or socket closure.
+        }
       }
     } finally {
       response.removeListener('close', onClose);

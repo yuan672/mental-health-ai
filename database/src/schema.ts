@@ -6,6 +6,7 @@ import {
   date,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   primaryKey,
@@ -25,6 +26,9 @@ export const aiTurnStatus = pgEnum('ai_turn_status', [
   'failed',
   'cancelled',
 ]);
+export const riskLevel = pgEnum('risk_level', ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']);
+export const reviewState = pgEnum('review_state', ['pending', 'in_review', 'resolved']);
+export const reviewPriority = pgEnum('review_priority', ['high', 'urgent']);
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey(),
@@ -231,15 +235,106 @@ export const aiTurns = pgTable(
   ],
 );
 
+export const riskEvents = pgTable(
+  'risk_events',
+  {
+    id: uuid('id').primaryKey(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    conversationId: uuid('conversation_id').references(() => conversations.id, {
+      onDelete: 'set null',
+    }),
+    aiTurnId: uuid('ai_turn_id').references(() => aiTurns.id, { onDelete: 'set null' }),
+    triggerMessageId: uuid('trigger_message_id').references(() => messages.id, {
+      onDelete: 'set null',
+    }),
+    clientRequestId: uuid('client_request_id').notNull(),
+    isIncognito: boolean('is_incognito').notNull(),
+    level: riskLevel('risk_level').notNull(),
+    riskCategories: text('risk_categories').array().notNull(),
+    reasonCodes: text('reason_codes').array().notNull(),
+    detectionSource: varchar('detection_source', { length: 32 }).notNull(),
+    policyVersion: varchar('policy_version', { length: 64 }).notNull(),
+    classifierKey: varchar('classifier_key', { length: 64 }),
+    classifierVersion: varchar('classifier_version', { length: 64 }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull(),
+    retentionUntil: timestamp('retention_until', { withTimezone: true, mode: 'date' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('risk_events_ai_turn_unique')
+      .on(table.aiTurnId)
+      .where(sql`${table.aiTurnId} IS NOT NULL`),
+    uniqueIndex('risk_events_incognito_request_unique')
+      .on(table.userId, table.clientRequestId)
+      .where(sql`${table.isIncognito} = true AND ${table.userId} IS NOT NULL`),
+    index('risk_events_user_created_idx').on(table.userId, table.createdAt),
+    index('risk_events_retention_until_idx').on(table.retentionUntil),
+    check(
+      'risk_events_incognito_refs_check',
+      sql`${table.isIncognito} = false OR (${table.conversationId} IS NULL AND ${table.aiTurnId} IS NULL AND ${table.triggerMessageId} IS NULL)`,
+    ),
+  ],
+);
+
+export const humanReviewQueueItems = pgTable(
+  'human_review_queue_items',
+  {
+    id: uuid('id').primaryKey(),
+    riskEventId: uuid('risk_event_id')
+      .notNull()
+      .references(() => riskEvents.id, { onDelete: 'cascade' }),
+    priority: reviewPriority('priority').notNull(),
+    state: reviewState('state').notNull().default('pending'),
+    assignedReviewerId: varchar('assigned_reviewer_id', { length: 128 }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true, mode: 'date' }),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true, mode: 'date' }),
+    resolutionCode: varchar('resolution_code', { length: 64 }),
+  },
+  (table) => [
+    uniqueIndex('human_review_queue_risk_event_unique').on(table.riskEventId),
+    index('human_review_queue_state_priority_idx').on(table.state, table.priority, table.createdAt),
+    check(
+      'human_review_queue_state_timestamps_check',
+      sql`(${table.state} = 'pending' AND ${table.startedAt} IS NULL AND ${table.reviewedAt} IS NULL AND ${table.resolutionCode} IS NULL) OR (${table.state} = 'in_review' AND ${table.startedAt} IS NOT NULL AND ${table.reviewedAt} IS NULL AND ${table.resolutionCode} IS NULL) OR (${table.state} = 'resolved' AND ${table.startedAt} IS NOT NULL AND ${table.reviewedAt} IS NOT NULL AND ${table.resolutionCode} IS NOT NULL)`,
+    ),
+  ],
+);
+
+export const auditLogs = pgTable(
+  'audit_logs',
+  {
+    id: uuid('id').primaryKey(),
+    actorType: varchar('actor_type', { length: 32 }).notNull(),
+    actorId: varchar('actor_id', { length: 128 }),
+    action: varchar('action', { length: 64 }).notNull(),
+    resourceType: varchar('resource_type', { length: 64 }).notNull(),
+    resourceId: uuid('resource_id').notNull(),
+    idempotencyKey: varchar('idempotency_key', { length: 192 }).notNull(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true, mode: 'date' }).notNull(),
+    safeMetadata: jsonb('safe_metadata')
+      .$type<Record<string, string | number | boolean | null>>()
+      .notNull(),
+    retentionUntil: timestamp('retention_until', { withTimezone: true, mode: 'date' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('audit_logs_idempotency_key_unique').on(table.idempotencyKey),
+    index('audit_logs_resource_idx').on(table.resourceType, table.resourceId, table.occurredAt),
+    index('audit_logs_retention_until_idx').on(table.retentionUntil),
+  ],
+);
+
 export const schema = {
   ageVerifications,
   aiTurns,
+  auditLogs,
   consents,
   conversations,
   dailyUsageQuotas,
   messages,
   passwordCredentials,
   quotaConsumptions,
+  humanReviewQueueItems,
+  riskEvents,
   sessions,
   users,
 };
@@ -247,3 +342,6 @@ export const schema = {
 export type ConsentStatus = (typeof consentStatus.enumValues)[number];
 export type AiTurnStatus = (typeof aiTurnStatus.enumValues)[number];
 export type MessageRole = (typeof messageRole.enumValues)[number];
+export type RiskLevel = (typeof riskLevel.enumValues)[number];
+export type ReviewState = (typeof reviewState.enumValues)[number];
+export type ReviewPriority = (typeof reviewPriority.enumValues)[number];

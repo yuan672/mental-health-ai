@@ -28,10 +28,17 @@ export class ConversationContextService {
     conversationId: string,
     currentUserMessage: string,
     now = new Date(),
+    promptKey:
+      'supportive-chat' | 'supportive-chat-safety' | 'high-risk-support' = 'supportive-chat',
   ): Promise<ConversationContext> {
     await this.conversations.get(userId, conversationId, now);
     const history = await this.messages.readMessages(userId, conversationId, now);
-    const prompt = this.prompts.getSupportiveChatPrompt();
+    const prompt =
+      promptKey === 'high-risk-support'
+        ? this.prompts.getHighRiskSupportPrompt()
+        : promptKey === 'supportive-chat-safety'
+          ? this.prompts.getSupportiveChatSafetyPrompt()
+          : this.prompts.getSupportiveChatPrompt();
     const systemMessage: LLMMessage = { role: 'system', content: prompt.content };
     const currentMessage: LLMMessage = { role: 'user', content: currentUserMessage };
     let estimatedInputTokens =

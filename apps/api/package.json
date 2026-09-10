@@ -10,7 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pretest": "pnpm --filter @mental-health/database build",
     "test": "jest --runInBand",
-    "cleanup:conversations": "pnpm run build && node dist/src/commands/purge-conversations.js"
+    "cleanup:conversations": "pnpm run build && node dist/src/commands/purge-conversations.js",
+    "cleanup:safety": "pnpm run build && node dist/src/commands/purge-safety-data.js"
   },
   "dependencies": {
     "@mental-health/database": "workspace:*",

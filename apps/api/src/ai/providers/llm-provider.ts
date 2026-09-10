@@ -11,6 +11,8 @@ export type LLMChatRequest = Readonly<{
   requestId: string;
   messages: readonly LLMMessage[];
   maxOutputTokens: number;
+  temperature?: number;
+  responseFormat?: 'text' | 'json';
 }>;
 
 export type LLMCallOptions = Readonly<{
@@ -52,11 +54,21 @@ export type LLMProviderStreamEvent =
 export type LLMRiskClassificationRequest = Readonly<{
   requestId: string;
   messages: readonly LLMMessage[];
+  maxOutputTokens: number;
 }>;
 
 export type LLMRiskClassificationCandidate = Readonly<{
-  label: string;
-  confidence: number | null;
+  candidateLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  harmSubject: 'SELF' | 'OTHER' | 'UNKNOWN';
+  harmTargets: readonly ('SELF_HARM' | 'HARM_TO_OTHERS')[];
+  temporality: 'CURRENT' | 'HISTORICAL' | 'HYPOTHETICAL' | 'UNKNOWN';
+  ideation: 'NONE' | 'PASSIVE' | 'ACTIVE' | 'UNKNOWN';
+  intent: 'ABSENT' | 'PRESENT' | 'UNKNOWN';
+  plan: 'ABSENT' | 'PRESENT' | 'UNKNOWN';
+  means: 'ABSENT' | 'PRESENT' | 'UNKNOWN';
+  immediacy: 'NONE' | 'POTENTIAL' | 'IMMINENT' | 'IN_PROGRESS' | 'UNKNOWN';
+  confidence: number;
+  reasonCodes: readonly string[];
   metadata: LLMProviderMetadata;
 }>;
 
@@ -84,6 +96,7 @@ export type LLMProviderFailureCategory =
   | 'upstream'
   | 'network'
   | 'malformed_stream'
+  | 'malformed_response'
   | 'aborted'
   | 'unconfigured';
 

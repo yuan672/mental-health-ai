@@ -16,11 +16,13 @@ Example event:
 
 ```json
 {
-  "event": "risk_detected",
-  "eventCategory": "security",
-  "userId": "internal-id",
-  "conversationId": "internal-id",
-  "riskLevel": "critical"
+  "event": "risk_detection_completed",
+  "eventCategory": "safety_operational",
+  "turnId": "internal-id",
+  "classifierKey": "risk-classification",
+  "classifierVersion": "version-id",
+  "riskDetectionDurationMs": 120,
+  "decisionPath": "hybrid"
 }
 ```
 
@@ -66,3 +68,21 @@ Incognito Phase 3 context is held only in API process memory with TTL and is sco
 by user ID, session ID, and opaque context ID. Logout clears that session's entries;
 process restart removes all entries. PostgreSQL contains no incognito context or
 message data.
+
+## Phase 4 safety boundary
+
+Risk level and bounded reason codes belong in restricted `risk_events`, not in
+wide-access operational logs. Safety operational logging must not create a second
+risk database by recording `userId + riskLevel` or
+`conversationId + riskLevel`. It records only allowlisted timing, fixed decision
+and failure categories, classifier key/version, turn ID, and an existing Risk
+Event ID when needed.
+
+Risk Events, review queue items, and audit records never store message text,
+conversation excerpts, prompts, provider payloads, reasoning content, or
+content-derived fingerprints. Incognito Risk Events also exclude session/context
+identifiers and all ordinary conversation content.
+
+`audit_logs.safe_metadata` is validated by an action-specific Zod allowlist.
+It cannot accept arbitrary DTOs or errors. Extra Pino redaction paths for
+`reasoning_content` and raw-provider field names are defense in depth.

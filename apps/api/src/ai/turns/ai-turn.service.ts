@@ -11,6 +11,7 @@ import { ConversationLoggingService } from '../../conversations/conversation-log
 import { QuotaPolicyService } from '../../quota/quota-policy.service';
 import { QuotaLimitReachedError } from '../../quota/quota.repository';
 import { ActiveAiTurnError, AiTurnRepository, type AiTurnRecord } from './ai-turn.repository';
+import type { RiskDecision } from '../../safety/safety.types';
 
 export type ClaimedAiTurn = Readonly<{
   created: boolean;
@@ -72,7 +73,13 @@ export class AiTurnService {
     }
   }
 
-  async start(turn: AiTurnRecord, userMessageContent: string, now: Date): Promise<AiTurnRecord> {
+  async start(
+    turn: AiTurnRecord,
+    userMessageContent: string,
+    prompt: Readonly<{ key: string; version: string }>,
+    riskDecision: RiskDecision,
+    now: Date,
+  ): Promise<AiTurnRecord> {
     const userMessageId = randomUUID();
     try {
       const started = await this.repository.start({
@@ -83,6 +90,9 @@ export class AiTurnService {
         userMessageContent,
         usageDate: this.policy.getUsageDate(now),
         dailyLimit: this.policy.getDailyLimit(turn.userId),
+        promptKey: prompt.key,
+        promptVersion: prompt.version,
+        riskDecision,
         now,
       });
       if (!started) {
@@ -97,6 +107,54 @@ export class AiTurnService {
       if (error instanceof NotFoundError) {
         throw error;
       }
+      throw new DatabaseError();
+    }
+  }
+
+  async completeTrusted(
+    turn: AiTurnRecord,
+    input: Readonly<{
+      userMessageContent: string;
+      assistantContent: string;
+      promptKey: string;
+      promptVersion: string;
+      riskDecision: RiskDecision;
+      templateKey: string;
+      templateVersion: string;
+    }>,
+    now: Date,
+  ): Promise<CompletedAiTurn> {
+    const userMessageId = randomUUID();
+    const assistantMessageId = randomUUID();
+    try {
+      const completed = await this.repository.completeTrusted({
+        turnId: turn.id,
+        userId: turn.userId,
+        conversationId: turn.conversationId,
+        userMessageId,
+        userMessageContent: input.userMessageContent,
+        assistantMessageId,
+        assistantContent: input.assistantContent,
+        promptKey: input.promptKey,
+        promptVersion: input.promptVersion,
+        riskDecision: input.riskDecision,
+        templateKey: input.templateKey,
+        templateVersion: input.templateVersion,
+        now,
+      });
+      if (!completed?.assistantMessageId) {
+        throw new NotFoundError('AI 对话请求不存在');
+      }
+      this.logging.messageAppended(turn.userId, turn.conversationId, userMessageId, 'user');
+      this.logging.messageAppended(
+        turn.userId,
+        turn.conversationId,
+        assistantMessageId,
+        'assistant',
+      );
+      return completed as CompletedAiTurn;
+    } catch (error) {
+      if (error instanceof NotFoundError) throw error;
       throw new DatabaseError();
     }
   }
@@ -130,6 +188,26 @@ export class AiTurnService {
       if (error instanceof NotFoundError) {
         throw error;
       }
+      throw new DatabaseError();
+    }
+  }
+
+  async failAfterSafetyDecision(
+    turn: AiTurnRecord,
+    decision: RiskDecision,
+    failureCode: string,
+    now = new Date(),
+  ): Promise<void> {
+    try {
+      await this.repository.failAfterSafetyDecision({
+        turnId: turn.id,
+        userId: turn.userId,
+        conversationId: turn.conversationId,
+        decision,
+        failureCode,
+        now,
+      });
+    } catch {
       throw new DatabaseError();
     }
   }

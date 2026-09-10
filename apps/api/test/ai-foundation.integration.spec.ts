@@ -37,9 +37,12 @@ import {
 } from '../src/ai/providers/llm-provider';
 import {
   POST_GENERATION_SAFETY_GATE,
+  PRE_GENERATION_SAFETY_GATE,
   type PostGenerationSafetyGate,
   type PostGenerationSafetyInput,
+  type PreGenerationSafetyGate,
 } from '../src/ai/safety/safety-gates';
+import type { RiskDecision } from '../src/safety/safety.types';
 import { AiTurnService } from '../src/ai/turns/ai-turn.service';
 import { AppModule } from '../src/app.module';
 import { hashSessionToken, SessionsService } from '../src/auth/sessions.service';
@@ -168,9 +171,30 @@ class RecordingPostGenerationGate implements PostGenerationSafetyGate {
     this.approved.length = 0;
   }
 
-  approve(input: PostGenerationSafetyInput): Promise<string> {
+  approve(input: PostGenerationSafetyInput) {
     this.approved.push(input.candidateSegment);
-    return Promise.resolve(input.candidateSegment);
+    return Promise.resolve({ status: 'approved' as const, text: input.candidateSegment });
+  }
+}
+
+class AllowingPreGenerationGate implements PreGenerationSafetyGate {
+  readonly productionSafe = false;
+
+  check(): Promise<RiskDecision> {
+    return Promise.resolve({
+      status: 'assessed',
+      level: 'LOW',
+      harmSubject: 'UNKNOWN',
+      categories: [],
+      reasonCodes: [],
+      policyFlags: [],
+      route: 'ALLOW_NORMAL_GENERATION',
+      bufferingMode: 'semantic',
+      detectionSource: 'deterministic',
+      policyVersion: 'phase-3-test-gate',
+      classifierKey: null,
+      classifierVersion: null,
+    });
   }
 }
 
@@ -189,6 +213,7 @@ describe('Phase 3 AI foundation integration', () => {
   let incognitoAdmission: IncognitoGenerationAdmissionService;
   const provider = new FakeStreamingProvider();
   const postGate = new RecordingPostGenerationGate();
+  const preGate = new AllowingPreGenerationGate();
 
   beforeAll(async () => {
     const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -209,6 +234,8 @@ describe('Phase 3 AI foundation integration', () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(LLM_PROVIDER)
       .useValue(provider)
+      .overrideProvider(PRE_GENERATION_SAFETY_GATE)
+      .useValue(preGate)
       .overrideProvider(POST_GENERATION_SAFETY_GATE)
       .useValue(postGate)
       .compile();

@@ -15,5 +15,6 @@ Accepted decisions:
 11. ADR-011 Identity and Access Lifecycle
 12. ADR-012 Conversation, Retention and Quota Data Model
 13. ADR-013 AI Provider and Streaming Architecture
+14. ADR-014 AI Safety and Crisis Response Architecture
 
 New decisions should use the next sequential ADR number. Existing accepted ADRs should not be silently rewritten; supersede them with a new ADR when the decision materially changes.

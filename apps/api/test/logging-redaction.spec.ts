@@ -33,6 +33,9 @@ describe('sensitive logging redaction', () => {
       'nested-message-content-secret',
       'conversation-content-secret',
       'prompt-secret',
+      'reasoning-secret',
+      'provider-request-secret',
+      'provider-response-secret',
     ];
     logger.info({
       req: {
@@ -54,6 +57,9 @@ describe('sensitive logging redaction', () => {
       message: { content: sensitiveValues[8] },
       conversationContent: sensitiveValues[9],
       prompt: sensitiveValues[10],
+      reasoning_content: sensitiveValues[11],
+      rawProviderRequest: sensitiveValues[12],
+      rawProviderResponse: sensitiveValues[13],
     });
 
     for (const sensitiveValue of [...sensitiveValues, 'sensitive body']) {

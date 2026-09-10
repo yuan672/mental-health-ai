@@ -22,6 +22,13 @@
       "when": 1788961562387,
       "tag": "0002_flowery_gamma_corps",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789003803563,
+      "tag": "0003_open_bulldozer",
+      "breakpoints": true
     }
   ]
 }

@@ -62,4 +62,26 @@ describe('chat stream reducer', () => {
       error: { code: 'AI_PROVIDER_UNAVAILABLE' },
     });
   });
+
+  it('keeps an already displayed trusted safety segment when persistence later fails', () => {
+    const started = reduceChatStreamEvent(initialChatStreamState, {
+      type: 'turn.started',
+      data: { turnId: TURN_ID, conversationId: CONVERSATION_ID },
+    });
+    const safetyPrompt = reduceChatStreamEvent(started, {
+      type: 'message.segment',
+      data: { turnId: TURN_ID, sequence: 1, text: '请立即寻求现实世界的帮助。' },
+    });
+    const failed = reduceChatStreamEvent(safetyPrompt, {
+      type: 'turn.failed',
+      data: { turnId: TURN_ID, code: 'DATABASE_ERROR', message: '安全响应未能保存' },
+    });
+
+    expect(failed).toMatchObject({
+      status: 'failed',
+      text: '请立即寻求现实世界的帮助。',
+      assistantMessageId: null,
+      error: { code: 'DATABASE_ERROR', message: '安全响应未能保存' },
+    });
+  });
 });

@@ -47,6 +47,12 @@ export const LOG_REDACT_PATHS = [
   '*.conversationContent',
   'prompt',
   '*.prompt',
+  'reasoning_content',
+  '*.reasoning_content',
+  'rawProviderRequest',
+  '*.rawProviderRequest',
+  'rawProviderResponse',
+  '*.rawProviderResponse',
 ] as const;
 
 @Module({
