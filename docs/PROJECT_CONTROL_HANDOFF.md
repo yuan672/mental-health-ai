@@ -21,8 +21,9 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   experience delivered by PR #20
 - Phase 5E — Knowledge Base: ADR-018 and the minimum design are accepted;
   Phase 5E-1 content-foundation engineering is complete and delivered by PR #22;
-  the Web reader, curated production content, and later AI integration remain
-  separate work, so Phase 5E is not phase-complete
+  the Phase 5E-2 Web reader is implemented in Draft PR #23 and awaits review;
+  curated production content and later AI integration remain separate work, so
+  Phase 5E is not phase-complete
 - Phase 6 — Admin and operations features: Not started
 
 ## Current Production State
@@ -81,10 +82,13 @@ safety, or validation for clinical use.
   Phase 5E-1 delivers the three-table model,
   forward-only 0007 migration, authenticated read API, exact-version release
   commands, source-evidence freeze boundary, and guarded unverified synthetic
-  fixtures. No curated production content has been published. The LLM-plus-Knowledge
-  direction remains a later independent Phase 5E batch requiring separate design
-  and authorization. Admin/Reviewer features and production enablement remain
-  outside completed scope.
+  fixtures. Draft PR #23 adds the authenticated Phase 5E-2 list/detail reading
+  experience, strict response validation, safe bounded-block rendering, exact
+  source display, session cleanup, and synthetic browser coverage; it is not yet
+  merged. No curated production content has been published. The
+  LLM-plus-Knowledge direction remains a later independent Phase 5E batch requiring
+  separate design and authorization. Admin/Reviewer features and production
+  enablement remain outside completed scope.
 
 ## Phase 5C Batch Scope and Open Consent Product Flow
 
@@ -144,9 +148,9 @@ None.
 
 ## Immediate Next Step
 
-Design and review the next bounded Phase 5E batch separately. Do not begin the Web
-experience, publish curated content, implement AI retrieval, or start Phase 6
-without separate authorization.
+Review Draft [PR #23](https://github.com/yuan672/mental-health-ai/pull/23) for the
+bounded Phase 5E-2 Web reader. Do not merge it without review, publish curated
+content, implement AI retrieval, or start Phase 6 without separate authorization.
 
 ## Source of Truth
 

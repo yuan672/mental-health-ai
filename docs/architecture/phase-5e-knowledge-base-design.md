@@ -3,7 +3,8 @@
 - Status: Accepted design; Phase 5E-1 implementation authorized
 - Baseline: `develop` at `ff84227061aed2c8f081d913767343af3b4d7ed5`
 - Architecture: Accepted ADR-018
-- Implementation status: Phase 5E-1 backend delivered for Draft PR review; not merged
+- Implementation status: Phase 5E-1 backend is merged; Phase 5E-2 Web reader is
+  implemented in Draft PR #23 and awaits review
 - Source reconnaissance date: 2026-09-11
 
 This document defines the accepted Phase 5E boundary. Phase 5E-1 now has an
