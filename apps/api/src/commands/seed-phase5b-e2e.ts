@@ -6,6 +6,10 @@ import {
   consentDecisions,
   consents,
   createDatabaseClient,
+  eq,
+  knowledgeArticles,
+  knowledgeArticleSources,
+  knowledgeArticleVersions,
   migrate,
   passwordCredentials,
   users,
@@ -118,6 +122,48 @@ async function run(): Promise<void> {
           decisionSource: 'registration',
         },
       ]);
+      await transaction.insert(knowledgeArticles).values({
+        id: '51000000-0000-4000-8000-000000000041',
+        articleKey: 'synthetic-stress-basics',
+        createdAt: now,
+      });
+      await transaction.insert(knowledgeArticleVersions).values({
+        id: '51000000-0000-4000-8000-000000000042',
+        articleId: '51000000-0000-4000-8000-000000000041',
+        version: 1,
+        title: '合成测试：认识日常压力',
+        summary: '用于验证知识中心阅读流程的合成内容，不是正式健康资料。',
+        contentBlocks: [
+          { type: 'heading', level: 2, text: '留意当下的感受' },
+          { type: 'paragraph', text: '这段合成正文只用于自动化测试。' },
+          { type: 'list', style: 'unordered', items: ['暂停片刻', '向可信任的人表达感受'] },
+          { type: 'callout', tone: 'important', text: '测试内容不能替代专业支持。' },
+        ],
+        publicationStatus: 'draft',
+        reviewStatus: 'unverified',
+        contentOrigin: 'synthetic_fixture',
+        reviewedBy: null,
+        reviewedAt: null,
+        publishedAt: null,
+        withdrawnAt: null,
+        createdAt: now,
+      });
+      await transaction.insert(knowledgeArticleSources).values({
+        id: '51000000-0000-4000-8000-000000000043',
+        articleVersionId: '51000000-0000-4000-8000-000000000042',
+        ordinal: 1,
+        publisherName: '合成测试发布者',
+        sourceTitle: '合成测试来源文档',
+        sourceUrl: 'https://source.synthetic.test/knowledge/stress-basics',
+        sourcePublishedAt: null,
+        sourceVersionLabel: 'fixture-v1',
+        sourceLocator: '合成章节 1',
+        retrievedAt: now,
+      });
+      await transaction
+        .update(knowledgeArticleVersions)
+        .set({ publicationStatus: 'published', publishedAt: now })
+        .where(eq(knowledgeArticleVersions.id, '51000000-0000-4000-8000-000000000042'));
     });
   } finally {
     await client.pool.end();

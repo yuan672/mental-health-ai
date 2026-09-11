@@ -2,6 +2,8 @@ import { Navigate, Route, Routes } from 'react-router';
 import { ChatPage } from '../features/chat/chat-page';
 import { IncognitoChatPage } from '../features/chat/incognito-chat-page';
 import { LandingPage } from '../routes/landing-page';
+import { KnowledgeDetailPage } from '../routes/knowledge-detail-page';
+import { KnowledgeListPage } from '../routes/knowledge-list-page';
 import { LoginPage } from '../routes/login-page';
 import { NotFoundPage } from '../routes/not-found-page';
 import { MoodPage } from '../routes/mood-page';
@@ -23,6 +25,8 @@ export function AppRoutes() {
           <Route path="chat/incognito" element={<IncognitoChatPage />} />
           <Route path="chat/:conversationId?" element={<ChatPage />} />
           <Route path="mood" element={<MoodPage />} />
+          <Route path="knowledge" element={<KnowledgeListPage />} />
+          <Route path="knowledge/:articleKey" element={<KnowledgeDetailPage />} />
           <Route path="profile" element={<ProfilePage />} />
           <Route path="privacy" element={<PrivacyPage />} />
         </Route>

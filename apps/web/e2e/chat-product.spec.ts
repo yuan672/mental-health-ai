@@ -6,6 +6,9 @@ const PASSWORD = 'Synthetic-E2E-Password-9!';
 const moodScreenshotDirectory = fileURLToPath(
   new URL('../../../docs/reviews/phase-5d-mood-profile-web/', import.meta.url),
 );
+const knowledgeScreenshotDirectory = fileURLToPath(
+  new URL('../../../docs/reviews/phase-5e-knowledge-base-web/', import.meta.url),
+);
 
 async function login(page: Page): Promise<void> {
   await page.goto('/login');
@@ -488,4 +491,159 @@ test('Mood preserves read-only unknown-create recovery across a range change', a
   await expect(page.getByText(/不保证它以后不会提交/u)).toBeVisible();
   expect(moodCreateCalls).toBe(1);
   await expect(page.getByRole('button', { name: '保存心情记录' })).toBeDisabled();
+});
+
+test('Knowledge reader shows exact synthetic evidence and remains session-bound', async ({
+  page,
+  context,
+}) => {
+  await context.route('https://source.synthetic.test/**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/html; charset=utf-8',
+      body: '<!doctype html><html><body><h1>合成外部来源替身</h1></body></html>',
+    });
+  });
+  await login(page);
+  await page.goto('/app/knowledge');
+
+  await expect(page.getByRole('heading', { name: '知识中心' })).toBeVisible();
+  await expect(page.getByText('测试内容 · 未核验')).toBeVisible();
+  await expect(page.getByText('版本 1')).toBeVisible();
+  await expect(page.getByText('合成测试发布者')).toBeVisible();
+  const articleLink = page.getByRole('link', { name: '合成测试：认识日常压力' });
+  await articleLink.focus();
+  await expect(articleLink).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/\/app\/knowledge\/synthetic-stress-basics$/u);
+  await expect(page.getByText('这段合成正文只用于自动化测试。')).toBeVisible();
+  await expect(page.getByText(/不是正式发布或审核通过/u)).toBeVisible();
+  await expect(page.getByText('fixture-v1')).toBeVisible();
+  await expect(page.getByText('合成章节 1')).toBeVisible();
+
+  const external = page.getByRole('link', { name: '打开外部来源（离开本站）' });
+  await expect(external).toHaveAttribute('rel', 'noopener noreferrer');
+  await expect(external).toHaveAttribute('referrerpolicy', 'no-referrer');
+  const externalPagePromise = context.waitForEvent('page');
+  await external.click();
+  const externalPage = await externalPagePromise;
+  await expect(externalPage.getByRole('heading', { name: '合成外部来源替身' })).toBeVisible();
+  await externalPage.close();
+
+  if (process.env.UPDATE_KNOWLEDGE_SCREENSHOTS === '1') {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({
+      path: `${knowledgeScreenshotDirectory}knowledge-desktop.png`,
+      fullPage: true,
+    });
+  }
+  for (const width of [320, 390, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    ).toBe(true);
+  }
+  if (process.env.UPDATE_KNOWLEDGE_SCREENSHOTS === '1') {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({
+      path: `${knowledgeScreenshotDirectory}knowledge-mobile.png`,
+      fullPage: true,
+    });
+  }
+
+  await page.getByRole('link', { name: '← 返回知识中心' }).click();
+  await expect(page.getByRole('heading', { name: '知识中心' })).toBeVisible();
+  await page.getByRole('button', { name: '退出' }).click();
+  await expect(page).toHaveURL(/\/login\?returnTo=/u);
+  await expect(page.getByText('这段合成正文只用于自动化测试。')).toHaveCount(0);
+});
+
+test('Knowledge reader wraps valid long content at mobile and desktop widths', async ({ page }) => {
+  const longHeading = 'H'.repeat(160);
+  const longParagraph = 'https://synthetic.test/'.padEnd(2_000, 'p');
+  const longListItem = 'L'.repeat(500);
+  const longCallout = 'C'.repeat(2_000);
+  await page.route('**/knowledge/articles/synthetic-long-content', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        data: {
+          article: {
+            articleKey: 'synthetic-long-content',
+            title: '合法长文本换行测试',
+            summary: '仅用于真实浏览器布局测试。',
+            version: 1,
+            contentOrigin: 'synthetic_fixture',
+            reviewStatus: 'unverified',
+            reviewedAt: null,
+            publishedAt: '2026-09-11T08:00:00.000Z',
+            sourcePublishers: ['合成发布者'],
+            contentBlocks: [
+              { type: 'heading', level: 3, text: longHeading },
+              { type: 'paragraph', text: longParagraph },
+              { type: 'list', style: 'unordered', items: [longListItem] },
+              { type: 'callout', tone: 'important', text: longCallout },
+            ],
+            sources: [
+              {
+                publisherName: '合成发布者',
+                sourceTitle: 'S'.repeat(320),
+                sourceUrl: `https://source.synthetic.test/${'u'.repeat(240)}`,
+                sourcePublishedAt: null,
+                sourceVersionLabel: 'V'.repeat(120),
+                sourceLocator: 'P'.repeat(160),
+                retrievedAt: '2026-09-03T10:00:00.000Z',
+              },
+            ],
+          },
+        },
+      }),
+    });
+  });
+  await login(page);
+  await page.goto('/app/knowledge/synthetic-long-content');
+  const heading = page.getByRole('heading', { level: 3, name: longHeading });
+  await expect(heading).toBeVisible();
+  const wrappingTargets = page.locator(
+    '.knowledge-body h3, .knowledge-body > p, .knowledge-body li, .knowledge-callout p, .knowledge-source h3',
+  );
+
+  for (const width of [320, 390, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    ).toBe(true);
+    expect(
+      await page
+        .locator('.knowledge-article')
+        .evaluate(
+          (element) =>
+            element.scrollWidth <= element.clientWidth &&
+            element.getBoundingClientRect().right <= document.documentElement.clientWidth,
+        ),
+    ).toBe(true);
+    expect(
+      await wrappingTargets.evaluateAll((elements) =>
+        elements.every(
+          (element) =>
+            element.scrollWidth <= element.clientWidth &&
+            element.getBoundingClientRect().right <= document.documentElement.clientWidth,
+        ),
+      ),
+    ).toBe(true);
+    if (width === 320 && process.env.UPDATE_KNOWLEDGE_SCREENSHOTS === '1') {
+      await page.screenshot({
+        path: `${knowledgeScreenshotDirectory}knowledge-long-content-320.png`,
+        fullPage: true,
+      });
+    }
+  }
 });
