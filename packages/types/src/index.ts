@@ -1,6 +1,7 @@
 import type { ConsentType } from './consents.js';
 
 export * from './consents.js';
+export * from './knowledge.js';
 export * from './mood.js';
 
 export type AppEnvironment = 'development' | 'staging' | 'production';

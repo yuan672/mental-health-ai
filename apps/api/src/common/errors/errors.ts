@@ -139,6 +139,24 @@ export class MoodStateChangedError extends AppError {
   }
 }
 
+export class KnowledgeArticleNotFoundError extends AppError {
+  constructor(message = '知识内容当前不可用') {
+    super(ERROR_CODES.KNOWLEDGE_ARTICLE_NOT_FOUND, 404, message);
+  }
+}
+
+export class KnowledgePublicationConflictError extends AppError {
+  constructor(message = '知识内容版本或发布状态存在冲突') {
+    super(ERROR_CODES.KNOWLEDGE_PUBLICATION_CONFLICT, 409, message);
+  }
+}
+
+export class KnowledgePublicationForbiddenError extends AppError {
+  constructor(message = '当前环境不允许此知识内容操作') {
+    super(ERROR_CODES.KNOWLEDGE_PUBLICATION_FORBIDDEN, 403, message);
+  }
+}
+
 export class DatabaseError extends AppError {
   constructor(message = '数据服务暂时不可用') {
     super(ERROR_CODES.DATABASE_ERROR, 500, message);

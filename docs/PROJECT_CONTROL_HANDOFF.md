@@ -20,7 +20,9 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   contract are accepted, with the backend delivered by PR #18 and the Web
   experience delivered by PR #20
 - Phase 5E — Knowledge Base: ADR-018 and the minimum design are accepted;
-  Phase 5E-1 content foundation implementation is authorized but not yet delivered
+  Phase 5E-1 content-foundation engineering is complete and delivered by PR #22;
+  the Web reader, curated production content, and later AI integration remain
+  separate work, so Phase 5E is not phase-complete
 - Phase 6 — Admin and operations features: Not started
 
 ## Current Production State
@@ -56,6 +58,8 @@ safety, or validation for clinical use.
   narrow-layout, and session-expiry Web fixes
 - [PR #20](https://github.com/yuan672/mental-health-ai/pull/20) — Mood/Profile Web
   experience and final state-recovery fixes
+- [PR #22](https://github.com/yuan672/mental-health-ai/pull/22) — Knowledge Base
+  content foundation and source-evidence freeze boundary
 
 ## Current Feature Status
 
@@ -74,8 +78,10 @@ safety, or validation for clinical use.
   delivers the bounded Mood/Profile Web experience, including authoritative
   recovery after unknown or conflicting mutations. Phase 5D is engineering
   complete. The Phase 5E minimum Knowledge Base design and ADR-018 are accepted;
-  Phase 5E-1 implementation is authorized but no Knowledge code, migration, or
-  curated content publication has yet been delivered. The LLM-plus-Knowledge
+  Phase 5E-1 delivers the three-table model,
+  forward-only 0007 migration, authenticated read API, exact-version release
+  commands, source-evidence freeze boundary, and guarded unverified synthetic
+  fixtures. No curated production content has been published. The LLM-plus-Knowledge
   direction remains a later independent Phase 5E batch requiring separate design
   and authorization. Admin/Reviewer features and production enablement remain
   outside completed scope.
@@ -138,9 +144,9 @@ None.
 
 ## Immediate Next Step
 
-Complete the authorized Phase 5E-1 content foundation in an independent Draft PR.
-Do not begin the Web experience, publish curated content, implement AI retrieval, or
-start Phase 6 without separate authorization.
+Design and review the next bounded Phase 5E batch separately. Do not begin the Web
+experience, publish curated content, implement AI retrieval, or start Phase 6
+without separate authorization.
 
 ## Source of Truth
 

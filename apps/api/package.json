@@ -12,7 +12,11 @@
     "test": "jest --runInBand",
     "seed:e2e": "pnpm --filter @mental-health/database build && pnpm run build && node dist/src/commands/seed-phase5b-e2e.js",
     "cleanup:conversations": "pnpm run build && node dist/src/commands/purge-conversations.js",
-    "cleanup:safety": "pnpm run build && node dist/src/commands/purge-safety-data.js"
+    "cleanup:safety": "pnpm run build && node dist/src/commands/purge-safety-data.js",
+    "knowledge:validate-manifest": "pnpm run build && node dist/src/commands/validate-knowledge-manifest.js",
+    "knowledge:publish": "pnpm run build && node dist/src/commands/publish-knowledge.js",
+    "knowledge:withdraw": "pnpm run build && node dist/src/commands/withdraw-knowledge.js",
+    "knowledge:seed-fixture": "pnpm run build && node dist/src/commands/seed-knowledge-fixture.js"
   },
   "dependencies": {
     "@mental-health/database": "workspace:*",

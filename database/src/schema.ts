@@ -30,6 +30,20 @@ export const aiTurnStatus = pgEnum('ai_turn_status', [
 export const riskLevel = pgEnum('risk_level', ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']);
 export const reviewState = pgEnum('review_state', ['pending', 'in_review', 'resolved']);
 export const reviewPriority = pgEnum('review_priority', ['high', 'urgent']);
+export const knowledgePublicationStatus = pgEnum('knowledge_publication_status', [
+  'draft',
+  'published',
+  'withdrawn',
+]);
+export const knowledgeReviewStatus = pgEnum('knowledge_review_status', [
+  'unverified',
+  'source_verified',
+  'professional_reviewed',
+]);
+export const knowledgeContentOrigin = pgEnum('knowledge_content_origin', [
+  'curated',
+  'synthetic_fixture',
+]);
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey(),
@@ -282,6 +296,109 @@ export const moodEntries = pgTable(
   ],
 );
 
+export type KnowledgeContentBlockRecord =
+  | { type: 'heading'; level: 2 | 3; text: string }
+  | { type: 'paragraph'; text: string }
+  | { type: 'list'; style: 'ordered' | 'unordered'; items: string[] }
+  | { type: 'callout'; tone: 'information' | 'important'; text: string };
+
+export const knowledgeArticles = pgTable(
+  'knowledge_articles',
+  {
+    id: uuid('id').primaryKey(),
+    articleKey: varchar('article_key', { length: 100 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('knowledge_articles_article_key_unique').on(table.articleKey),
+    check('knowledge_articles_key_check', sql`${table.articleKey} ~ '^[a-z0-9]+(-[a-z0-9]+)*$'`),
+  ],
+);
+
+export const knowledgeArticleVersions = pgTable(
+  'knowledge_article_versions',
+  {
+    id: uuid('id').primaryKey(),
+    articleId: uuid('article_id')
+      .notNull()
+      .references(() => knowledgeArticles.id, { onDelete: 'cascade' }),
+    version: integer('version').notNull(),
+    title: varchar('title', { length: 160 }).notNull(),
+    summary: varchar('summary', { length: 320 }).notNull(),
+    contentBlocks: jsonb('content_blocks').$type<KnowledgeContentBlockRecord[]>().notNull(),
+    publicationStatus: knowledgePublicationStatus('publication_status').notNull(),
+    reviewStatus: knowledgeReviewStatus('review_status').notNull(),
+    contentOrigin: knowledgeContentOrigin('content_origin').notNull(),
+    reviewedBy: varchar('reviewed_by', { length: 128 }),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true, mode: 'date' }),
+    publishedAt: timestamp('published_at', { withTimezone: true, mode: 'date' }),
+    withdrawnAt: timestamp('withdrawn_at', { withTimezone: true, mode: 'date' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('knowledge_article_versions_article_version_unique').on(
+      table.articleId,
+      table.version,
+    ),
+    uniqueIndex('knowledge_article_versions_current_unique')
+      .on(table.articleId)
+      .where(sql`${table.publicationStatus} = 'published'`),
+    index('knowledge_article_versions_current_list_idx').on(
+      table.publicationStatus,
+      table.publishedAt,
+      table.id,
+    ),
+    check('knowledge_article_versions_version_check', sql`${table.version} > 0`),
+    check(
+      'knowledge_article_versions_content_blocks_check',
+      sql`jsonb_typeof(${table.contentBlocks}) = 'array' AND jsonb_array_length(${table.contentBlocks}) BETWEEN 1 AND 100`,
+    ),
+    check(
+      'knowledge_article_versions_status_timestamps_check',
+      sql`(${table.publicationStatus} = 'draft' AND ${table.publishedAt} IS NULL AND ${table.withdrawnAt} IS NULL) OR (${table.publicationStatus} = 'published' AND ${table.publishedAt} IS NOT NULL AND ${table.withdrawnAt} IS NULL) OR (${table.publicationStatus} = 'withdrawn' AND ${table.publishedAt} IS NOT NULL AND ${table.withdrawnAt} IS NOT NULL AND ${table.withdrawnAt} >= ${table.publishedAt})`,
+    ),
+    check(
+      'knowledge_article_versions_review_evidence_check',
+      sql`(${table.reviewStatus} = 'unverified' AND ${table.reviewedBy} IS NULL AND ${table.reviewedAt} IS NULL) OR (${table.reviewStatus} IN ('source_verified', 'professional_reviewed') AND ${table.reviewedBy} IS NOT NULL AND ${table.reviewedAt} IS NOT NULL)`,
+    ),
+    check(
+      'knowledge_article_versions_origin_review_check',
+      sql`(${table.contentOrigin} = 'synthetic_fixture' AND ${table.reviewStatus} = 'unverified') OR ${table.contentOrigin} = 'curated'`,
+    ),
+    check(
+      'knowledge_article_versions_curated_publication_check',
+      sql`${table.publicationStatus} = 'draft' OR ${table.contentOrigin} = 'synthetic_fixture' OR ${table.reviewStatus} IN ('source_verified', 'professional_reviewed')`,
+    ),
+  ],
+);
+
+export const knowledgeArticleSources = pgTable(
+  'knowledge_article_sources',
+  {
+    id: uuid('id').primaryKey(),
+    articleVersionId: uuid('article_version_id')
+      .notNull()
+      .references(() => knowledgeArticleVersions.id, { onDelete: 'cascade' }),
+    ordinal: integer('ordinal').notNull(),
+    publisherName: varchar('publisher_name', { length: 160 }).notNull(),
+    sourceTitle: varchar('source_title', { length: 320 }).notNull(),
+    sourceUrl: text('source_url').notNull(),
+    sourcePublishedAt: timestamp('source_published_at', { withTimezone: true, mode: 'date' }),
+    sourceVersionLabel: varchar('source_version_label', { length: 120 }),
+    sourceLocator: varchar('source_locator', { length: 160 }),
+    retrievedAt: timestamp('retrieved_at', { withTimezone: true, mode: 'date' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('knowledge_article_sources_version_ordinal_unique').on(
+      table.articleVersionId,
+      table.ordinal,
+    ),
+    index('knowledge_article_sources_version_idx').on(table.articleVersionId),
+    check('knowledge_article_sources_ordinal_check', sql`${table.ordinal} > 0`),
+    check('knowledge_article_sources_https_check', sql`${table.sourceUrl} ~ '^https://'`),
+  ],
+);
+
 export const conversations = pgTable(
   'conversations',
   {
@@ -465,6 +582,9 @@ export const schema = {
   passwordCredentials,
   quotaConsumptions,
   humanReviewQueueItems,
+  knowledgeArticles,
+  knowledgeArticleSources,
+  knowledgeArticleVersions,
   riskEvents,
   sessions,
   users,
@@ -479,3 +599,6 @@ export type MessageRole = (typeof messageRole.enumValues)[number];
 export type RiskLevel = (typeof riskLevel.enumValues)[number];
 export type ReviewState = (typeof reviewState.enumValues)[number];
 export type ReviewPriority = (typeof reviewPriority.enumValues)[number];
+export type KnowledgePublicationStatus = (typeof knowledgePublicationStatus.enumValues)[number];
+export type KnowledgeReviewStatus = (typeof knowledgeReviewStatus.enumValues)[number];
+export type KnowledgeContentOrigin = (typeof knowledgeContentOrigin.enumValues)[number];
