@@ -76,6 +76,7 @@ export function PrivacyPage() {
   const [history, setHistory] = useState<ConsentHistoryItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -118,6 +119,7 @@ export function PrivacyPage() {
           mode === 'more' ? [...items, ...response.data.consents] : response.data.consents,
         );
         setNextCursor(response.data.nextCursor);
+        setHasLoaded(true);
         if (mode !== 'more') setStateAuthoritative(true);
         return true;
       } catch (reason) {
@@ -126,7 +128,7 @@ export function PrivacyPage() {
           mountedRef.current &&
           generation === loadGenerationRef.current
         ) {
-          setError(reason instanceof Error ? reason.message : '无法加载隐私设置');
+          setError('暂时无法获取同意状态，请检查网络后重试。');
         }
         return false;
       } finally {
@@ -365,13 +367,13 @@ export function PrivacyPage() {
         </div>
       ) : null}
       {loading ? <p aria-busy="true">正在加载同意状态…</p> : null}
-      {!loading && !stateAuthoritative ? (
+      {!loading && hasLoaded && !stateAuthoritative ? (
         <p className="inline-warning" role="status">
           当前显示的是上次已知状态。服务器最新状态加载成功前，不能提交新的同意操作。
         </p>
       ) : null}
 
-      {!loading ? (
+      {!loading && hasLoaded ? (
         <>
           <section className="privacy-card" aria-labelledby="current-consents-title">
             <h2 id="current-consents-title">当前必要同意</h2>

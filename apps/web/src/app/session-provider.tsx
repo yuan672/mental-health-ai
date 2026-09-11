@@ -15,7 +15,7 @@ import { subscribeSessionInvalidated } from '../api/session-events';
 
 export type SessionState =
   | Readonly<{ status: 'bootstrapping' }>
-  | Readonly<{ status: 'guest' }>
+  | Readonly<{ status: 'guest'; reason?: 'expired' | 'signed-out' }>
   | Readonly<{ status: 'authenticated'; value: AuthSession }>
   | Readonly<{ status: 'error'; message: string }>;
 
@@ -32,6 +32,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<SessionState>({ status: 'bootstrapping' });
   const operationRef = useRef(0);
   const bootstrapAbortRef = useRef<AbortController | null>(null);
+  const logoutRequestedRef = useRef(false);
 
   const invalidateBootstrap = useCallback(() => {
     ++operationRef.current;
@@ -71,7 +72,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     void Promise.resolve().then(bootstrap);
     const unsubscribe = subscribeSessionInvalidated(() => {
       invalidateBootstrap();
-      setState({ status: 'guest' });
+      const reason = logoutRequestedRef.current ? 'signed-out' : 'expired';
+      setState((previous) =>
+        previous.status === 'guest' ? previous : { status: 'guest', reason },
+      );
     });
     return () => {
       invalidateBootstrap();
@@ -94,9 +98,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       logout: async () => {
         invalidateBootstrap();
         const operation = operationRef.current;
-        await logoutRequest();
-        if (operation === operationRef.current) {
-          setState({ status: 'guest' });
+        logoutRequestedRef.current = true;
+        try {
+          await logoutRequest();
+          if (operation === operationRef.current) {
+            setState({ status: 'guest', reason: 'signed-out' });
+          }
+        } finally {
+          logoutRequestedRef.current = false;
         }
       },
     }),

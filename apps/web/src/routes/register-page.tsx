@@ -1,8 +1,9 @@
 import type { RegistrationRequirementsResponse } from '@mental-health/types';
-import { type FormEvent, useEffect, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { getRegistrationRequirements, register } from '../api/auth';
 import { copy } from '../locales';
+import { registrationPasswordError } from './registration-password';
 
 export function RegisterPage() {
   const navigate = useNavigate();
@@ -16,6 +17,8 @@ export function RegisterPage() {
   const [accepted, setAccepted] = useState<ReadonlySet<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -31,8 +34,14 @@ export function RegisterPage() {
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!requirements?.registrationEnabled) return;
-    setSubmitting(true);
+    const validationError = registrationPasswordError(password);
+    setPasswordError(validationError);
     setSubmitError(null);
+    if (validationError) {
+      passwordRef.current?.focus();
+      return;
+    }
+    setSubmitting(true);
     try {
       await register({
         email,
@@ -47,8 +56,8 @@ export function RegisterPage() {
         })),
       });
       navigate('/login?registered=1', { replace: true });
-    } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : '注册失败，请重试');
+    } catch {
+      setSubmitError('暂时无法完成注册，请核对填写信息或稍后重试。');
     } finally {
       setSubmitting(false);
     }
@@ -97,17 +106,26 @@ export function RegisterPage() {
             <label htmlFor="register-password">密码</label>
             <input
               id="register-password"
+              ref={passwordRef}
               type="password"
               autoComplete="new-password"
-              minLength={12}
               required
               value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              aria-describedby="password-help"
+              onChange={(event) => {
+                setPassword(event.target.value);
+                if (passwordError) setPasswordError(registrationPasswordError(event.target.value));
+              }}
+              aria-invalid={passwordError ? true : undefined}
+              aria-describedby={passwordError ? 'password-help password-error' : 'password-help'}
             />
             <p id="password-help" className="form-help">
-              至少 12 个字符，并使用至少三类字符。
+              12–128 个字符；小写英文字母、大写英文字母、数字、符号中至少使用三类。
             </p>
+            {passwordError ? (
+              <p id="password-error" className="inline-error" role="alert">
+                {passwordError}
+              </p>
+            ) : null}
             <label htmlFor="age-evidence">年龄验证凭证</label>
             <input
               id="age-evidence"
@@ -143,11 +161,13 @@ export function RegisterPage() {
                         })
                       }
                     />
-                    我已阅读并接受
-                    <a href={consent.documentUrl} target="_blank" rel="noreferrer">
-                      {label}
-                    </a>
-                    （版本 {consent.version}）
+                    <span>
+                      我已阅读并接受
+                      <a href={consent.documentUrl} target="_blank" rel="noreferrer">
+                        {label}
+                      </a>
+                      （版本 {consent.version}）
+                    </span>
                   </label>
                 );
               })}

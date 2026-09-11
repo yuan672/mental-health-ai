@@ -119,6 +119,46 @@ function deferred<T>() {
 }
 
 describe('Privacy Consent lifecycle UI', () => {
+  it('keeps a first read failure distinct from a successful empty result and retries', async () => {
+    mocks.getConsentHistory
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(response([]));
+    render(<PrivacyPage />);
+    expect(await screen.findByText('暂时无法获取同意状态，请检查网络后重试。')).toBeInTheDocument();
+    expect(screen.queryByText('暂无同意记录。')).not.toBeInTheDocument();
+    expect(screen.queryByText(/上次已知状态/u)).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '当前必要同意' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '重新加载' }));
+    expect(await screen.findByText('暂无同意记录。')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('retains known data after refresh failure but requires a successful retry before new actions', async () => {
+    const active = currentConsent({
+      status: 'accepted',
+      authorizationStatus: 'active',
+      withdrawalEnabled: true,
+    });
+    mocks.getConsentHistory
+      .mockResolvedValueOnce(response([active]))
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(response([active]));
+    mocks.mutateConsent.mockRejectedValueOnce(
+      new ApiClientError('CONSENT_STATE_CHANGED', 'changed', 409),
+    );
+    render(<PrivacyPage />);
+    await userEvent.click(await screen.findByRole('button', { name: '撤回服务条款版本 terms-v1' }));
+    await userEvent.click(screen.getByRole('button', { name: '确认撤回' }));
+    expect(await screen.findByText(/上次已知状态/u)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '撤回服务条款版本 terms-v1' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: '重新加载' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '撤回服务条款版本 terms-v1' })).toBeEnabled(),
+    );
+    expect(screen.queryByText(/上次已知状态/u)).not.toBeInTheDocument();
+    expect(mocks.mutateConsent).toHaveBeenCalledTimes(1);
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
     mocks.active = false;
