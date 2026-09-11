@@ -40,7 +40,48 @@ test('landing, login, protected app shell, and logout', async ({ page }) => {
   await page.getByRole('button', { name: '退出' }).click();
   await expect(page).toHaveURL(/\/login\?returnTo=/u);
   await expect(page.getByRole('heading', { name: '登录' })).toBeVisible();
+  await expect(page.getByText('你已退出登录。')).toBeVisible();
+  await expect(page.getByText(/登录状态已失效/u)).toHaveCount(0);
   await expect(page.getByText('今天想从哪里说起？')).toHaveCount(0);
+});
+
+test('registration and history controls remain readable and reachable at supported widths', async ({
+  page,
+}) => {
+  await page.goto('/register');
+  for (const width of [320, 390, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    const terms = page.getByRole('link', { name: '服务条款', exact: true });
+    await expect(terms).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    ).toBe(true);
+    // An inline link may wrap naturally, but must not collapse to one glyph per line.
+    expect(
+      await terms.evaluate((element) => element.getBoundingClientRect().width),
+    ).toBeGreaterThan(24);
+  }
+  await login(page);
+  await page.getByLabel('输入消息').fill('合成窄屏布局回归。');
+  await page.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(page.getByText('回复已完成。')).toBeVisible();
+  for (const width of [320, 390, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    ).toBe(true);
+    const remove = page.getByRole('button', { name: '删除', exact: true });
+    await expect(remove).toBeVisible();
+    await expect(page.getByRole('button', { name: '保留对话' })).toBeVisible();
+    await remove.click();
+    const dialog = page.getByRole('dialog', { name: '删除这次聊天？' });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: '取消' }).click();
+  }
 });
 
 test('new chat keeps true synthetic streaming alive through route replacement and refresh', async ({

@@ -1,10 +1,11 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type ReactNode } from 'react';
 import { MemoryRouter, useLocation } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppRoutes } from './app-routes';
 import { SessionProvider } from './session-provider';
+import { notifySessionInvalidated } from '../api/session-events';
 
 const USER_A = '11111111-1111-4111-8111-111111111111';
 const USER_B = '22222222-2222-4222-8222-222222222222';
@@ -66,6 +67,44 @@ function renderProduct(path: string) {
 }
 
 describe('Phase 5B product flows', () => {
+  it('explains passive session invalidation without replaying work and safely returns after login', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/auth/login') return session(USER_B);
+      return baseJsonResponse(`${url.pathname}${url.search}`) ?? success({});
+    });
+    vi.stubGlobal('fetch', fetcher);
+    renderProduct('/app/chat');
+    await userEvent.type(await screen.findByLabelText('输入消息'), 'synthetic private draft');
+    act(() => notifySessionInvalidated());
+    expect(await screen.findByText(/登录状态已失效/u)).toHaveTextContent('登录后核对状态');
+    expect(screen.queryByDisplayValue('synthetic private draft')).not.toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent('/login?returnTo=%2Fapp%2Fchat');
+    await userEvent.type(screen.getByLabelText('邮箱'), 'user-b@example.test');
+    await userEvent.type(screen.getByLabelText('密码'), 'Synthetic-Login-9!');
+    await userEvent.click(screen.getByRole('button', { name: '登录' }));
+    expect(await screen.findByLabelText('输入消息')).toHaveValue('');
+    expect(fetcher.mock.calls.some(([input]) => String(input).includes('/ai/chat/stream'))).toBe(
+      false,
+    );
+  });
+
+  it('labels an explicit logout separately from expiry', async () => {
+    document.cookie = 'mh_csrf=synthetic-csrf; Path=/';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>().mockImplementation(async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname === '/auth/logout') return success({ loggedOut: true });
+        return baseJsonResponse(`${url.pathname}${url.search}`) ?? success({});
+      }),
+    );
+    renderProduct('/app/chat');
+    await userEvent.click(await screen.findByRole('button', { name: '退出' }));
+    expect(await screen.findByText('你已退出登录。')).toBeInTheDocument();
+    expect(screen.queryByText(/登录状态已失效/u)).not.toBeInTheDocument();
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
     document.cookie = 'mh_csrf=; Max-Age=0; Path=/';

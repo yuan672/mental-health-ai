@@ -39,6 +39,15 @@ export function LoginPage() {
       <section className="auth-card" aria-labelledby="login-title">
         <p className="eyebrow">欢迎回来</p>
         <h1 id="login-title">登录</h1>
+        {session.state.status === 'guest' && session.state.reason === 'expired' ? (
+          <p className="success-note" role="status">
+            登录状态已失效，请重新登录。如刚才有正在提交的操作，请登录后核对状态。
+          </p>
+        ) : session.state.status === 'guest' && session.state.reason === 'signed-out' ? (
+          <p className="success-note" role="status">
+            你已退出登录。
+          </p>
+        ) : null}
         {searchParams.get('registered') === '1' ? (
           <p className="success-note" role="status">
             注册成功，请登录。
