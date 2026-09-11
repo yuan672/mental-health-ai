@@ -133,6 +133,12 @@ export class ConsentUnavailableError extends AppError {
   }
 }
 
+export class MoodStateChangedError extends AppError {
+  constructor(message = '心情记录已发生变化，请刷新后重试') {
+    super(ERROR_CODES.MOOD_STATE_CHANGED, 409, message);
+  }
+}
+
 export class DatabaseError extends AppError {
   constructor(message = '数据服务暂时不可用') {
     super(ERROR_CODES.DATABASE_ERROR, 500, message);

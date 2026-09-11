@@ -16,7 +16,8 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   policy/content approval and production enablement remain incomplete
 - Phase 5B — Chat Product Experience: Product UI engineering complete
 - Phase 5D — Mood / Profile: ADR-017 and the engineering contract are accepted;
-  Phase 5D-1 backend implementation has not started
+  Phase 5D-1 backend implementation is under review on
+  `feature/mood-profile-backend`; Phase 5D-2 Web has not started
 - Phase 6 — Admin and operations features: Not started
 
 ## Current Production State
@@ -58,8 +59,10 @@ safety, or validation for clinical use.
   and a read-only Privacy/Consent overview. This does not mark all Phase 5C
   product-policy work complete.
 - Mood/Profile product scope and engineering contract are accepted in ADR-017.
-  Phase 5D-1 backend implementation, Phase 5D-2 Web, Knowledge Base,
-  Admin/Reviewer features, and production enablement remain outside completed scope.
+  The Phase 5D-1 backend feature branch adds the Mood/Profile API, generated 0006
+  migration, content-free deletion Audit actions, and tests; it remains unmerged
+  pending review. Phase 5D-2 Web, Knowledge Base, Admin/Reviewer features, and
+  production enablement remain outside completed scope.
 
 ## Phase 5C Batch Scope and Open Consent Product Flow
 
@@ -119,9 +122,8 @@ None.
 
 ## Immediate Next Step
 
-Merge the accepted Phase 5D design, verify post-merge CI, then begin only the
-authorized Phase 5D-1 Mood/Profile backend implementation on a separate feature
-branch. Do not begin Phase 5D-2, Phase 5E, or Phase 6.
+Review the bounded Phase 5D-1 Mood/Profile backend implementation. Do not merge it
+without explicit authorization, and do not begin Phase 5D-2, Phase 5E, or Phase 6.
 
 ## Source of Truth
 

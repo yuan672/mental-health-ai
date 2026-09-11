@@ -10,6 +10,8 @@ import { DatabaseModule } from './database/database.module';
 import { env } from './config/env';
 import { HealthModule } from './health/health.module';
 import { MessageModule } from './messages/message.module';
+import { MoodModule } from './mood/mood.module';
+import { ProfileModule } from './profile/profile.module';
 import { QuotaModule } from './quota/quota.module';
 import { SecurityModule } from './security/security.module';
 import { safeOperationalPath } from './common/http/safe-request-path';
@@ -49,6 +51,14 @@ export const LOG_REDACT_PATHS = [
   '*.messageContent',
   'conversationContent',
   '*.conversationContent',
+  'moodScore',
+  '*.moodScore',
+  'emotion',
+  '*.emotion',
+  'note',
+  '*.note',
+  'dailyTrend',
+  '*.dailyTrend',
   'prompt',
   '*.prompt',
   'reasoning_content',
@@ -90,6 +100,8 @@ export const LOG_REDACT_PATHS = [
     ConversationAccessModule,
     ConversationModule,
     MessageModule,
+    MoodModule,
+    ProfileModule,
     QuotaModule,
   ],
 })
