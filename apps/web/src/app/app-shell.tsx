@@ -131,6 +131,7 @@ function AppShellContent() {
           <nav className="product-navigation" aria-label="产品功能">
             <NavLink to="/app/chat/incognito">无痕聊天</NavLink>
             <NavLink to="/app/mood">心情记录</NavLink>
+            <NavLink to="/app/knowledge">知识中心</NavLink>
             <NavLink to="/app/profile">个人资料</NavLink>
             <NavLink to="/app/privacy">隐私与数据</NavLink>
           </nav>
@@ -183,6 +184,9 @@ function AppShellContent() {
               </NavLink>
               <NavLink to="/app/mood" onClick={() => setDrawerOpen(false)}>
                 心情记录
+              </NavLink>
+              <NavLink to="/app/knowledge" onClick={() => setDrawerOpen(false)}>
+                知识中心
               </NavLink>
               <NavLink to="/app/profile" onClick={() => setDrawerOpen(false)}>
                 个人资料
