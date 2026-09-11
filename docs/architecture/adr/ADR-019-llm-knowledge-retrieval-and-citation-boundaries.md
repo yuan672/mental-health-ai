@@ -52,9 +52,11 @@ No-hit, candidate-limit, and ordinary local retrieval failure use the unchanged
 non-grounded chat path. Abort, Consent withdrawal, session invalidation, or deadline
 is never converted to a miss.
 
-HIGH, CRITICAL, classifier-unavailable, quota safety fallback, CrisisFlow, trusted
-degraded responses, and output replacements do not retrieve Knowledge and carry no
-Knowledge references in the first implementation.
+Pre-route HIGH, CRITICAL, classifier-unavailable, quota safety fallback,
+CrisisFlow, and trusted degraded responses do not retrieve Knowledge. A trusted
+post-Output-Safety replacement can occur after retrieval and grounded generation,
+but the rejected candidate and all prepared references are discarded; the
+replacement itself carries no Knowledge reference.
 
 ### Eligibility and exact-version snapshot
 
@@ -180,10 +182,57 @@ enters later LLM Conversation Context.
 ### Negotiated protocol refinement
 
 Keep `turn.started`, `message.segment`, `turn.completed`, and `turn.failed` as the
-only public SSE event names. A negotiated v2 `turn.completed` adds a bounded
+only public SSE event names. In the negotiated v2 representation,
+`message.segment` and `turn.completed` both carry a required `deliveryMode` of
+`immediate` or `commit_with_references`, and completion adds a bounded
 `knowledgeReferences` array. Negotiated message history similarly adds a required
 array to each message. Persistent and Incognito variants retain their strict
 discriminated IDs.
+
+No-hit semantic segments and trusted deterministic replacement text use
+`immediate` with empty references and retain their existing visible/failure
+semantics. A Knowledge hit emits exactly one full-buffered approved
+`commit_with_references` segment. The Web holds that body in bounded React memory
+without rendering or announcing it. Only a strict matching completion with a valid
+non-empty reference array promotes body and references together in one reducer
+transition. This is an atomic client-state transition, not a claim that the two SSE
+events or network delivery are atomic.
+
+Because a Persistent commit or Incognito context append can precede the first
+segment's arrival, recovery is request-level rather than conditional on observing a
+grounded segment. After stream admission or an unknown POST outcome, missing,
+truncated, invalid, mismatched, or late completion, a grounded completion without
+its required pending segment, and any other absence of a strict matching terminal
+leave the result unresolved; a typed stream-parser error is not proof that the turn
+failed. Persistent mode uses the original `clientRequestId` to resolve an already
+admitted turn's metadata and performs a strict v2 owner-scoped history read that
+commits a stored assistant body and references to visible state together. Exact
+POST replay for metadata requires positive admission evidence; a cancel, Session
+invalidation, or Consent withdrawal with no such evidence cannot invoke an
+operation that might start the request. The existing completed-request replay
+remains metadata-only; it neither regenerates nor adds a body-replay endpoint.
+Until metadata/history resolve the outcome, the Web does not offer retry-as-new.
+
+After a grounded Persistent commit or Incognito context append wins its protected
+barrier, a later serialization or socket failure cannot be represented as a
+definitive `turn.failed` implying that side effect did not occur. The delivery is
+unresolved and follows Persistent reconciliation or Incognito retirement. This
+does not change the existing immediate trusted-text-plus-failure contract when the
+trusted response itself was not persisted.
+
+Only passive network uncertainty, when the user still explicitly wants the same
+operation, may use the existing same-ID idempotent retry. If no turn was previously
+claimed, it may execute that logical request for the first time and is not called a
+metadata-only replay; if a turn exists, it returns existing metadata without a
+second Provider call or quota charge. Explicit cancel, deadline, workspace/account
+termination, Session invalidation, and Consent withdrawal never invoke this POST
+retry.
+
+Incognito has no recovery reader. Any possibly accepted request without a strict
+matching terminal retires the context identity even if no segment arrived. It
+discards a pending grounded delivery and relies on existing cancel/end/TTL cleanup
+without persistence or generation replay. Immediate trusted text already shown may
+retain its existing failure qualification, but the retired context is not reused.
 
 Use an explicit `X-MH-Knowledge-References: 1` request capability. Clients without
 it receive v1 shapes and Knowledge augmentation is disabled for their stream.
@@ -191,19 +240,31 @@ Clients with it receive strict v2 shapes; the response acknowledges the selected
 representation with the same header and `Vary`. Unsupported non-empty capability
 values fail with a typed 400 response. A v1 history request for a page containing a
 referenced message fails closed with HTTP 406 `CLIENT_CAPABILITY_REQUIRED`; it may
-not return the answer while silently omitting its provenance. Rollout order is the backend
-schema/guard, then the citation-aware Web, then augmentation enablement. The
-citation-aware history guard cannot be rolled back while reference rows remain.
-This avoids breaking cached or rolling old clients whose strict Zod schemas reject
-unknown fields or silently dropping citations from grounded history.
-The allowed Web origin can read the acknowledgement because CORS exposes this
-response header.
+not return the answer while silently omitting its provenance. The error carries a
+bounded update-required message, and the Web does not commit an unparseable history
+body. The allowed Web origin can read the acknowledgement because CORS exposes
+this response header.
+
+Rollout order is the backend schema/guard, then the citation-aware Web and 406
+handler, then augmentation enablement. With no reference rows and augmentation
+disabled, old v1 API/Web behavior remains sufficient. Once reference rows may
+exist, disabling augmentation stops new grounded answers but does not permit
+rolling back the strict v2 history reader, reference presentation, or v1 history
+guard. Old/stale clients receive 406 and must update for affected pages. Removing
+that deployed floor requires a separate verified change after normal Message
+lifecycle cleanup has removed every reference dependency and no reference-capable
+in-flight turn can still commit one. The safe order is to disable new augmentation
+admission, drain or abort those turns under existing late-result guards, verify
+zero stored references and zero possible writers, and only then review a deployment
+floor reduction. Rollback never deletes references, clears Conversations, or
+rewrites/retargets historical evidence.
 
 For a persistent grounded answer, assistant text, exact-version references, and
 completed turn state commit before the single approved answer segment and
-completion are emitted. Incognito appends only approved assistant text to its
-context; references travel through SSE to React memory. Existing final Consent and
-cancellation checks precede every SSE write.
+completion are emitted. That transaction enables authoritative recovery but does
+not prove that the browser received either event. Incognito appends only approved
+assistant text to its context; references travel through SSE to React memory.
+Existing final Consent and cancellation checks precede every SSE write.
 
 ### Consent, third-party, quota, and logging
 
@@ -255,13 +316,16 @@ claim. Production Safety Lock remains enforced, Production AI Chat remains disab
   from leaking through token streaming.
 - Persistent provenance survives refresh while Incognito remains ephemeral.
 - Version replacement cannot silently rewrite an old citation into a new article.
-- Explicit capability negotiation gives API and Web a safe rollout and rollback
-  boundary.
+- Explicit capability negotiation gives API and Web a safe rollout and an explicit
+  data-dependent rollback floor.
 
 ### Costs and limitations
 
 - Lexical matching misses paraphrases and requires a bounded corpus.
 - Full buffering increases time to first visible content for Knowledge hits.
+- The Web must retain a bounded hidden grounded buffer and reconcile Persistent
+  history when completion delivery is uncertain; Incognito cannot recover that
+  ephemeral delivery.
 - Article-level sources cannot justify per-sentence citation claims.
 - The message-version relation is a limited derived-interest signal and must remain
   protected by Conversation access and deletion rules.

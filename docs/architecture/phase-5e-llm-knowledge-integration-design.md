@@ -378,11 +378,70 @@ promise that the external page remains unchanged.
 
 ## 9. SSE and history compatibility
 
-Keep the four public SSE event names. Only a successfully completed v2 turn adds a
-bounded `knowledgeReferences` array to `turn.completed`; `message.segment` remains
-plain answer text. Persistent and Incognito completion keep their existing strict
-mode-specific IDs, so Incognito never fabricates `conversationId` or
-`assistantMessageId`.
+Keep the four public SSE event names. The negotiated v2 representation refines the
+existing `message.segment` and `turn.completed` payloads rather than adding a fifth
+event:
+
+- every v2 `message.segment` has a required `deliveryMode` of `immediate` or
+  `commit_with_references`;
+- every v2 `turn.completed` has the same required `deliveryMode` and a bounded
+  `knowledgeReferences` array; and
+- Persistent and Incognito events retain their existing strict mode-specific IDs,
+  so Incognito never fabricates `conversationId` or `assistantMessageId`.
+
+`deliveryMode` is a presentation-integrity instruction, not Risk or classifier
+metadata. The Web validates it before placing segment text in visible state:
+
+| Mode                     | Server contract                                                                                                                                              | Web contract                                                                                                                                          |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `immediate`              | Used for ordinary no-hit semantic segments and trusted deterministic replacement text. Completion references must be empty.                                  | Append approved segments immediately under the existing semantics. A later failure retains already visible safe text as it does today.                |
+| `commit_with_references` | Used only for a Knowledge hit. Exactly one non-empty segment contains the already full-buffered approved answer; completion has a non-empty reference array. | Hold the segment in bounded React memory keyed by the active turn/generation identity. Do not render, announce, or retain it as terminal content yet. |
+
+The completion is a strict discriminated union, conceptually:
+
+```ts
+type V2Completion =
+  | {
+      deliveryMode: 'immediate';
+      knowledgeReferences: [];
+    }
+  | {
+      deliveryMode: 'commit_with_references';
+      knowledgeReferences: [KnowledgeReference, ...KnowledgeReference[]];
+    };
+```
+
+The existing strict Persistent/Incognito completion fields intersect this union;
+the example does not replace their IDs or bounds.
+
+For `commit_with_references`, a strict `turn.completed` must match the active
+turn/generation identity and delivery mode and carry a valid non-empty reference
+array. One reducer transition then promotes the pending body and its references to
+visible committed state together. The transition is atomic only as a client state
+update; it does not claim that two SSE frames, a database transaction, or a socket
+write are an atomic network delivery. A missing segment, multiple grounded
+segments, mixed modes, an empty/invalid reference array, or mismatched identity is
+a protocol failure and never exposes the pending text.
+
+This distinction is deliberately segment-level. A trusted safety fallback emitted
+after a grounded candidate is rejected uses `immediate` with no references and
+keeps the existing safety-message retention behavior. It must not be placed in or
+discarded with the grounded pending buffer. A no-hit turn likewise remains true
+semantic streaming even when the client negotiated v2.
+
+The two delivery sequences are therefore explicit:
+
+1. For a hit, the client parses `commit_with_references`, stores the full segment
+   outside the visible transcript, then parses a matching completion and commits
+   `{ body, references }` to visible state in one reducer action. If completion is
+   not validly received, that action never occurs.
+2. For a no-hit or trusted replacement, the client parses `immediate` and appends
+   each approved segment as it arrives. Completion closes the turn but is not the
+   visibility gate for text that was already safely displayed.
+
+`turn.started` remains a lifecycle event and does not assert that retrieval hit.
+The request-level recovery rule below closes the commit/append-before-first-segment
+window without exposing retrieval classification in this event.
 
 Current clients reject unknown completion fields. The rollout must therefore use
 explicit capability negotiation rather than claiming an optional field is
@@ -393,7 +452,8 @@ backward-compatible:
 - without the header, the API uses the v1 response shapes and does not enable
   Knowledge augmentation for that stream;
 - with the header, completion and message history use strict v2 schemas with
-  `knowledgeReferences` present, including an empty array;
+  `deliveryMode` present on stream content/completion and
+  `knowledgeReferences` present on completion/history, including an empty array;
 - successful v2 responses echo `X-MH-Knowledge-References: 1` and include
   `Vary: X-MH-Knowledge-References`; an unsupported non-empty value is a typed 400
   error rather than a silent downgrade;
@@ -405,20 +465,45 @@ backward-compatible:
 - the Web chooses the strict parser from the acknowledged representation.
 
 The rollout is backend schema/guard first, then the citation-aware Web, then
-augmentation enablement. Disabling augmentation stops new grounded turns, but the
-citation-aware history guard and reader cannot be rolled back while reference rows
-remain. This supports stale browser assets without silently stripping provenance.
-It does not add a new SSE event, expose ranking metadata, or put references in
-model-authored plain text.
+augmentation enablement. The Web and API use the following deployment/rollback
+matrix:
+
+| Stored reference state                                                                                                                        | New augmentation                           | Required deployed floor                                                                                                   | Old/stale client behavior                                                                                                   |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| No reference rows and no reference-capable writer (initial pre-enable state)                                                                  | Disabled                                   | Existing v1 reader is sufficient; the unused forward-only table may remain.                                               | v1 stream/history continue normally.                                                                                        |
+| No reference rows and no reference-capable writer                                                                                             | Disabled, v2 rollout in progress           | v2 schemas, strict acknowledgement, and the update-required handler may be deployed and tested before enablement.         | Clients without the capability continue receiving v1 with no augmentation.                                                  |
+| Reference rows may exist                                                                                                                      | Enabled                                    | v2 stream/history reader, citation presentation, and v1 history guard must remain deployed.                               | Streams without the capability receive no augmentation; a history page containing a referenced message returns 406.         |
+| Reference rows exist                                                                                                                          | Disabled for rollback or incident response | Stop creating new grounded answers, but keep the v2 history reader, citation presentation, and v1 history guard.          | The same 406 behavior applies; existing references remain readable after the client updates.                                |
+| No reference rows remain through normal Message lifecycle, augmentation admission is disabled, and no reference-capable turn can still commit | Disabled                                   | Removing the read/presentation floor requires a separate verified change; it never follows from deleting evidence ad hoc. | A reviewed rollback may restore the earlier application floor only after stored and in-flight dependency absence is proven. |
+
+HTTP 406 uses the typed `CLIENT_CAPABILITY_REQUIRED` error and a bounded
+user-facing message that tells the user to refresh/update the client. The Web clears
+any uncommitted history-load state and shows that prompt; it must not render a body
+from a response whose references it cannot parse. Rollout must put this handler in
+place before augmentation can create reference rows. Disabling augmentation is
+therefore a safe generation rollback, not authorization to remove historical
+reference reading. No rollback deletes references, clears Conversations, rewrites
+article versions, or retargets historical evidence.
+
+Disabling the augmentation flag is not by itself proof that the rollback floor can
+be lowered: a turn that already passed admission/final recheck may still commit a
+reference. The safe order is to disable new augmentation admission, drain or abort
+every reference-capable in-flight execution under the existing late-result guards,
+then verify both zero stored references and zero possible writers. Only a separate
+reviewed deployment change may remove the v2 reader/presentation and v1 guard.
+
+This supports cached browser assets without silently stripping provenance. It does
+not expose ranking metadata or put references in model-authored plain text.
 
 For a Knowledge-assisted persistent turn, the complete assistant message, ordered
 exact-version references, and completed turn state commit in one transaction before
-the answer segment and completion are emitted. If that transaction fails, no
-reference or answer is emitted and the turn cannot claim completion. For Incognito,
-only the approved assistant text enters the existing context; references travel
-from the active execution through SSE to React memory and are then discarded by the
-server. Existing cancellation and late-write guards still run before every SSE
-write.
+the pending answer segment and completion are emitted. If that transaction fails,
+no reference or answer is emitted and the turn cannot claim completion. The earlier
+database commit makes Persistent recovery possible but does not prove the browser
+received either event. For Incognito, only the approved assistant text enters the
+existing context; references travel from the active execution through SSE to React
+memory and are then discarded by the server. Existing cancellation and late-write
+guards still run before every SSE write.
 
 ## 10. Persistence and lifecycle
 
@@ -516,20 +601,125 @@ references.
 
 ## 13. Error and recovery behavior
 
-| Condition                                           | Provider call                                       | User-visible behavior                            | Reference behavior |
-| --------------------------------------------------- | --------------------------------------------------- | ------------------------------------------------ | ------------------ |
-| No lexical hit                                      | Normal generation                                   | Existing chat behavior                           | Empty              |
-| Retrieval database timeout/error                    | Normal generation once, unless request is cancelled | Existing chat behavior; no false grounding claim | Empty              |
-| Consent/cancel/deadline during retrieval            | None after termination                              | Existing cancelled/failed behavior               | Empty              |
-| Version change visible at final recheck             | Normal no-Knowledge generation once                 | Existing chat behavior                           | Empty              |
-| Malformed grounded envelope or invalid reference ID | No content emitted                                  | Typed safe turn failure                          | Empty              |
-| Output Safety blocks or is unavailable              | Upstream aborted/closed                             | Existing trusted safe replacement or failure     | Empty              |
-| Persistent message/reference commit fails           | No answer emitted                                   | Safe turn failure; no fake completion            | Empty              |
-| Client disconnect after Provider start              | Abort and existing quota policy                     | No delivery guarantee                            | No late write      |
+| Condition                                           | Provider call                                       | User-visible behavior                                                       | Reference behavior                                                 |
+| --------------------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| No lexical hit                                      | Normal generation                                   | Existing chat behavior                                                      | Empty                                                              |
+| Retrieval database timeout/error                    | Normal generation once, unless request is cancelled | Existing chat behavior; no false grounding claim                            | Empty                                                              |
+| Consent/cancel/deadline during retrieval            | None after termination                              | Existing cancelled/failed behavior                                          | Empty                                                              |
+| Version change visible at final recheck             | Normal no-Knowledge generation once                 | Existing chat behavior                                                      | Empty                                                              |
+| Malformed grounded envelope or invalid reference ID | No content emitted                                  | Typed safe turn failure                                                     | Empty                                                              |
+| Output Safety blocks or is unavailable              | Upstream aborted/closed                             | Existing trusted safe replacement or failure                                | Empty                                                              |
+| Persistent message/reference commit fails           | No answer emitted                                   | Safe turn failure; no fake completion                                       | Empty                                                              |
+| Client disconnect after Provider start              | Abort and existing quota policy                     | No delivery guarantee; Persistent history may already hold a committed pair | No late SSE; a pair whose commit already won remains exact history |
 
 The design adds no automatic generation retry and no fallback second Provider call.
 An ordinary no-Knowledge generation after a change visible at the final recheck is
 the same one generation attempt, not a retry of a failed model result.
+
+### Request-level delivery and recovery
+
+A server-side Persistent commit or Incognito context append can win its protected
+barrier before the first grounded segment reaches the browser. Recovery therefore
+cannot be triggered only by observing `commit_with_references`; it applies to the
+whole accepted/possibly accepted v2 request.
+
+At the presentation layer:
+
+- a valid matching grounded completion promotes the pending body and references
+  together;
+- an EOF, a truncated/schema-invalid/mismatched completion, user cancellation, or
+  deadline expiry discards any pending grounded body;
+- logout, Session invalidation, workspace replacement, and account change clear
+  both visible and pending state and invalidate the execution identity;
+- a completion that arrives after any terminal state, workspace execution-
+  generation change, or Session generation change is ignored; and
+- an `immediate` segment is outside this pending buffer, so already visible
+  ordinary text or trusted safety replacement keeps the existing fail/cancel
+  retention semantics.
+
+The existing in-place `/app/chat` to `/app/chat/:conversationId` URL replacement
+does not create a new workspace execution identity and therefore does not discard
+an active pending delivery.
+
+A trustworthy v2 terminal is either a strict matching `turn.completed` satisfying
+the delivery-mode union and its required preceding segment state (including the
+single pending segment for `commit_with_references`), or a strict matching
+`turn.failed` received before any grounded pending segment. A completion without
+its required grounded segment, or a failure after one, is a contradictory protocol
+result and must be reconciled. Once `turn.started` has been observed, or the POST
+outcome is unknown after transmission, ending without a trustworthy terminal
+enters `reconciliation_required`. This includes
+`INVALID_STREAM_RESPONSE`, missing terminal, and invalid/mismatched completion even
+when the parser reports a typed error; they are not proof that the accepted turn
+failed. A definitive, valid non-stream AppError received before turn admission
+keeps its existing determinate behavior.
+
+The server-side rule that makes `turn.failed` trustworthy is equally strict: after
+a grounded Persistent commit or Incognito context append has won its protected
+barrier, a later serialization/socket failure must not be emitted as a definitive
+`turn.failed` that implies the side effect did not occur. The transport ends
+without a trustworthy completion, and the client follows Persistent reconciliation
+or Incognito retirement. Immediate trusted replacement text may still use the
+existing text-plus-`turn.failed` contract when its own persistence did not succeed.
+
+For Persistent mode, reconciliation uses the original in-memory request snapshot
+and `clientRequestId`:
+
+1. If the client knows `conversationId`, it first performs the strict v2 owner-
+   scoped history read. A valid assistant body/reference pair is authoritative even
+   if the client missed every stream content event. For an `immediate`/no-hit
+   answer, this pair is the body plus the required explicit empty
+   `knowledgeReferences: []`; for a grounded answer, the array is non-empty.
+2. When the client has positive admission evidence (`turn.started` or the
+   acknowledged v2 SSE response, which is sent only after the turn is prepared),
+   an exact same-request replay may resolve current turn metadata. This evidence
+   means the idempotent replay addresses an existing turn rather than starting a
+   replacement. When no valid pair was read, metadata is required to distinguish
+   failed/cancelled from claimed/streaming/completed.
+3. A completed turn plus a valid stored assistant body/reference relation is
+   committed to visible state together and clears transient cancelled/failed/
+   persistence warnings for that turn.
+4. A confirmed failed/cancelled turn with no stored assistant resolves to the
+   existing terminal UI. Already visible `immediate` safe text remains with its
+   not-saved/failed qualification.
+5. A claimed/streaming turn, failed replay/read, or completed turn without its
+   required valid history pair remains unresolved. A successful history page that
+   merely lacks the pair is not treated as proof of rollback, and the client does
+   not offer retry-as-new while this request remains unresolved.
+6. If no admission evidence or known `conversationId` exists, explicit cancel,
+   deadline, workspace/account termination, Session invalidation, or Consent
+   withdrawal must not replay the chat POST because that could start a request the
+   user intended to stop. It keeps an honest cancelled/unresolved state (or clears
+   it at the privacy boundary) and relies on normal owner-scoped Conversation/
+   history refresh to discover any later-visible commit. This design adds no non-
+   creating turn lookup.
+
+The history response is strictly validated as a whole before any message body is
+committed to React state. A 406 tells the user to update the client. The existing
+replay of a completed persistent `clientRequestId` remains metadata-only and is
+followed by that history read; it never regenerates or adds a turn-status,
+replay-body, or regeneration endpoint.
+
+For a passive network-uncertain request only, if the user explicitly chooses to
+continue the same operation, an exact same-ID retry follows the existing at-most-
+one-logical-turn contract. If the first request never claimed a turn, this retry
+may perform the logical request for the first time; it is not described as a
+metadata-only replay. If a turn already exists, it returns that turn's metadata and
+cannot start a second Provider call or quota consumption. This path is never used
+automatically for cancel, deadline, workspace/account termination, Session
+invalidation, or Consent withdrawal, and a new `clientRequestId` is never presented
+as recovery of the old result.
+
+Incognito has no authoritative history reader. Any possibly accepted v2 request
+that ends without a trustworthy terminal retires its context identity, even if no
+grounded segment reached the browser. The client discards a pending grounded body
+and references, uses existing cancel/end cleanup when available, and never reuses
+the old `clientRequestId`. Already visible `immediate` trusted text may remain with
+the existing failure qualification until normal workspace cleanup; retirement
+prevents the unseen server context from being used for another request. If server
+cleanup cannot be confirmed, the context ID remains retired client-side and
+existing TTL/session cleanup is the final bound. This adds neither persistence nor
+generation replay.
 
 ## 14. Acceptance plan
 
@@ -571,13 +761,18 @@ fixture. CI uses no real Provider key, user psychological data, or live source U
 - LOW/MEDIUM eligible hits use full buffering and complete Output Safety before
   the first `message.segment` or other Provider-derived public content; the normal
   `turn.started` lifecycle event may precede it;
-- HIGH, CRITICAL, classifier-unavailable, quota fallback, crisis, degraded, and
-  output-replacement responses never retrieve or carry references;
+- pre-route HIGH, CRITICAL, classifier-unavailable, quota fallback, crisis, and
+  degraded responses never retrieve or carry references; a post-Output-Safety
+  replacement may follow retrieval, but the rejected candidate/prepared references
+  are discarded and the replacement is `immediate` with empty references;
 - Consent withdrawal before retrieval, before generation dispatch, during
   generation, during output classification, before persistence, and before SSE
   prevents the next protected action and rejects late completion;
 - browser cancel, timeout, disconnect, logout, session expiry, Incognito end/TTL,
-  stale-turn recovery, and old asynchronous callbacks cannot persist or emit;
+  stale-turn recovery, and old asynchronous callbacks prevent persistence/emission
+  when termination wins the relevant barrier; when a Persistent message/reference
+  commit wins first, that exact pair remains authoritative history while every late
+  SSE write is still rejected;
 - quota consumes/refunds once under the existing semantics; and
 - Knowledge body instructions cannot alter the deterministic server citation map.
 
@@ -585,7 +780,8 @@ fixture. CI uses no real Provider key, user psychological data, or live source U
 
 - assistant message, reference rows, and turn completion are atomic and idempotent;
 - replay of a completed persistent `clientRequestId` reads the existing assistant
-  relation and never reruns retrieval or resolves `articleKey` to a current version;
+  turn metadata and then the v2 history relation; it never reruns retrieval,
+  returns a second body, or resolves `articleKey` to a current version;
 - a duplicate Incognito `clientRequestId` keeps the existing fail-closed behavior
   and never reruns retrieval or generation, even while the context still exists;
 - a failed reference FK or transaction leaves no completed message/reference
@@ -599,6 +795,65 @@ fixture. CI uses no real Provider key, user psychological data, or live source U
 - v1/v2 representation negotiation, v1 history fail-closed protection, strict
   persistent/Incognito unions, chunk-split SSE, cancel/failure/late completion, and
   empty references;
+- a grounded segment is not visible or announced before a matching valid
+  completion; a valid completion promotes its full body and verified references in
+  one reducer transition;
+- segment-then-disconnect, missing/truncated/invalid/mismatched/late completion,
+  cancellation, deadline, workspace replacement, and Session invalidation discard
+  the uncommitted grounded buffer and reject every late event;
+- controlled barriers cover a Persistent commit and an Incognito context append
+  that win before the first segment write, followed by disconnect, Consent
+  withdrawal, or Session invalidation: Persistent history recovers the exact pair,
+  while Incognito retires/cleans the context and neither mode accepts late output;
+- the inverse barrier order proves termination before commit/append prevents that
+  protected write, without claiming that a commit which already won is rolled
+  back;
+- after a grounded commit/append wins, an injected serialization or socket failure
+  produces no misleading definitive `turn.failed`; Persistent enters history
+  reconciliation and Incognito retires the context;
+- Persistent uncertain delivery recovers only through a strict v2 authoritative
+  history read, while Incognito discards and retires the affected context without
+  persistence, generation replay, or reuse of the old request ID;
+- after admission, `INVALID_STREAM_RESPONSE` and other typed missing/invalid-
+  terminal errors remain unresolved delivery outcomes: they do not enable a new
+  request ID until same-request metadata/history reconciliation reaches a
+  determinate state;
+- when history has no expected pair, an admitted Persistent turn uses same-request
+  metadata to distinguish completed, failed/cancelled, and active states; a
+  completed turn without its pair remains an integrity failure rather than being
+  mislabeled as cancelled or retryable;
+- cancel before any admission acknowledgement, Session invalidation, and Consent
+  withdrawal never invoke a chat POST that might create the request; tests prove
+  that these paths do not turn a cancellation into generation;
+- cancel before `turn.started` with no database turn produces zero replay, Provider
+  call, and quota consumption; deadline and workspace/account/Session termination
+  have the same no-POST guarantee;
+- a user-approved same-ID retry after passive network uncertainty executes once if
+  no turn was claimed, while an already existing turn returns metadata with no
+  second Provider call or quota consumption;
+- controller tests prove the acknowledged v2 SSE status/content type/capability
+  headers are not flushed until a Persistent turn is prepared/claimed, so that
+  acknowledgement is valid positive admission evidence for non-creating replay;
+- no-hit v2 responses still expose successive `immediate` semantic segments, and
+  trusted deterministic safety text remains immediate and retained under the
+  existing safe-text-plus-failure behavior;
+- grounded Output Safety block/unavailability emits no grounded segment or
+  reference row; any trusted replacement is `immediate`, and a later
+  persistence/completion failure retains that safe text with empty references;
+  because no approved Provider answer was delivered, the existing before-content
+  refund rule applies;
+- a grounded pending segment followed by `turn.failed`, a mixed delivery mode, or
+  a late grounded completion is rejected/reconciled and cannot replace already
+  visible trusted text;
+- v2 history parsing is all-or-nothing before React state replacement, and a
+  completed-request replay remains metadata followed by that history read;
+- deployment tests cover the no-reference rollout, references-present augmentation
+  disable, 406 update prompt, and continued exact-reference reading without
+  deletion or retargeting;
+- a controlled barrier holds a grounded turn after augmentation admission while
+  the feature is disabled; the read/presentation floor remains until that writer
+  commits or is terminated and late writes are rejected, followed by verification
+  of both stored-row and in-flight-writer absence;
 - plain-text rendering, safe source anchors, unavailable-version wording, session
   cleanup, an explicit “测试内容 · 未核验” synthetic label, narrow
   “来源已核对” wording, 320/390px and desktop wrapping, and keyboard behavior; and
@@ -624,17 +879,27 @@ One independently reviewable PR would add:
   tests; and
 - API/AI documentation.
 
-Rollback disables augmentation and preserves the unused forward-only relation
-table. Once any reference exists, the citation-aware history guard and reader stay
-deployed until normal message lifecycle cleanup removes every dependency. Rollback
-does not change the independent Knowledge reader or delete content.
+Rollback disables new augmentation admission and preserves the forward-only
+relation table. Once any reference exists or any admitted turn could still commit
+one, the citation-aware history guard and reader stay deployed until the section 9
+drain and dependency-absence conditions are proven. Rollback does not change the
+independent Knowledge reader or delete content.
 
 ### Phase 5E Knowledge AI-B — Web reference presentation
 
 A separate PR would add negotiated stream/history parsing, the per-answer reference
 panel, source links, unavailable-version state, memory cleanup, RTL coverage, and a
-synthetic Chromium P0. Rollback removes the presentation/capability header; the
-backend continues serving v1 to clients without the capability.
+synthetic Chromium P0. In the initial state, before any reference row exists and
+before any reference-capable turn has been admitted, this Web layer can be rolled
+back while augmentation is disabled. Once reference rows may exist, an incident
+rollback may disable creation of new grounded answers, but it must retain the
+minimum citation-aware history parser/presentation and update-required handling
+needed to read existing evidence. The backend continues serving v1 only for pages
+that contain no referenced message; it returns 406 otherwise. Removing the Web
+capability header/presentation while references remain, or while any in-flight turn
+could still create one, is not an allowed rollback. A later reduction requires the
+separate drain/abort, late-write barrier, stored-row check, and reviewed deployment
+change defined in section 9.
 
 ### Pre-production evaluation and content approval
 
