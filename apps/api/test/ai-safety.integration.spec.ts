@@ -336,8 +336,8 @@ describe('Phase 4 AI safety integration', () => {
     const userId = randomUUID();
     await database.database.insert(users).values({ id: userId, createdAt: NOW });
     if (withRequiredConsents) {
-      await insertConsentFixture(userId, 'terms_of_service', '1.0', 'accepted');
-      await insertConsentFixture(userId, 'privacy_policy', '1.0', 'accepted');
+      await insertConsentFixture(userId, 'terms_of_service', '1.1', 'accepted');
+      await insertConsentFixture(userId, 'privacy_policy', '1.1', 'accepted');
     }
     return userId;
   }
@@ -351,10 +351,10 @@ describe('Phase 4 AI safety integration', () => {
     const consentId = randomUUID();
     const acceptanceDecisionId = randomUUID();
     const document =
-      consentVersion === '1.0'
+      consentVersion === '1.1'
         ? {
             documentKey: `synthetic.${consentType === 'terms_of_service' ? 'terms-of-service' : 'privacy-policy'}`,
-            documentRevision: 'test-revision-1',
+            documentRevision: 'test-revision-2',
             decisionSource: 'registration' as const,
           }
         : {
@@ -556,7 +556,7 @@ describe('Phase 4 AI safety integration', () => {
     async (consentState) => {
       const userId = await createUser(false);
       if (consentState !== 'missing') {
-        const version = consentState === 'outdated' ? '0.9' : '1.0';
+        const version = consentState === 'outdated' ? '1.0' : '1.1';
         await insertConsentFixture(userId, 'terms_of_service', version, 'accepted');
         await insertConsentFixture(
           userId,

@@ -19,17 +19,22 @@ processed by configured third-party AI generation and safety-classification
 providers when AI chat is enabled and required consent is active.
 
 The privacy view shows server-reported current required consent status and a
-sanitized, paginated decision history. It remains read-only in this batch. The
-backend now implements ADR-016's document-bound accept/withdraw contract,
-same-version re-acceptance, immutable decision receipts, exact operation replay,
-dependency-scoped runtime cancellation, and commit-acknowledgement-loss
-reconciliation. `GET /consents` separates historical displayable evidence from
-the current `acceptableDocument`, and exposes authoritative `consentStates`
-revisions for current and historical withdrawals. These are backend contracts for
-the next delivery; the page does not yet provide user-facing withdrawal,
-re-acceptance, stale-tab, or new-version controls. Synthetic `example.invalid`
-locations are test fixtures, not a completed document-reading experience or
-production policy link. No legacy mutation bypass is exposed.
+sanitized, paginated decision history. The current feature delivery adds explicit
+acceptance, withdrawal, same-version re-acceptance, new-version confirmation, and
+historical/legacy withdrawal controls on top of ADR-016's backend contract.
+`GET /consents` separates historical displayable evidence from the current
+`acceptableDocument`, and exposes authoritative `consentStates` revisions for
+current and historical withdrawals. `POST /consents` uses the strict action union,
+an in-memory operation ID, and the server revision; unknown results are reconciled
+only by exact replay, while stale policy/state conflicts require a fresh explicit
+choice. Development/Test document links resolve to version-controlled synthetic
+pages served only by the Vite development server; their path, document key,
+version, and revision match the server Registry. Every Vite build excludes these
+pages. They are not a completed production document-reading experience or policy
+link, and Staging/Production cannot select or advertise them. No legacy mutation
+bypass is exposed. With the Privacy action UI integrated, the bounded Phase 5C
+engineering scope is complete; production content/policy approval remains a
+separate prerequisite.
 
 Development/Test use visibly synthetic Consent documents. They are not production
 policy content and cannot make Staging/Production registration or third-party AI
@@ -39,3 +44,44 @@ backups, and final Risk Event/Audit retention remain unresolved readiness work.
 
 Production Safety Lock remains enforced, Production AI Chat remains disabled,
 `productionSafe=false`, and real-model safety evaluation remains not evaluated.
+
+## Consent lifecycle UI implementation
+
+The bounded Phase 5C UI delivery turns the authenticated Privacy page into the
+client for ADR-016 without changing its backend semantics. The page treats
+`currentRequiredConsents` as the admission-policy view, `consentStates` as the
+authoritative revision source for current and historical projections,
+`acceptableDocument` as the only source for a new acceptance, and paginated
+decision receipts as immutable history only.
+
+The page state is `loading | ready | load_failed` plus one in-memory mutation at
+a time: `confirming | submitting | result_unknown | stale | failed`. A new
+affirmative action creates one operation ID and an immutable request snapshot.
+Double clicks are disabled; an unknown-result retry reuses that snapshot and ID.
+A 409 refreshes server state and requires a new explicit action. Route changes,
+logout, and newer operations invalidate older responses. No Consent interaction
+state is written to `localStorage`, `sessionStorage`, or IndexedDB.
+
+Development/Test document links point to version-controlled, visibly synthetic
+read-only pages whose key and revision match the server registry. The earlier
+`1.0/test-revision-1` identity had only an unreachable placeholder URL and no
+repository-published body. The first readable body is therefore published under
+the new synthetic policy version `1.1/test-revision-2`; existing ledger evidence
+is not rewritten, and an older `1.0/test-revision-1` decision is displayed as
+historical unavailable evidence rather than being misrepresented as evidence for
+the new body. A user must explicitly accept version 1.1 before admission becomes
+eligible. These pages are test fixtures, not
+approved production policy. Staging/Production acceptance remains unavailable
+until the server exposes a `production_reviewed` document.
+
+Verification covers current acceptance, withdrawal, same-version re-acceptance,
+new-version and legacy confirmation states, historical withdrawal, unavailable
+documents, exact unknown-result retry, authoritative refresh before replacement
+operations, stale multi-tab responses, late-response rejection, accessible
+confirmation focus, and active Persistent/Incognito cleanup. Client code does not
+cancel a workspace merely because a withdrawal response arrives; dependency-
+scoped cancellation remains the server coordination boundary, so historical or
+replayed withdrawals cannot cancel work authorized by a later acceptance.
+Existing chat, Incognito, session-isolation, privacy, and Chromium P0 regressions
+remain required. This delivery does not add account deletion/export, policy CMS,
+new Consent types, cross-instance cancellation, or Phase 5D/5E/6 features.

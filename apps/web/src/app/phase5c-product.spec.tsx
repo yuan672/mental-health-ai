@@ -335,7 +335,7 @@ describe('Phase 5C Incognito and privacy product flows', () => {
     expect(screen.queryByText('退出后必须清除的正文')).not.toBeInTheDocument();
   });
 
-  it('renders sanitized current consent state and bounded history without lifecycle controls', async () => {
+  it('renders authoritative consent state, history, and server-enabled lifecycle controls', async () => {
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async (input) => {
       const url = new URL(String(input));
       const base = baseResponse(url.pathname + url.search);
@@ -467,10 +467,13 @@ describe('Phase 5C Incognito and privacy product flows', () => {
     vi.stubGlobal('fetch', fetcher);
     renderProduct('/app/privacy');
 
-    expect(await screen.findByRole('heading', { name: '了解当前的数据边界' })).toBeInTheDocument();
-    expect(await screen.findAllByText('版本 terms-v1')).toHaveLength(2);
-    expect(screen.getByText('尚未接受')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: '管理同意与了解数据边界' }),
+    ).toBeInTheDocument();
+    expect(await screen.findAllByText('版本 terms-v1')).toHaveLength(3);
+    expect(screen.getAllByText('尚未接受')).toHaveLength(2);
     expect(screen.getByText(/必要的 Risk Event、审计记录和备份/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /撤回|接受/u })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '撤回服务条款版本 terms-v1' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '接受隐私政策版本 privacy-v2' })).toBeInTheDocument();
   });
 });

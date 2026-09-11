@@ -560,7 +560,7 @@ describe('Phase 5C Incognito and privacy API integration', () => {
           consentType: 'privacy_policy',
           consentVersion: env.REQUIRED_PRIVACY_VERSION,
           documentKey: 'synthetic.privacy-policy',
-          documentRevision: 'test-revision-1',
+          documentRevision: 'test-revision-2',
           expectedRevision: 2,
         })
         .expect(200);
@@ -600,7 +600,7 @@ describe('Phase 5C Incognito and privacy API integration', () => {
         consentType: 'privacy_policy',
         consentVersion: env.REQUIRED_PRIVACY_VERSION,
         documentKey: 'synthetic.privacy-policy',
-        documentRevision: 'test-revision-1',
+        documentRevision: 'test-revision-2',
         expectedRevision: 2,
       })
       .expect(200);
@@ -1150,7 +1150,7 @@ describe('Phase 5C Incognito and privacy API integration', () => {
           documentEvidenceStatus: 'verified',
           acceptableDocument: expect.objectContaining({
             documentKey: 'synthetic.terms-of-service',
-            documentRevision: 'test-revision-1',
+            documentRevision: 'test-revision-2',
           }),
         }),
         expect.objectContaining({
@@ -1161,7 +1161,7 @@ describe('Phase 5C Incognito and privacy API integration', () => {
           documentEvidenceStatus: 'verified',
           acceptableDocument: expect.objectContaining({
             documentKey: 'synthetic.privacy-policy',
-            documentRevision: 'test-revision-1',
+            documentRevision: 'test-revision-2',
           }),
         }),
       ]),

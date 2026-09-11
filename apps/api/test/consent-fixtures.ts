@@ -12,16 +12,17 @@ export async function insertConsentFixture(
     acceptedAt: Date;
     withdrawnAt?: Date;
     documentBound?: boolean;
+    documentRevision?: string;
   }>,
 ): Promise<Readonly<{ consentId: string; acceptanceDecisionId: string }>> {
   const status = input.status ?? 'accepted';
   const consentId = randomUUID();
   const acceptanceDecisionId = randomUUID();
-  const documentBound = input.documentBound ?? input.consentVersion === '1.0';
+  const documentBound = input.documentBound ?? input.consentVersion === '1.1';
   const documentKey = documentBound
     ? `synthetic.${input.consentType === 'terms_of_service' ? 'terms-of-service' : 'privacy-policy'}`
     : null;
-  const documentRevision = documentBound ? 'test-revision-1' : null;
+  const documentRevision = documentBound ? (input.documentRevision ?? 'test-revision-2') : null;
   const withdrawnAt = status === 'withdrawn' ? (input.withdrawnAt ?? input.acceptedAt) : null;
 
   await database.transaction(async (transaction) => {
@@ -85,13 +86,13 @@ export async function insertRequiredConsentFixtures(
   await insertConsentFixture(database, {
     userId,
     consentType: 'terms_of_service',
-    consentVersion: '1.0',
+    consentVersion: '1.1',
     acceptedAt,
   });
   await insertConsentFixture(database, {
     userId,
     consentType: 'privacy_policy',
-    consentVersion: '1.0',
+    consentVersion: '1.1',
     acceptedAt,
   });
 }

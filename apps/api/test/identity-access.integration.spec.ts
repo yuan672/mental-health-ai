@@ -39,16 +39,16 @@ function requiredConsents() {
   return [
     {
       consentType: 'terms_of_service',
-      consentVersion: '1.0',
+      consentVersion: '1.1',
       documentKey: 'synthetic.terms-of-service',
-      documentRevision: 'test-revision-1',
+      documentRevision: 'test-revision-2',
       accepted: true as const,
     },
     {
       consentType: 'privacy_policy',
-      consentVersion: '1.0',
+      consentVersion: '1.1',
       documentKey: 'synthetic.privacy-policy',
-      documentRevision: 'test-revision-1',
+      documentRevision: 'test-revision-2',
       accepted: true as const,
     },
   ];
@@ -166,19 +166,19 @@ describe('Phase 2A identity and access integration', () => {
         requiredConsents: [
           {
             type: 'terms_of_service',
-            version: '1.0',
+            version: '1.1',
             displayKey: 'consent.termsOfService',
             documentKey: 'synthetic.terms-of-service',
-            documentRevision: 'test-revision-1',
-            documentUrl: 'https://example.invalid/mental-health-ai/synthetic/terms/1.0',
+            documentRevision: 'test-revision-2',
+            documentUrl: '/consent-documents/synthetic.terms-of-service/1.1/test-revision-2.html',
           },
           {
             type: 'privacy_policy',
-            version: '1.0',
+            version: '1.1',
             displayKey: 'consent.privacyPolicy',
             documentKey: 'synthetic.privacy-policy',
-            documentRevision: 'test-revision-1',
-            documentUrl: 'https://example.invalid/mental-health-ai/synthetic/privacy/1.0',
+            documentRevision: 'test-revision-2',
+            documentUrl: '/consent-documents/synthetic.privacy-policy/1.1/test-revision-2.html',
           },
         ],
       },
@@ -251,7 +251,7 @@ describe('Phase 2A identity and access integration', () => {
       consentType: 'privacy_policy',
       consentVersion: '0.9',
       documentKey: 'synthetic.privacy-policy',
-      documentRevision: 'test-revision-1',
+      documentRevision: 'test-revision-2',
       accepted: true,
     };
 
@@ -312,9 +312,9 @@ describe('Phase 2A identity and access integration', () => {
             decisionId: randomUUID(),
             operationId: randomUUID(),
             consentType: 'terms_of_service',
-            consentVersion: '1.0',
+            consentVersion: '1.1',
             documentKey: 'synthetic.terms-of-service',
-            documentRevision: 'test-revision-1',
+            documentRevision: 'test-revision-2',
             acceptedAt: new Date(),
           },
         ],
@@ -334,7 +334,7 @@ describe('Phase 2A identity and access integration', () => {
     const before = await counts();
     const duplicateConsent = {
       consentType: 'terms_of_service',
-      consentVersion: '1.0',
+      consentVersion: '1.1',
       acceptedAt: new Date(),
     };
 
@@ -351,7 +351,7 @@ describe('Phase 2A identity and access integration', () => {
             decisionId: randomUUID(),
             operationId: randomUUID(),
             documentKey: 'synthetic.terms-of-service',
-            documentRevision: 'test-revision-1',
+            documentRevision: 'test-revision-2',
             ...duplicateConsent,
           },
           {
@@ -359,7 +359,7 @@ describe('Phase 2A identity and access integration', () => {
             decisionId: randomUUID(),
             operationId: randomUUID(),
             documentKey: 'synthetic.terms-of-service',
-            documentRevision: 'test-revision-1',
+            documentRevision: 'test-revision-2',
             ...duplicateConsent,
           },
         ],
@@ -453,7 +453,7 @@ describe('Phase 2A identity and access integration', () => {
     await request(app.getHttpServer())
       .post('/consents')
       .set('Origin', WEB_ORIGIN)
-      .send({ consentType: 'terms_of_service', consentVersion: '1.0', action: 'accept' })
+      .send({ consentType: 'terms_of_service', consentVersion: '1.1', action: 'accept' })
       .expect(401);
 
     const agent = request.agent(app.getHttpServer());
@@ -465,7 +465,7 @@ describe('Phase 2A identity and access integration', () => {
     const response = await agent
       .post('/consents')
       .set('Origin', WEB_ORIGIN)
-      .send({ consentType: 'terms_of_service', consentVersion: '1.0', action: 'accept' })
+      .send({ consentType: 'terms_of_service', consentVersion: '1.1', action: 'accept' })
       .expect(403);
     expect(response.body.error.code).toBe('FORBIDDEN');
   });
@@ -512,8 +512,8 @@ describe('Phase 2A identity and access integration', () => {
     expect(history).toHaveLength(3);
     expect(history).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ consentType: 'terms_of_service', consentVersion: '1.0' }),
-        expect.objectContaining({ consentType: 'privacy_policy', consentVersion: '1.0' }),
+        expect.objectContaining({ consentType: 'terms_of_service', consentVersion: '1.1' }),
+        expect.objectContaining({ consentType: 'privacy_policy', consentVersion: '1.1' }),
         expect.objectContaining({ consentType: 'privacy_policy', consentVersion: '0.9' }),
       ]),
     );
@@ -529,16 +529,16 @@ describe('Phase 2A identity and access integration', () => {
         operationId: randomUUID(),
         action: 'accept',
         consentType: 'terms_of_service',
-        consentVersion: '1.0',
+        consentVersion: '1.1',
         documentKey: 'synthetic.terms-of-service',
-        documentRevision: 'test-revision-1',
+        documentRevision: 'test-revision-2',
         expectedRevision: 1,
       })
       .expect('Cache-Control', 'private, no-store')
       .expect(200);
     expect(idempotentCurrentAcceptance.body.data.current).toMatchObject({
       consentType: 'terms_of_service',
-      consentVersion: '1.0',
+      consentVersion: '1.1',
       status: 'accepted',
       withdrawnAt: null,
     });
@@ -701,9 +701,9 @@ describe('Phase 2A identity and access integration', () => {
           operationId,
           action: 'accept',
           consentType: 'terms_of_service',
-          consentVersion: '1.0',
+          consentVersion: '1.1',
           documentKey: 'synthetic.terms-of-service',
-          documentRevision: 'test-revision-1',
+          documentRevision: 'test-revision-2',
           expectedRevision: 1,
         })
         .expect('Cache-Control', 'private, no-store')

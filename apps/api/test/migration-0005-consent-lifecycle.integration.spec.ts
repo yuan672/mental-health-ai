@@ -80,6 +80,7 @@ describe('migration 0005 Consent lifecycle upgrade', () => {
     status: 'accepted' | 'withdrawn';
     acceptedAt: Date;
     withdrawnAt: Date | null;
+    consentVersion?: string;
   }): Promise<void> {
     await client.pool.query('INSERT INTO users (id, created_at) VALUES ($1, $2)', [
       input.userId,
@@ -88,8 +89,15 @@ describe('migration 0005 Consent lifecycle upgrade', () => {
     await client.pool.query(
       `INSERT INTO consents
        (id, user_id, consent_type, consent_version, status, accepted_at, withdrawn_at)
-       VALUES ($1, $2, 'privacy_policy', '1.0', $3, $4, $5)`,
-      [input.consentId, input.userId, input.status, input.acceptedAt, input.withdrawnAt],
+       VALUES ($1, $2, 'privacy_policy', $3, $4, $5, $6)`,
+      [
+        input.consentId,
+        input.userId,
+        input.consentVersion ?? '1.0',
+        input.status,
+        input.acceptedAt,
+        input.withdrawnAt,
+      ],
     );
   }
 
@@ -336,11 +344,12 @@ describe('migration 0005 Consent lifecycle upgrade', () => {
       status: 'accepted',
       acceptedAt,
       withdrawnAt: null,
+      consentVersion: '1.1',
     });
     await client.pool.query(
       `INSERT INTO consents
        (id, user_id, consent_type, consent_version, status, accepted_at, withdrawn_at)
-       VALUES ($1, $2, 'terms_of_service', '1.0', 'accepted', $3, NULL)`,
+       VALUES ($1, $2, 'terms_of_service', '1.1', 'accepted', $3, NULL)`,
       [randomUUID(), userId, acceptedAt],
     );
     await migrate(client.database, { migrationsFolder: through0005 });

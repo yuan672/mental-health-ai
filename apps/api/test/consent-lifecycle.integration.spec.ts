@@ -27,7 +27,7 @@ import { insertConsentFixture } from './consent-fixtures';
 
 const PRIVACY_DOCUMENT = {
   documentKey: 'synthetic.privacy-policy',
-  documentRevision: 'test-revision-1',
+  documentRevision: 'test-revision-2',
 } as const;
 
 describe('ADR-016 Consent lifecycle persistence', () => {
@@ -71,7 +71,7 @@ describe('ADR-016 Consent lifecycle persistence', () => {
       operationId,
       action: 'accept' as const,
       consentType: 'privacy_policy' as const,
-      consentVersion: '1.0',
+      consentVersion: '1.1',
       ...PRIVACY_DOCUMENT,
       expectedRevision,
     };
@@ -95,18 +95,18 @@ describe('ADR-016 Consent lifecycle persistence', () => {
 
   it('keeps synthetic documents test-only and fails closed in production', () => {
     const testRegistry = new ConsentDocumentRegistry('test');
-    expect(testRegistry.findEligible('privacy_policy', '1.0')).toMatchObject(PRIVACY_DOCUMENT);
+    expect(testRegistry.findEligible('privacy_policy', '1.1')).toMatchObject(PRIVACY_DOCUMENT);
     expect(
-      new ConsentDocumentRegistry('development').findEligible('privacy_policy', '1.0'),
+      new ConsentDocumentRegistry('development').findEligible('privacy_policy', '1.1'),
     ).not.toBeNull();
-    expect(new ConsentDocumentRegistry('staging').findEligible('privacy_policy', '1.0')).toBeNull();
+    expect(new ConsentDocumentRegistry('staging').findEligible('privacy_policy', '1.1')).toBeNull();
     expect(
-      new ConsentDocumentRegistry('production').findEligible('privacy_policy', '1.0'),
+      new ConsentDocumentRegistry('production').findEligible('privacy_policy', '1.1'),
     ).toBeNull();
     expect(
       new ConsentDocumentRegistry('production').findVerifiedDocument(
         'privacy_policy',
-        '1.0',
+        '1.1',
         PRIVACY_DOCUMENT.documentKey,
         PRIVACY_DOCUMENT.documentRevision,
       ),
@@ -172,7 +172,7 @@ describe('ADR-016 Consent lifecycle persistence', () => {
       operationId: withdrawalOperationId,
       action: 'withdraw' as const,
       consentType: 'privacy_policy' as const,
-      consentVersion: '1.0',
+      consentVersion: '1.1',
       expectedRevision: 1,
     };
     const firstWithdrawal = await service.mutate(userId, withdrawal);
@@ -200,7 +200,7 @@ describe('ADR-016 Consent lifecycle persistence', () => {
     await insertConsentFixture(client.database, {
       userId,
       consentType: 'privacy_policy',
-      consentVersion: '1.0',
+      consentVersion: '1.1',
       acceptedAt: new Date('2026-09-10T10:00:00.000Z'),
       documentBound: false,
     });
@@ -235,7 +235,7 @@ describe('ADR-016 Consent lifecycle persistence', () => {
       documentRevision: null,
       acceptableDocument: {
         documentKey: 'synthetic.privacy-policy',
-        documentRevision: 'test-revision-1',
+        documentRevision: 'test-revision-2',
       },
       acceptanceEnabled: true,
       withdrawalEnabled: true,
@@ -276,7 +276,7 @@ describe('ADR-016 Consent lifecycle persistence', () => {
       expect.arrayContaining([
         expect.objectContaining({
           consentType: 'privacy_policy',
-          consentVersion: '1.0',
+          consentVersion: '1.1',
           isCurrentRequired: true,
           status: 'not_accepted',
           stateRevision: 0,
@@ -284,7 +284,7 @@ describe('ADR-016 Consent lifecycle persistence', () => {
           documentRevision: null,
           acceptableDocument: expect.objectContaining({
             documentKey: 'synthetic.privacy-policy',
-            documentRevision: 'test-revision-1',
+            documentRevision: 'test-revision-2',
           }),
           acceptanceEnabled: true,
           withdrawalEnabled: false,
@@ -304,16 +304,104 @@ describe('ADR-016 Consent lifecycle persistence', () => {
     );
   });
 
+  it('preserves 1.0 evidence and restores eligibility only after explicit acceptance of the new 1.1 documents', async () => {
+    const userId = await createUser();
+    for (const consentType of ['terms_of_service', 'privacy_policy'] as const) {
+      await insertConsentFixture(client.database, {
+        userId,
+        consentType,
+        consentVersion: '1.0',
+        acceptedAt: new Date('2026-09-08T10:00:00.000Z'),
+        documentBound: true,
+        documentRevision: 'test-revision-1',
+      });
+    }
+    const directCoordinator = {
+      mutate: (_input: unknown, commit: () => Promise<unknown>) => commit(),
+    } as unknown as ConsentWithdrawalCoordinator;
+    const service = new ConsentsService(
+      new ConsentPolicyService(new ConsentDocumentRegistry('test')),
+      directCoordinator,
+      lifecycle,
+    );
+
+    const listed = await service.list(userId, { limit: 20 });
+    expect(listed.data.currentRequiredConsents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          consentVersion: '1.1',
+          status: 'not_accepted',
+          stateRevision: 0,
+          authorizationStatus: 'inactive',
+          documentEvidenceStatus: 'unavailable',
+          acceptableDocument: expect.objectContaining({
+            documentRevision: 'test-revision-2',
+            documentUrl: expect.stringContaining('/1.1/test-revision-2.html'),
+          }),
+        }),
+      ]),
+    );
+    expect(listed.data.consentStates.filter((item) => item.consentVersion === '1.0')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          isCurrentRequired: false,
+          status: 'accepted',
+          authorizationStatus: 'inactive',
+          documentKey: null,
+          documentRevision: null,
+          documentUrl: null,
+          documentEvidenceStatus: 'unavailable',
+          acceptableDocument: null,
+        }),
+      ]),
+    );
+    expect(listed.data.consents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: 'accept',
+          documentKey: null,
+          documentRevision: null,
+          documentEvidenceStatus: 'unavailable',
+        }),
+      ]),
+    );
+
+    for (const current of listed.data.currentRequiredConsents) {
+      const document = current.acceptableDocument;
+      if (!document) throw new Error('Current synthetic document is missing');
+      await service.mutate(userId, {
+        operationId: randomUUID(),
+        action: 'accept',
+        consentType: current.consentType,
+        consentVersion: current.consentVersion,
+        documentKey: document.documentKey,
+        documentRevision: document.documentRevision,
+        expectedRevision: current.stateRevision,
+      });
+    }
+    await expect(service.ensureRequiredConsentsActive(userId)).resolves.toBeUndefined();
+    const restored = await service.list(userId, { limit: 20 });
+    expect(restored.data.currentRequiredConsents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          consentVersion: '1.1',
+          authorizationStatus: 'active',
+          documentEvidenceStatus: 'verified',
+        }),
+      ]),
+    );
+  });
+
   it('reports each required policy availability independently when the registry is partial', async () => {
     const userId = await createUser();
     const registry = new ConsentDocumentRegistry('test', [
       {
         consentType: 'privacy_policy',
-        consentVersion: '1.0',
+        consentVersion: '1.1',
         documentKey: 'synthetic.privacy-policy',
-        documentRevision: 'test-revision-1',
+        documentRevision: 'test-revision-2',
         displayKey: 'consent.privacyPolicy',
-        documentUrl: 'https://example.invalid/mental-health-ai/synthetic/privacy/1.0',
+        documentUrl: '/consent-documents/synthetic.privacy-policy/1.1/test-revision-2.html',
         approvalStatus: 'test_fixture',
         effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
       },
@@ -338,7 +426,7 @@ describe('ADR-016 Consent lifecycle persistence', () => {
           status: 'not_accepted',
           acceptableDocument: expect.objectContaining({
             documentKey: 'synthetic.privacy-policy',
-            documentRevision: 'test-revision-1',
+            documentRevision: 'test-revision-2',
           }),
           acceptanceEnabled: true,
         }),
@@ -400,7 +488,7 @@ describe('ADR-016 Consent lifecycle persistence', () => {
           priorRevision: 0,
           resultingRevision: 1,
           documentKey: expect.stringMatching(/^synthetic[.]/u),
-          documentRevision: 'test-revision-1',
+          documentRevision: 'test-revision-2',
         }),
       ]),
     );
@@ -423,9 +511,9 @@ describe('ADR-016 Consent lifecycle persistence', () => {
             decisionId: duplicateDecisionId,
             operationId: randomUUID(),
             consentType: 'terms_of_service',
-            consentVersion: '1.0',
+            consentVersion: '1.1',
             documentKey: 'synthetic.terms-of-service',
-            documentRevision: 'test-revision-1',
+            documentRevision: 'test-revision-2',
             acceptedAt,
           },
           {
@@ -433,7 +521,7 @@ describe('ADR-016 Consent lifecycle persistence', () => {
             decisionId: duplicateDecisionId,
             operationId: randomUUID(),
             consentType: 'privacy_policy',
-            consentVersion: '1.0',
+            consentVersion: '1.1',
             ...PRIVACY_DOCUMENT,
             acceptedAt,
           },
@@ -497,7 +585,7 @@ describe('ADR-016 Consent lifecycle persistence', () => {
       operationId,
       action: 'withdraw' as const,
       consentType: 'privacy_policy' as const,
-      consentVersion: '1.0',
+      consentVersion: '1.1',
       expectedRevision: 1,
     };
     const blocker = await client.pool.connect();
@@ -523,7 +611,7 @@ describe('ADR-016 Consent lifecycle persistence', () => {
            occurred_at, document_key, document_revision,
            target_acceptance_decision_id, decision_source
          ) VALUES (
-           $1, $2, $3, 'privacy_policy', '1.0',
+           $1, $2, $3, 'privacy_policy', '1.1',
            $4, 'withdrawn', 'applied', 1, 2,
            $5, NULL, NULL, $6, 'privacy_ui'
          )`,
@@ -563,7 +651,7 @@ describe('ADR-016 Consent lifecycle persistence', () => {
       operationId,
       action: 'withdraw' as const,
       consentType: 'privacy_policy' as const,
-      consentVersion: '1.0',
+      consentVersion: '1.1',
       expectedRevision: 1,
     };
     const blocker = await client.pool.connect();
@@ -589,7 +677,7 @@ describe('ADR-016 Consent lifecycle persistence', () => {
            occurred_at, document_key, document_revision,
            target_acceptance_decision_id, decision_source
          ) VALUES (
-           $1, $2, $3, 'privacy_policy', '1.0',
+           $1, $2, $3, 'privacy_policy', '1.1',
            $4, 'withdrawn', 'applied', 1, 2,
            $5, NULL, NULL, $6, 'privacy_ui'
          )`,
@@ -608,7 +696,7 @@ describe('ADR-016 Consent lifecycle persistence', () => {
       await expect(resolution).resolves.toBeNull();
       await expect(lifecycle.findOperation(userId, operationId)).resolves.toBeNull();
       await expect(
-        lifecycle.findProjection(userId, 'privacy_policy', '1.0'),
+        lifecycle.findProjection(userId, 'privacy_policy', '1.1'),
       ).resolves.toMatchObject({ status: 'accepted', stateRevision: 1 });
     } finally {
       if (transactionOpen) await blocker.query('ROLLBACK');
@@ -631,7 +719,7 @@ describe('ADR-016 Consent lifecycle persistence', () => {
       operationId: randomUUID(),
       action: 'withdraw',
       consentType: 'privacy_policy',
-      consentVersion: '1.0',
+      consentVersion: '1.1',
       expectedRevision: 1,
     });
 
@@ -679,7 +767,7 @@ describe('ADR-016 Consent lifecycle persistence', () => {
       operationId: randomUUID(),
       action: 'withdraw',
       consentType: 'privacy_policy',
-      consentVersion: '1.0',
+      consentVersion: '1.1',
       expectedRevision: 1,
     });
     expect(withdrawal.receipt).toMatchObject({
@@ -702,7 +790,7 @@ describe('ADR-016 Consent lifecycle persistence', () => {
       operationId: randomUUID(),
       action: 'withdraw',
       consentType: 'privacy_policy',
-      consentVersion: '1.0',
+      consentVersion: '1.1',
       expectedRevision: 3,
     });
     expect(secondWithdrawal.receipt.targetAcceptanceDecisionId).toBe(reaccepted.receipt.id);

@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
-import { useParams } from 'react-router';
+import { Link, useParams } from 'react-router';
 import { useProductData } from '../../app/product-data-provider';
 import { ConfirmDialog } from '../../shared/confirm-dialog';
 import { useChatWorkspace } from './chat-workspace';
@@ -63,6 +63,8 @@ export function ChatPage() {
     workspace.stream.assistantMessageId !== null &&
     workspace.messages.some((message) => message.id === workspace.stream.assistantMessageId);
   const showTransientAssistant = Boolean(workspace.stream.text) && !assistantAlreadyCommitted;
+  const consentRequired =
+    workspace.stream.status === 'failed' && workspace.stream.error?.code === 'CONSENT_REQUIRED';
 
   return (
     <main className="chat-page" aria-labelledby="chat-title">
@@ -179,13 +181,19 @@ export function ChatPage() {
           ) : null}
           {workspace.stream.status === 'failed' ? (
             <span className="inline-error">
-              {workspace.stream.error?.message ?? '本轮处理失败'}
+              {consentRequired
+                ? '当前必要授权未生效，本轮已经结束。'
+                : (workspace.stream.error?.message ?? '本轮处理失败')}
             </span>
           ) : null}
         </div>
         {workspace.stream.status === 'failed' ? (
           <div className="turn-recovery">
-            {workspace.stream.error?.code === 'NETWORK_RESULT_UNCERTAIN' ? (
+            {consentRequired ? (
+              <Link className="button button-secondary button-small" to="/app/privacy">
+                前往隐私与数据
+              </Link>
+            ) : workspace.stream.error?.code === 'NETWORK_RESULT_UNCERTAIN' ? (
               <button
                 type="button"
                 className="button button-secondary button-small"

@@ -796,13 +796,13 @@ describe('Phase 3 AI foundation integration', () => {
     await insertConsentFixture(databaseService.database, {
       userId: withdrawnConsentUser,
       consentType: 'terms_of_service',
-      consentVersion: '1.0',
+      consentVersion: '1.1',
       acceptedAt: BASE_NOW,
     });
     await insertConsentFixture(databaseService.database, {
       userId: withdrawnConsentUser,
       consentType: 'privacy_policy',
-      consentVersion: '1.0',
+      consentVersion: '1.1',
       status: 'withdrawn',
       acceptedAt: BASE_NOW,
       withdrawnAt: BASE_NOW,

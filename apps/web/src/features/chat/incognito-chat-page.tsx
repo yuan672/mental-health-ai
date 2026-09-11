@@ -1,6 +1,6 @@
 import type { AiStreamEvent } from '@mental-health/types';
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { createIncognitoContext, endIncognitoContext } from '../../api/incognito';
 import { AiChatRequestError, startAiChatStream } from '../../ai/chat-stream-client';
 import {
@@ -278,6 +278,7 @@ export function IncognitoChatPage() {
   const aiEnabled = product.capabilities?.aiChatEnabled === true;
   const showTransientAssistant =
     Boolean(stream.text) && stream.status !== 'completed' && pendingUserMessage !== null;
+  const consentRequired = stream.status === 'failed' && stream.error?.code === 'CONSENT_REQUIRED';
 
   return (
     <main className="chat-page incognito-page" aria-labelledby="incognito-title">
@@ -380,10 +381,19 @@ export function IncognitoChatPage() {
               {stream.status === 'cancelled' ? '已停止本轮回复。' : null}
               {stream.status === 'failed' ? (
                 <span className="inline-error">
-                  {stream.error?.message ?? '本轮处理失败，已显示的安全提示仍会保留。'}
+                  {consentRequired
+                    ? '当前必要授权未生效，本轮已经结束。'
+                    : (stream.error?.message ?? '本轮处理失败，已显示的安全提示仍会保留。')}
                 </span>
               ) : null}
             </div>
+            {consentRequired ? (
+              <div className="turn-recovery">
+                <Link className="button button-secondary button-small" to="/app/privacy">
+                  前往隐私与数据
+                </Link>
+              </div>
+            ) : null}
           </section>
           <form className="composer" onSubmit={(event) => void send(event)}>
             {product.quota?.remaining === 0 ? (
