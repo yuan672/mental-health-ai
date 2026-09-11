@@ -86,3 +86,15 @@ identifiers and all ordinary conversation content.
 `audit_logs.safe_metadata` is validated by an action-specific Zod allowlist.
 It cannot accept arbitrary DTOs or errors. Extra Pino redaction paths for
 `reasoning_content` and raw-provider field names are defense in depth.
+
+## Phase 5E Knowledge content boundary
+
+Knowledge content is editorial rather than user psychological data, but release
+manifests, full article bodies, ordered source payloads, and reviewer identities do
+not belong in ordinary application logs. The public read API returns only the
+bounded article contract and never returns `reviewedBy` or internal database IDs.
+
+Internal validation/publication commands emit only a fixed event, article key,
+version, origin/status, and disposition. Failure output does not serialize the
+manifest, database error, source payload, or arbitrary exception. No knowledge-read
+history, user-interest profile, browser telemetry, or link-tracking event is added.

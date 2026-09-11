@@ -3,12 +3,13 @@
 - Status: Accepted design; Phase 5E-1 implementation authorized
 - Baseline: `develop` at `ff84227061aed2c8f081d913767343af3b4d7ed5`
 - Architecture: Accepted ADR-018
-- Implementation status: Not started
+- Implementation status: Phase 5E-1 backend delivered for Draft PR review; not merged
 - Source reconnaissance date: 2026-09-11
 
-This document defines a bounded, implementable Phase 5E proposal. It does not
-implement application code, schema, migrations, content publication, Phase 6
-Knowledge Management, or any AI retrieval feature.
+This document defines the accepted Phase 5E boundary. Phase 5E-1 now has an
+independent implementation under Draft PR review; this document itself does not
+publish curated content, implement the Phase 5E-2 Web experience, Phase 6 Knowledge
+Management, or any AI retrieval feature.
 
 ## 1. Existing capabilities and constraints
 

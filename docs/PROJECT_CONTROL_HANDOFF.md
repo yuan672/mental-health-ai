@@ -20,7 +20,8 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   contract are accepted, with the backend delivered by PR #18 and the Web
   experience delivered by PR #20
 - Phase 5E — Knowledge Base: ADR-018 and the minimum design are accepted;
-  Phase 5E-1 content foundation implementation is authorized but not yet delivered
+  Phase 5E-1 content foundation is implemented on an independent feature branch
+  and remains under Draft PR review; it is not merged or phase-complete
 - Phase 6 — Admin and operations features: Not started
 
 ## Current Production State
@@ -74,8 +75,10 @@ safety, or validation for clinical use.
   delivers the bounded Mood/Profile Web experience, including authoritative
   recovery after unknown or conflicting mutations. Phase 5D is engineering
   complete. The Phase 5E minimum Knowledge Base design and ADR-018 are accepted;
-  Phase 5E-1 implementation is authorized but no Knowledge code, migration, or
-  curated content publication has yet been delivered. The LLM-plus-Knowledge
+  Phase 5E-1 now has a reviewable backend delivery with the three-table model,
+  forward-only 0007 migration, authenticated read API, exact-version release
+  commands, and guarded unverified synthetic fixtures. It remains unmerged and no
+  curated production content has been published. The LLM-plus-Knowledge
   direction remains a later independent Phase 5E batch requiring separate design
   and authorization. Admin/Reviewer features and production enablement remain
   outside completed scope.
@@ -138,9 +141,9 @@ None.
 
 ## Immediate Next Step
 
-Complete the authorized Phase 5E-1 content foundation in an independent Draft PR.
-Do not begin the Web experience, publish curated content, implement AI retrieval, or
-start Phase 6 without separate authorization.
+Review the independent Phase 5E-1 content-foundation Draft PR. Do not merge it
+without final authorization, and do not begin the Web experience, publish curated
+content, implement AI retrieval, or start Phase 6 without separate authorization.
 
 ## Source of Truth
 
