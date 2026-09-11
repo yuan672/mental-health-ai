@@ -70,6 +70,31 @@ function syntheticManifest(articleKey: string, version = 1, marker = 'one') {
   };
 }
 
+function curatedManifest(articleKey: string, version = 1, marker = 'one') {
+  return {
+    articleKey,
+    version,
+    title: `核验路径合成标题 ${marker}`,
+    summary: `核验路径合成摘要 ${marker}`,
+    contentOrigin: 'curated',
+    reviewStatus: 'source_verified',
+    reviewedBy: 'synthetic-test-reviewer',
+    reviewedAt: '2026-09-11T07:00:00.000Z',
+    contentBlocks: [{ type: 'paragraph', text: `仅用于测试发布顺序 ${marker}` }],
+    sources: [
+      {
+        publisherName: '合成测试发布者',
+        sourceTitle: `合成测试来源 ${marker}`,
+        sourceUrl: `https://synthetic.invalid/${articleKey}/${version}/${marker}`,
+        sourcePublishedAt: null,
+        sourceVersionLabel: `synthetic-${marker}`,
+        sourceLocator: null,
+        retrievedAt: '2026-09-11T00:00:00.000Z',
+      },
+    ],
+  };
+}
+
 @Injectable()
 class ObservableKnowledgeRepository extends KnowledgeRepository {
   private readHook: (() => Promise<void>) | null = null;
@@ -174,6 +199,42 @@ describe('Phase 5E-1 Knowledge Base backend integration', () => {
         new Date('2026-09-13T08:00:00Z'),
       ),
     ).rejects.toMatchObject({ code: 'KNOWLEDGE_PUBLICATION_CONFLICT' });
+  });
+
+  it('constructs curated sources before atomically freezing review evidence and publication', async () => {
+    const manifest = curatedManifest('curated-publication-order');
+    const first = await publication.publishCurated(manifest, new Date('2026-09-11T08:00:00.000Z'));
+    const replay = await publication.publishCurated(manifest, new Date('2026-09-12T08:00:00.000Z'));
+    expect(first).toEqual(expect.objectContaining({ disposition: 'published', version: 1 }));
+    expect(replay).toEqual({ ...first, disposition: 'existing' });
+
+    const [version] = await database.database.select().from(knowledgeArticleVersions);
+    const sources = await database.database
+      .select()
+      .from(knowledgeArticleSources)
+      .where(eq(knowledgeArticleSources.articleVersionId, version!.id));
+    expect(version).toEqual(
+      expect.objectContaining({
+        publicationStatus: 'published',
+        reviewStatus: 'source_verified',
+        reviewedBy: 'synthetic-test-reviewer',
+      }),
+    );
+    expect(sources).toHaveLength(1);
+    await expect(
+      database.database.insert(knowledgeArticleSources).values({
+        id: randomUUID(),
+        articleVersionId: version!.id,
+        ordinal: 2,
+        publisherName: '迟到测试发布者',
+        sourceTitle: '迟到测试来源',
+        sourceUrl: 'https://synthetic.invalid/late-source',
+        sourcePublishedAt: null,
+        sourceVersionLabel: null,
+        sourceLocator: null,
+        retrievedAt: new Date('2026-09-11T00:00:00.000Z'),
+      }),
+    ).rejects.toBeDefined();
   });
 
   it('publishes versions sequentially and keeps old publish/withdraw retries scoped', async () => {

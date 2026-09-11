@@ -102,10 +102,10 @@ export class KnowledgePublicationRepository {
         summary: manifest.summary,
         contentBlocks: manifest.contentBlocks,
         publicationStatus: 'draft',
-        reviewStatus: manifest.reviewStatus,
+        reviewStatus: 'unverified',
         contentOrigin: manifest.contentOrigin,
-        reviewedBy: manifest.reviewedBy,
-        reviewedAt: manifest.reviewedAt ? new Date(manifest.reviewedAt) : null,
+        reviewedBy: null,
+        reviewedAt: null,
         publishedAt: null,
         withdrawnAt: null,
         createdAt: now,
@@ -153,11 +153,19 @@ export class KnowledgePublicationRepository {
   async publishDraft(
     transaction: AppTransaction,
     versionId: string,
+    manifest: KnowledgeManifest,
     now: Date,
   ): Promise<KnowledgeVersionRecord> {
     const [version] = await transaction
       .update(knowledgeArticleVersions)
-      .set({ publicationStatus: 'published', publishedAt: now, withdrawnAt: null })
+      .set({
+        publicationStatus: 'published',
+        reviewStatus: manifest.reviewStatus,
+        reviewedBy: manifest.reviewedBy,
+        reviewedAt: manifest.reviewedAt ? new Date(manifest.reviewedAt) : null,
+        publishedAt: now,
+        withdrawnAt: null,
+      })
       .where(eq(knowledgeArticleVersions.id, versionId))
       .returning();
     if (!version) throw new Error('Knowledge draft target disappeared');

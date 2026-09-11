@@ -94,7 +94,11 @@ DECLARE
 	parent_review knowledge_review_status;
 	parent_version_id uuid;
 BEGIN
-	IF TG_OP = 'DELETE' THEN
+	IF TG_OP = 'UPDATE' AND NEW.article_version_id IS DISTINCT FROM OLD.article_version_id THEN
+		RAISE EXCEPTION 'knowledge sources cannot be moved between versions';
+	END IF;
+
+	IF TG_OP IN ('UPDATE', 'DELETE') THEN
 		parent_version_id := OLD.article_version_id;
 	ELSE
 		parent_version_id := NEW.article_version_id;
@@ -102,13 +106,10 @@ BEGIN
 	SELECT publication_status, review_status
 	INTO parent_status, parent_review
 	FROM knowledge_article_versions
-	WHERE id = parent_version_id;
+	WHERE id = parent_version_id
+	FOR UPDATE;
 
-	IF TG_OP = 'INSERT' THEN
-		IF parent_status <> 'draft' THEN
-			RAISE EXCEPTION 'sources cannot be added to published knowledge versions';
-		END IF;
-	ELSIF parent_status <> 'draft' OR parent_review <> 'unverified' THEN
+	IF parent_status <> 'draft' OR parent_review <> 'unverified' THEN
 		RAISE EXCEPTION 'verified or published knowledge sources are immutable';
 	END IF;
 	IF TG_OP = 'DELETE' THEN

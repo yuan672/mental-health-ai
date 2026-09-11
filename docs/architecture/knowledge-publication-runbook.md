@@ -37,6 +37,13 @@ Version 1 starts an article; later versions must advance one at a time. Publishi
 the next version atomically withdraws the current version. An exact retry of the
 currently published manifest is a no-op and preserves review/publication evidence.
 
+Inside that transaction, the publisher creates an `unverified` draft, writes its
+ordered source set, and only then binds the manifest's review evidence while
+publishing the version. Source writes and that freeze transition serialize on the
+version row. Once verification begins, sources cannot be appended, edited,
+reordered, deleted, or moved to another version; a correction requires the next
+article version.
+
 The command rejects:
 
 - missing/invalid source or review evidence;

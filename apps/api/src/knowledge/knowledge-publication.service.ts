@@ -118,7 +118,7 @@ export class KnowledgePublicationService {
         now,
       );
       await this.repository.insertSources(transaction, inserted.id, manifest);
-      const published = await this.repository.publishDraft(transaction, inserted.id, now);
+      const published = await this.repository.publishDraft(transaction, inserted.id, manifest, now);
       return {
         articleKey: manifest.articleKey,
         version: manifest.version,
@@ -160,7 +160,7 @@ export class KnowledgePublicationService {
     }
     const current = versions.find((version) => version.publicationStatus === 'published');
     if (current) await this.repository.withdraw(transaction, current.id, now);
-    const published = await this.repository.publishDraft(transaction, target.id, now);
+    const published = await this.repository.publishDraft(transaction, target.id, manifest, now);
     return {
       articleKey: manifest.articleKey,
       version: manifest.version,
