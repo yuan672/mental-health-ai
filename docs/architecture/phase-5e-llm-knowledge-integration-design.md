@@ -1,15 +1,15 @@
 # Phase 5E — LLM + Knowledge Integration Design
 
-- Status: Design under review; implementation is not authorized
+- Status: Architecture accepted; Phase 5E Knowledge AI-A backend implementation authorized
 - Baseline: `develop` at `31681506740129d8690d610da3adaeac1b940ab8`
-- Proposed architecture: ADR-019
+- Architecture: Accepted ADR-019
 - Existing content architecture: Accepted ADR-018
 - Date: 2026-09-11
 
-This document proposes the smallest bounded way for an eligible chat generation to
+This document defines the accepted smallest bounded way for an eligible chat generation to
 use the existing Knowledge Base and show provenance that the application, rather
 than the model, can verify. It does not change the independent Knowledge reader.
-It does not publish any candidate article or authorize implementation.
+It does not publish any candidate article or authorize Production AI enablement.
 
 The three Phase 5E content candidates remain `unverified` review material outside
 the runtime Knowledge Base. They are not eligible retrieval content and this design
@@ -63,7 +63,7 @@ silently returning a partial corpus.
 
 ## 3. Retrieval placement and route decision
 
-The proposed persistent sequence is:
+The accepted persistent sequence is:
 
 ```text
 Auth / validation / required Consent / ownership
@@ -562,7 +562,10 @@ metadata.
   Output Safety policy, or quota limits.
 - Local retrieval itself is not charged. A no-hit followed by ordinary generation
   consumes the existing single turn charge. A Knowledge hit also consumes at most
-  one charge. Retry never creates a second logical turn.
+  one charge. A duplicate request can only rely on the existing no-second-turn
+  guarantee while the matching AI Turn remains in its normal lifecycle; an
+  explicit creation-capable continuation after its Conversation/turn was purged is
+  outside that retained-row guarantee.
 - Existing Provider-started cancel/disconnect and `finishReason=length` charging
   rules remain. Existing before/after-approved-content refund rules apply to
   grounding and Output Safety failures as described above.
@@ -670,12 +673,16 @@ and `clientRequestId`:
    if the client missed every stream content event. For an `immediate`/no-hit
    answer, this pair is the body plus the required explicit empty
    `knowledgeReferences: []`; for a grounded answer, the array is non-empty.
-2. When the client has positive admission evidence (`turn.started` or the
-   acknowledged v2 SSE response, which is sent only after the turn is prepared),
-   an exact same-request replay may resolve current turn metadata. This evidence
-   means the idempotent replay addresses an existing turn rather than starting a
-   replacement. When no valid pair was read, metadata is required to distinguish
-   failed/cancelled from claimed/streaming/completed.
+2. Metadata recovery may reuse the POST only with both (a) positive admission
+   evidence for that execution—a valid `turn.started`, or the acknowledged v2 SSE
+   response after the server prepared/claimed the turn—and (b) the confirmed
+   original `conversationId`. An existing-Conversation request supplies the ID but
+   still needs admission evidence; a new-chat request obtains both only from its
+   valid `turn.started`. The recovery request includes that original ID. If normal
+   deletion/purge removed the Conversation and cascaded its AI Turn, the ownership/
+   existence lookup fails and the server must not fall back to creating a
+   Conversation or turn. An acknowledged SSE response without an original ID is
+   not enough to authorize POST recovery.
 3. A completed turn plus a valid stored assistant body/reference relation is
    committed to visible state together and clears transient cancelled/failed/
    persistence warnings for that turn.
@@ -686,29 +693,43 @@ and `clientRequestId`:
    required valid history pair remains unresolved. A successful history page that
    merely lacks the pair is not treated as proof of rollback, and the client does
    not offer retry-as-new while this request remains unresolved.
-6. If no admission evidence or known `conversationId` exists, explicit cancel,
-   deadline, workspace/account termination, Session invalidation, or Consent
-   withdrawal must not replay the chat POST because that could start a request the
-   user intended to stop. It keeps an honest cancelled/unresolved state (or clears
-   it at the privacy boundary) and relies on normal owner-scoped Conversation/
-   history refresh to discover any later-visible commit. This design adds no non-
-   creating turn lookup.
+6. If the original Conversation identity is unavailable, no prior admission event
+   or response header proves that a creation-shaped POST is now read-only. Explicit
+   cancel, deadline, workspace/account termination, Session invalidation, Consent
+   withdrawal, and automatic recovery therefore must not replay it. The client
+   keeps an honest cancelled/unresolved state (or clears it at the privacy boundary)
+   and uses only normal owner-scoped Conversation/history refresh to discover any
+   later-visible commit. This design adds no non-creating turn lookup.
 
 The history response is strictly validated as a whole before any message body is
-committed to React state. A 406 tells the user to update the client. The existing
-replay of a completed persistent `clientRequestId` remains metadata-only and is
-followed by that history read; it never regenerates or adds a turn-status,
-replay-body, or regeneration endpoint.
+committed to React state. A 406 tells the user to update the client. While the
+matching AI Turn remains, replay of its completed Persistent `clientRequestId`
+remains metadata-only and is followed by that history read; this design adds no
+turn-status, replay-body, or regeneration endpoint.
 
-For a passive network-uncertain request only, if the user explicitly chooses to
-continue the same operation, an exact same-ID retry follows the existing at-most-
-one-logical-turn contract. If the first request never claimed a turn, this retry
-may perform the logical request for the first time; it is not described as a
-metadata-only replay. If a turn already exists, it returns that turn's metadata and
-cannot start a second Provider call or quota consumption. This path is never used
-automatically for cancel, deadline, workspace/account termination, Session
-invalidation, or Consent withdrawal, and a new `clientRequestId` is never presented
-as recovery of the old result.
+For a passive network-uncertain request only, the user may explicitly choose a
+creation-capable continuation with the same ID. If the first request never claimed
+a turn, it may perform the request for the first time; after ordinary retention/
+purge it may create another turn because the retained database idempotency record
+no longer exists. It is therefore not metadata recovery and has no across-purge
+at-most-one guarantee. If the original matching turn still exists, idempotency
+returns its metadata and prevents a second Provider call or quota consumption.
+This path is never automatic for cancel, deadline, workspace/account termination,
+Session invalidation, or Consent withdrawal, and a new `clientRequestId` is never
+presented as recovery of the old result.
+
+The server and client must also correlate the supplied original `conversationId`
+with the Conversation on any existing/replayed AI Turn, including the concurrent
+claim-conflict path. A mismatch is a typed conflict: it cannot return metadata for
+a replacement Conversation, switch to that response's ID, create work, call a
+Provider, or consume quota.
+
+The bound-recovery guarantee relies on the current lifecycle invariant that an AI
+Turn is not independently purged while its Conversation remains; normal cleanup
+deletes both through the Conversation cascade. If a future design introduces
+independent turn deletion, this POST can no longer be treated as non-creating
+metadata recovery without a separately approved contract. Historical admission
+evidence alone is never a permanent tombstone.
 
 Incognito has no authoritative history reader. Any possibly accepted v2 request
 that ends without a trustworthy terminal retires its context identity, even if no
@@ -779,9 +800,9 @@ fixture. CI uses no real Provider key, user psychological data, or live source U
 ### Persistence, protocol, and Web
 
 - assistant message, reference rows, and turn completion are atomic and idempotent;
-- replay of a completed persistent `clientRequestId` reads the existing assistant
-  turn metadata and then the v2 history relation; it never reruns retrieval,
-  returns a second body, or resolves `articleKey` to a current version;
+- replay of a retained completed Persistent `clientRequestId` reads the existing
+  assistant turn metadata and then the v2 history relation; it does not rerun
+  retrieval, return a second body, or resolve `articleKey` to a current version;
 - a duplicate Incognito `clientRequestId` keeps the existing fail-closed behavior
   and never reruns retrieval or generation, even while the context still exists;
 - a failed reference FK or transaction leaves no completed message/reference
@@ -822,18 +843,31 @@ fixture. CI uses no real Provider key, user psychological data, or live source U
   metadata to distinguish completed, failed/cancelled, and active states; a
   completed turn without its pair remains an integrity failure rather than being
   mislabeled as cancelled or retryable;
-- cancel before any admission acknowledgement, Session invalidation, and Consent
-  withdrawal never invoke a chat POST that might create the request; tests prove
+- cancel or automatic reconciliation without both positive admission evidence and
+  a confirmed original `conversationId`, plus Session invalidation and Consent
+  withdrawal, never invoke a chat POST that might create the request; tests prove
   that these paths do not turn a cancellation into generation;
 - cancel before `turn.started` with no database turn produces zero replay, Provider
   call, and quota consumption; deadline and workspace/account/Session termination
   have the same no-POST guarantee;
-- a user-approved same-ID retry after passive network uncertainty executes once if
-  no turn was claimed, while an already existing turn returns metadata with no
-  second Provider call or quota consumption;
-- controller tests prove the acknowledged v2 SSE status/content type/capability
-  headers are not flushed until a Persistent turn is prepared/claimed, so that
-  acknowledgement is valid positive admission evidence for non-creating replay;
+- a user-approved same-ID continuation after passive network uncertainty executes
+  at most once within the current retained lifecycle if no turn was claimed, while
+  an existing matching turn returns metadata with no second Provider call or quota
+  consumption; the UI never labels the unbound form as guaranteed metadata-only
+  recovery or claims an across-purge guarantee;
+- a first new-chat request without `conversationId` receives `turn.started`, then a
+  second tab deletes the returned Conversation and normal purge cascades its AI
+  Turn; recovery binds that original ID and fails closed without creating a
+  Conversation/turn, calling a Provider, or consuming quota;
+- an existing-Conversation request has its original ID but no admission evidence;
+  cancel/automatic reconciliation sends no POST and creates zero turn, Provider
+  call, or quota consumption;
+- a new-chat request receives only an acknowledged v2 SSE response, another tab
+  later deletes and purges the resulting Conversation/turn, and the original ID was
+  never received; automatic recovery sends no POST and creates zero Conversation,
+  turn, Provider call, or quota consumption;
+- a retained AI Turn whose `conversationId` differs from the recovery request's
+  confirmed original ID fails with a typed conflict and cannot redirect recovery;
 - no-hit v2 responses still expose successive `immediate` semantic segments, and
   trusted deterministic safety text remains immediate and retained under the
   existing safe-text-plus-failure behavior;
@@ -845,8 +879,8 @@ fixture. CI uses no real Provider key, user psychological data, or live source U
 - a grounded pending segment followed by `turn.failed`, a mixed delivery mode, or
   a late grounded completion is rejected/reconciled and cannot replace already
   visible trusted text;
-- v2 history parsing is all-or-nothing before React state replacement, and a
-  completed-request replay remains metadata followed by that history read;
+- v2 history parsing is all-or-nothing before React state replacement, and replay
+  of a retained completed request remains metadata followed by that history read;
 - deployment tests cover the no-reference rollout, references-present augmentation
   disable, 406 update prompt, and continued exact-reference reading without
   deletion or retargeting;
@@ -865,7 +899,7 @@ not measure real-model retrieval precision, factual grounding, prompt-injection
 resistance, clinical safety, recall, or user benefit. Real Model Safety Evaluation
 remains Not Evaluated.
 
-## 15. Proposed implementation batches
+## 15. Implementation batches
 
 ### Phase 5E Knowledge AI-A — Backend grounding and provenance
 
@@ -945,9 +979,10 @@ ADR-018 hides withdrawn versions and the schema cannot distinguish supersession
 from urgent withdrawal. The minimum shows exact provenance and frozen external
 sources without a body link. A future route needs its own access/withdrawal policy.
 
-## 17. Decisions required before implementation
+## 17. Accepted product decisions
 
-Only these architecture/product decisions materially affect the first code batch:
+The following architecture/product decisions for the first code batch were accepted
+on 2026-09-11:
 
 1. accept answer-level exact article-version/source-set references, with no claim
    that each sentence is individually supported, rather than require claim-level
@@ -988,7 +1023,7 @@ Safety, or independent Knowledge-reading behavior.
 
 Project status remains:
 
-- Phase 5E: incomplete; LLM + Knowledge design under review
+- Phase 5E: incomplete; LLM + Knowledge architecture accepted and Knowledge AI-A implementation authorized
 - Production Safety Lock: Enforced
 - Production AI Chat: Disabled
 - `productionSafe=false`

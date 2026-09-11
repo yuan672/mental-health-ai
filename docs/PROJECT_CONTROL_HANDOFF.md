@@ -23,8 +23,8 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   Phase 5E-1 content-foundation engineering is complete and delivered by PR #22;
   Phase 5E-2 Web reader engineering is complete and delivered by PR #23; curated
   production content remains unverified and unpublished; the bounded LLM +
-  Knowledge integration is in a docs-only design review under Proposed ADR-019,
-  with no implementation authorized, so Phase 5E is not phase-complete
+  Knowledge architecture is accepted in ADR-019 and the Knowledge AI-A backend
+  batch is authorized but not yet delivered, so Phase 5E is not phase-complete
 - Phase 6 — Admin and operations features: Not started
 
 ## Current Production State
@@ -90,10 +90,11 @@ safety, or validation for clinical use.
   source and source-review-date display, empty-state recovery, session cleanup,
   and synthetic browser coverage. Phase 5E-2 Web engineering is complete. No
   curated production content has been published. The first three content candidates
-  remain unverified and awaiting article-by-article human review. Proposed ADR-019
-  and `docs/architecture/phase-5e-llm-knowledge-integration-design.md` now define a
-  bounded local lexical-retrieval and exact-version citation option for separate
-  review; no implementation, model evaluation, or AI enablement is authorized.
+  remain unverified and awaiting article-by-article human review. Accepted ADR-019
+  and `docs/architecture/phase-5e-llm-knowledge-integration-design.md` define the
+  bounded local lexical-retrieval and exact-version citation architecture; the
+  Knowledge AI-A backend batch is authorized but not yet delivered, and no content
+  publication, model evaluation, or AI enablement is authorized.
   Admin/Reviewer features and production enablement remain outside completed scope.
 
 ## Phase 5C Batch Scope and Open Consent Product Flow
@@ -154,9 +155,10 @@ None.
 
 ## Immediate Next Step
 
-Keep curated content publication and the bounded LLM-plus-Knowledge integration as
-separately reviewed Phase 5E batches. Do not publish curated content, implement AI
-retrieval, or start Phase 6 without separate authorization.
+Implement the separately authorized Phase 5E Knowledge AI-A backend batch from the
+accepted ADR-019 design. Keep curated content publication and the later Web citation
+experience separately reviewed; do not publish content or start Phase 6 without
+separate authorization.
 
 ## Source of Truth
 

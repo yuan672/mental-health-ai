@@ -1,8 +1,8 @@
 # ADR-019: LLM Knowledge Retrieval and Citation Boundaries
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-11
-- Refines if accepted: ADR-013, ADR-014, ADR-015, ADR-018
+- Refines: ADR-013, ADR-014, ADR-015, ADR-018
 - Related: ADR-003, ADR-006, ADR-007, ADR-008, ADR-016
 - Supersedes: None
 
@@ -28,7 +28,7 @@ query or Knowledge body, while Incognito citations must remain ephemeral. The
 current strict Web parser also makes an unnegotiated completion-payload extension
 unsafe for rolling deployments.
 
-## Proposed decision
+## Decision
 
 ### Bounded local retrieval
 
@@ -166,10 +166,11 @@ version deletion until a future dependency-closed content lifecycle handles it.
 It follows Conversation/Message retention and is not an independent permanent
 interest profile.
 
-A completed persistent `clientRequestId` replay reads this stored relation and does
-not rerun retrieval or resolve the article key against a newer version. A duplicate
-Incognito `clientRequestId` retains the existing fail-closed behavior and never
-reruns retrieval or generation, even while its context still exists.
+While its matching AI Turn remains, a completed Persistent `clientRequestId` replay
+reads this stored relation and does not rerun retrieval or resolve the article key
+against a newer version. A duplicate Incognito `clientRequestId` retains the
+existing fail-closed behavior and never reruns retrieval or generation, even while
+its context still exists.
 
 Do not put references in `ai_turns`. Do not persist retrieval queries, normalized
 tokens, ranks, scores, snippets, prompt copies, article bodies, or source copies.
@@ -204,14 +205,24 @@ grounded segment. After stream admission or an unknown POST outcome, missing,
 truncated, invalid, mismatched, or late completion, a grounded completion without
 its required pending segment, and any other absence of a strict matching terminal
 leave the result unresolved; a typed stream-parser error is not proof that the turn
-failed. Persistent mode uses the original `clientRequestId` to resolve an already
-admitted turn's metadata and performs a strict v2 owner-scoped history read that
-commits a stored assistant body and references to visible state together. Exact
-POST replay for metadata requires positive admission evidence; a cancel, Session
-invalidation, or Consent withdrawal with no such evidence cannot invoke an
-operation that might start the request. The existing completed-request replay
-remains metadata-only; it neither regenerates nor adds a body-replay endpoint.
-Until metadata/history resolve the outcome, the Web does not offer retry-as-new.
+failed. Persistent mode performs a strict v2 owner-scoped history read that commits
+a stored assistant body and references to visible state together. POST-based
+metadata recovery also uses the original `clientRequestId`, but it requires both
+positive admission evidence for that execution and the confirmed original
+`conversationId`. An existing-Conversation request supplies only the latter until
+`turn.started` or the post-claim v2 response acknowledgement arrives; a new-chat
+request obtains the ID from valid `turn.started`. Normal deletion/purge then makes
+the old Conversation lookup fail instead of falling back to a new Conversation/
+turn. An acknowledged stream without the original ID is not enough. The existing
+completed-request replay remains metadata-only only while its turn exists; it
+neither regenerates nor adds a body-replay endpoint. Until history/bound metadata
+recovery resolves the outcome, the Web does not offer retry-as-new.
+
+This bound reuse depends on the current lifecycle invariant that AI Turns are not
+independently purged while their Conversation remains; normal cleanup deletes both
+through the Conversation cascade. A future independent turn-retention policy must
+remove this non-creating claim or obtain a separately approved contract. Historical
+admission evidence is not a permanent tombstone.
 
 After a grounded Persistent commit or Incognito context append wins its protected
 barrier, a later serialization or socket failure cannot be represented as a
@@ -220,13 +231,19 @@ unresolved and follows Persistent reconciliation or Incognito retirement. This
 does not change the existing immediate trusted-text-plus-failure contract when the
 trusted response itself was not persisted.
 
-Only passive network uncertainty, when the user still explicitly wants the same
-operation, may use the existing same-ID idempotent retry. If no turn was previously
-claimed, it may execute that logical request for the first time and is not called a
-metadata-only replay; if a turn exists, it returns existing metadata without a
-second Provider call or quota charge. Explicit cancel, deadline, workspace/account
-termination, Session invalidation, and Consent withdrawal never invoke this POST
-retry.
+Only passive network uncertainty, when the user still explicitly wants to proceed,
+may use an unbound same-ID creation-capable continuation. If no turn was previously
+claimed, or ordinary retention removed the former Conversation/turn, it may
+execute/create a turn and has no across-purge at-most-one guarantee; it is not
+metadata recovery. If the original matching turn still exists, it returns existing
+metadata without a second Provider call or quota charge. Explicit cancel, deadline,
+workspace/account termination, Session invalidation, and Consent withdrawal never
+invoke this unbound POST continuation.
+
+The implementation must correlate the supplied original `conversationId` with any
+existing/replayed AI Turn, including a concurrent claim conflict. A mismatch fails
+with a typed conflict and cannot return a replacement turn, change the recovery
+target, create work, call a Provider, or consume quota.
 
 Incognito has no recovery reader. Any possibly accepted request without a strict
 matching terminal retires the context identity even if no segment arrived. It
@@ -272,7 +289,7 @@ Local PostgreSQL retrieval is not a new third-party dispatch. The risk classifie
 generation, and output classifier remain bound to the exact accepted Consent and
 start network requests through `ConsentExecutionCoordinator`. A future hosted
 embedding or retrieval provider would be a new dispatch kind requiring separate
-Consent, privacy, Provider, timeout, and cancellation approval; this proposal does
+Consent, privacy, Provider, timeout, and cancellation approval; this decision does
 not authorize it.
 
 Knowledge does not change the single-turn quota. Local retrieval is not separately
@@ -295,14 +312,16 @@ professional review. Staging and Production cannot receive synthetic references.
 ### Independent reader and production state
 
 The authenticated independent Knowledge reader remains unchanged and available
-without AI Consent, AI quota, or AI availability. This proposal adds no search,
+without AI Consent, AI quota, or AI availability. This decision adds no search,
 taxonomy, favorites, reading history, formal content publication, or management
 surface.
 
-Acceptance of this ADR would authorize architecture only. It would not authorize
-implementation, content publication, Production AI enablement, or a real-model
-claim. Production Safety Lock remains enforced, Production AI Chat remains disabled,
-`productionSafe=false`, and Real Model Safety Evaluation remains Not Evaluated.
+Acceptance of this ADR authorizes the architecture and the bounded Knowledge AI-A
+backend implementation batch. Knowledge AI-B Web implementation still requires a
+separate review and authorization. This decision does not authorize content
+publication, Production AI enablement, or a real-model claim. Production Safety
+Lock remains enforced, Production AI Chat remains disabled, `productionSafe=false`,
+and Real Model Safety Evaluation remains Not Evaluated.
 
 ## Consequences
 
@@ -377,10 +396,9 @@ would silently show version 2 for a version-1 response.
 Rejected for persistent chat because a refresh would lose provenance. Incognito
 uses this ephemeral model deliberately because it must not create ordinary history.
 
-## Adoption conditions
+## Accepted scope and implementation conditions
 
-Before this proposal can become Accepted for implementation, reviewers must agree
-on:
+The following product choices were accepted on 2026-09-11:
 
 1. answer-level exact article-version/source-set references rather than claim-level
    mapping;
