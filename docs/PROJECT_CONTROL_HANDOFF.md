@@ -16,8 +16,9 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   policy/content approval and production enablement remain incomplete
 - Phase 5B — Chat Product Experience: Product UI engineering complete
 - Phase 5D — Mood / Profile: ADR-017 and the engineering contract are accepted;
-  Phase 5D-1 backend delivery is tracked by PR #18; Phase 5D-2 Web has not started,
-  so overall Phase 5D remains incomplete
+  Phase 5D-1 backend is merged, and Phase 5D-2 Web is implemented on its dedicated
+  feature branch for Draft PR review; overall Phase 5D remains incomplete until
+  that delivery is accepted and merged
 - Phase 6 — Admin and operations features: Not started
 
 ## Current Production State
@@ -47,6 +48,10 @@ safety, or validation for clinical use.
 - [PR #15](https://github.com/yuan672/mental-health-ai/pull/15) — Consent withdrawal race-test
   finalization
 - [PR #16](https://github.com/yuan672/mental-health-ai/pull/16) — Privacy Consent lifecycle UI
+- [PR #17](https://github.com/yuan672/mental-health-ai/pull/17) — Accepted Mood/Profile architecture
+- [PR #18](https://github.com/yuan672/mental-health-ai/pull/18) — Mood/Profile backend
+- [PR #19](https://github.com/yuan672/mental-health-ai/pull/19) — Privacy, registration,
+  narrow-layout, and session-expiry Web fixes
 
 ## Current Feature Status
 
@@ -61,9 +66,10 @@ safety, or validation for clinical use.
 - Mood/Profile product scope and engineering contract are accepted in ADR-017.
   [PR #18](https://github.com/yuan672/mental-health-ai/pull/18) is the delivery record
   for the Mood/Profile API, generated 0006 migration, content-free deletion Audit
-  actions, and final-check tests. Consult the PR state for integration status.
-  Phase 5D-2 Web, Knowledge Base, Admin/Reviewer features, and production enablement
-  remain outside completed scope.
+  actions, and final-check tests, and is merged into `develop`. The bounded Phase
+  5D-2 Web implementation is awaiting review on its dedicated feature branch.
+  Knowledge Base, Admin/Reviewer features, and production enablement remain outside
+  completed scope.
 
 ## Phase 5C Batch Scope and Open Consent Product Flow
 
@@ -123,8 +129,8 @@ None.
 
 ## Immediate Next Step
 
-Consult PR #18 for the bounded Phase 5D-1 backend integration result. Do not begin
-Phase 5D-2, Phase 5E, or Phase 6 without a separate authorized task.
+Review the bounded Phase 5D-2 Mood/Profile Web Draft PR. Do not merge it or begin
+Phase 5E or Phase 6 without a separate authorized task.
 
 ## Source of Truth
 
