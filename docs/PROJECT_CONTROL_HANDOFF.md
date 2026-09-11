@@ -15,7 +15,8 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
 - Phase 5C — Incognito and Privacy Experience: Engineering complete; production
   policy/content approval and production enablement remain incomplete
 - Phase 5B — Chat Product Experience: Product UI engineering complete
-- Phase 5D — Mood / Profile: Design pending review; implementation has not started
+- Phase 5D — Mood / Profile: Product scope approved; engineering contract in final
+  review; implementation has not started
 - Phase 6 — Admin and operations features: Not started
 
 ## Current Production State
@@ -56,9 +57,10 @@ safety, or validation for clinical use.
   persistent/Incognito chat protocol, bounded in-process context, runtime cleanup,
   and a read-only Privacy/Consent overview. This does not mark all Phase 5C
   product-policy work complete.
-- Mood/Profile design is under review on an isolated documentation branch. Mood and
-  Profile implementation, Knowledge Base, Admin/Reviewer features, and production
-  enablement remain outside completed scope.
+- Mood/Profile product scope is approved and its engineering contract is in final
+  review on an isolated documentation branch. Mood and Profile implementation,
+  Knowledge Base, Admin/Reviewer features, and production enablement remain outside
+  completed scope.
 
 ## Phase 5C Batch Scope and Open Consent Product Flow
 
@@ -118,8 +120,9 @@ None.
 
 ## Immediate Next Step
 
-Review the Proposed ADR-017 and Phase 5D Mood/Profile design. Do not implement Phase
-5D or begin Phase 5E/Phase 6 from this status file alone.
+Complete final review of Proposed ADR-017 and the Phase 5D Mood/Profile engineering
+contract. Do not implement Phase 5D or begin Phase 5E/Phase 6 from this status file
+alone.
 
 ## Source of Truth
 

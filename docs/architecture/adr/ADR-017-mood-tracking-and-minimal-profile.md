@@ -22,9 +22,9 @@ quota, and safety gates. Mood and Profile must preserve those boundaries.
 ### Mood check-in semantics
 
 A check-in records a required integer `moodScore` from 1 through 5, one optional
-primary `emotion`, an optional note of at most 500 characters, and server-owned
-timestamps. Labels describe the user's present self-report from “很低落” through
-“很好”; they do not represent a clinical score or diagnosis.
+primary `emotion`, an optional note of at most 500 Unicode code points, and
+server-owned timestamps. Labels describe the user's present self-report from
+“很低落” through “很好”; they do not represent a clinical score or diagnosis.
 
 The first bounded emotion vocabulary is:
 
@@ -56,14 +56,20 @@ The public history supports only the current local day plus the preceding 6 or 2
 local calendar days. Asia/Shanghai defines those calendar boundaries. Timestamps
 are stored as UTC `timestamptz` values and returned as ISO 8601 strings.
 
-Entries are paged newest first by `(created_at, id)`. A cursor freezes the selected
-range boundaries and an `asOf` ceiling from the first page, so a page request that
-crosses local midnight or races a new check-in does not silently change its data
-snapshot. The response also contains one derived daily summary per day that has at
-least one record: local date, entry count, and arithmetic mean score rounded to one
-decimal. Missing dates remain gaps and are never interpreted as a zero or an
-inferred mood. The UI renders entry history and labels the summary as being based
-only on recorded check-ins.
+Entries are paged newest first by `(created_at, id)`. The first-page cursor freezes
+the selected calendar range and a creation-time ceiling so crossing local midnight
+does not silently change the query. This is not a historical snapshot: edits and
+deletes remain visible, and a row with an earlier `created_at` that commits later
+may affect a later response. Each individual response reads its entries and derived
+daily trend from one consistent database view, but separate pages do not promise a
+complete point-in-time snapshot. User mutations trigger an explicit first-page and
+trend refresh.
+
+The response contains one derived daily summary per day that has at least one
+record: local date, entry count, and arithmetic mean score rounded to one decimal.
+Missing dates remain gaps and are never interpreted as a zero or an inferred mood.
+The UI renders entry history and labels the summary as being based only on recorded
+check-ins.
 
 No summary row is persisted. No prediction, diagnosis, recommendation engine,
 sentiment model, risk classification, embedding, or AI analysis is part of this
@@ -86,8 +92,11 @@ Add one `mood_entries` table:
 Use a unique index on `(user_id, client_request_id)` for creation idempotency and
 an index on `(user_id, created_at, id)` for owner-scoped range/history reads.
 Database checks enforce score 1–5, positive revision, note length, and timestamp
-ordering. The application and shared Zod schemas enforce the bounded emotion
-codes; the database stores the stable code as text rather than a PostgreSQL enum.
+ordering. After whitespace normalization, Web and API count code points (not UTF-16
+code units, bytes, or grapheme clusters); PostgreSQL `varchar(500)`/`char_length`
+enforces the same 500-code-point ceiling. The application and shared Zod schemas
+enforce the bounded emotion codes; the database stores the stable code as text
+rather than a PostgreSQL enum.
 
 Mood entries have no `expires_at` and do not inherit Conversation's ninety-day
 policy. They remain while the account exists unless the user explicitly deletes
@@ -101,14 +110,37 @@ identity and content-free safe metadata. A delete-all action may record the actu
 server deletion count, but no score, emotion, note, or derived trend. Audit retention
 remains independent and undecided for production.
 
+The Audit allowlists add only `mood_entry_deleted`/`mood_history_deleted` actions
+and `mood_entry`/`mood_history` resource types. A single-row audit uses the entry ID
+as `resourceId`, empty metadata, and
+`mood_entry_deleted:<userId>:<entryId>` as its idempotency key. Delete-all uses the
+user ID as `resourceId`, `{ entryCount }` as its only safe metadata, and
+`mood_history_deleted:<userId>:<serverUuid>` as its idempotency key. A zero-row
+delete-all returns zero and creates no audit row.
+
 ### Mutation concurrency and retry
 
 Creation accepts a client-generated UUID `clientRequestId`. The first insert wins.
-Repeating that identifier for the same authenticated user returns the existing
-entry and does not create another row, even if a buggy retry carries different
-fields. No note/content fingerprint or duplicate payload is retained. Different
-users may use the same identifier. The guarantee lasts while the mood row exists;
-Phase 5D does not add a permanent operation ledger after user deletion.
+Concurrent same-user/same-ID creates converge through the database unique key.
+Repeating that identifier while the row exists returns the row's current state and
+does not create another row, even if a buggy retry carries different fields. The
+new payload is ignored. Because the row may already have been edited, this response
+is not an immutable receipt of the original create payload. No note/content
+fingerprint or duplicate payload is retained. Different users may use the same
+identifier.
+
+A private, owner-scoped read endpoint resolves `clientRequestId` to a currently
+existing row without creating data. The Web uses it—not a repeated POST—to confirm
+an unknown create. If no row exists, the server cannot distinguish never committed
+from later hard-deleted without a durable operation ledger. It therefore reports
+only `absent`; the UI does not reconstruct the old row. Creating after that requires
+a new explicit action and a new `clientRequestId`.
+
+The guarantee is deliberately bounded to the row's lifetime. After single/delete-
+all hard deletion, a direct POST using the old identifier can create a row again;
+the supported UI never uses an old/unknown request that way. A durable tombstone or
+operation ledger would prevent this but is rejected for Phase 5D because it adds
+retained identifiers without preserving a necessary product fact.
 
 Updates and deletes carry `expectedRevision`. The repository combines entry ID,
 authenticated user ID, and revision in the write predicate. One competing update
@@ -122,6 +154,14 @@ row. A hard-deleted row is reported as no longer present, without claiming that 
 specific uncertain request performed the deletion. Delete-all is also never
 automatically retried: a retry could delete a new check-in created after the first
 request, so the user must reload and make a new explicit decision.
+
+Delete-all removes every owned row visible to its database `DELETE` statement and
+returns that actual count. A create committed before that statement is included; a
+create that becomes visible afterward may remain as the later database action and
+is not included in the count. An update committed first may still be deleted; an
+update that loses the row race returns not found and cannot recreate it. The
+delete/audit transaction does not hold a database transaction open across client
+confirmation or multiple pages.
 
 ### Minimal Profile
 
@@ -223,8 +263,10 @@ and user expectation.
 
 ## Adoption condition
 
-This ADR remains Proposed until the Phase 5D product semantics—particularly the
-five-point scale, bounded emotion list, multiple entries per day, no backdating,
-and read-only minimal Profile—are approved. Approval would authorize engineering
-implementation, not production privacy wording, account-deletion/backup policy,
-clinical validation, AI enablement, or real-model evaluation.
+The Phase 5D product scope—the five-point scale, bounded emotion list, 500-code-point
+note, multiple entries per day, no backdating, hard deletion, and read-only minimal
+Profile—was approved for design finalization on 2026-09-11. This ADR intentionally
+remains Proposed until the complete engineering contract receives final review.
+Later acceptance would authorize engineering implementation, not production privacy
+wording, account-deletion/backup policy, clinical validation, AI enablement, or
+real-model evaluation.

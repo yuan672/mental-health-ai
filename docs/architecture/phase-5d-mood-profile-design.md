@@ -3,6 +3,7 @@
 - Status: Design pending review
 - Baseline: `develop` at `0655c18b1b230ad5463fb75e54ab9167eb0a930f`
 - Proposed architecture: ADR-017
+- Product scope: Approved for contract finalization on 2026-09-11
 - Implementation status: Not started
 
 This document defines the bounded Phase 5D product and engineering proposal. It
@@ -34,12 +35,12 @@ minimal successful adult-verification result.
 | Score           | Required integer 1–5: 很低落、较低落、一般、较好、很好                 | 0–10                                | Five choices are easier to scan and must not be presented as a validated clinical instrument.                                                                                                                      |
 | Emotion         | Optional one primary bounded option                                    | Multi-select or free text           | A single optional choice keeps the first trend and form accessible; the note carries nuance.                                                                                                                       |
 | Emotion options | 愉快、平静、有希望、一般、疲惫、有压力、难过、生气、不堪重负           | Shorter positive/negative-only list | The stored codes are `joyful`, `calm`, `hopeful`, `neutral`, `tired`, `stressed`, `sad`, `angry`, and `overwhelmed`. These are everyday descriptions, not diseases; no score/emotion consistency rule is inferred. |
-| Note            | Optional, trimmed, maximum 500 characters                              | Longer journal entry                | Enough for a short check-in while limiting sensitive-data collection and UI/logging exposure. Empty text normalizes to `null`.                                                                                     |
+| Note            | Optional, trimmed, maximum 500 Unicode code points                     | Longer journal entry                | Enough for a short check-in while limiting sensitive-data collection and UI/logging exposure. Empty text normalizes to `null`.                                                                                     |
 | Entries per day | Multiple                                                               | One row per day                     | Mood can change; a daily uniqueness rule would overwrite or misrepresent a second check-in.                                                                                                                        |
 | Backfill        | Not in first implementation                                            | User-selected occurrence date/time  | Server receipt time is unambiguous. Backdating needs a distinct `occurredAt` model and timezone UX.                                                                                                                |
 | Edit            | Score, emotion, and note only                                          | Also edit timestamp                 | Preserve the original server receipt time. Updates increment a revision.                                                                                                                                           |
 | Delete          | Per-entry and delete-all hard deletion plus content-free audit actions | Soft delete                         | Records outlive the 30-day UI window, so delete-all must also cover older hidden rows. Do not retain a sensitive note in a tombstone.                                                                              |
-| Trend           | Daily count and average over a frozen 7/30-day window                  | Latest entry only                   | An average represents multiple check-ins without pretending missing dates are zero. It is labelled as a simple summary of recorded entries.                                                                        |
+| Trend           | Daily count and average over a fixed 7/30-day calendar range           | Latest entry only                   | An average represents multiple check-ins without pretending missing dates are zero. It is labelled as a simple summary of recorded entries.                                                                        |
 | Profile         | Read-only existing account facts; no new columns                       | Add display name/avatar             | Current product has no use case that justifies collecting new personal fields.                                                                                                                                     |
 
 The recommendation changes no Accepted ADR. It is captured in Proposed ADR-017
@@ -58,8 +59,10 @@ data minimization are durable decisions.
 6. Success adds the server-returned entry, refreshes the trend, clears the form, and
    announces completion without moving focus unexpectedly.
 7. A definitely rejected request keeps the draft for correction.
-8. A network-unknown result keeps the same request and `clientRequestId` in memory.
-   Exact retry reuses it; abandoning the retry first reloads authoritative history.
+8. A network-unknown result keeps the request values and `clientRequestId` in memory
+   and calls the read-only creation-status endpoint. If the row exists, the UI uses
+   its current server state. If absent, it does not POST the old request again;
+   creating a record requires a new explicit action and a new ID.
 
 The page does not autosave a draft and does not persist it in browser storage.
 
@@ -72,8 +75,9 @@ The page does not autosave a draft and does not persist it in browser storage.
 - Days without entries are shown as gaps/“未记录”, not zero.
 - Multiple entries remain individually visible newest first. The daily point is the
   arithmetic mean and displays its entry count.
-- “Load more” pages entries inside the frozen range without changing the trend
-  window or duplicating entries.
+- “Load more” keeps the initial calendar range and creation-time ceiling. It does
+  not claim a point-in-time snapshot across pages; edits, deletes, or a late commit
+  can require a first-page refresh.
 - The empty state invites a check-in and makes no claim about the user's wellbeing.
 
 ### Edit
@@ -107,16 +111,17 @@ history, then requires a new explicit confirmation.
 
 ### Interaction states
 
-| State                   | Presentation and allowed action                                                                                  |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Initial loading         | Skeleton/plain loading text with `aria-busy`; form may wait for session/profile bootstrap but not AI capability. |
-| Empty                   | Non-diagnostic invitation to record a current check-in.                                                          |
-| Submitting              | One active request, controls remain readable, duplicate submit disabled.                                         |
-| Validation failure      | Field-associated text via `aria-describedby`; focus the first invalid field.                                     |
-| Definite server failure | Preserve editable draft; allow a new explicit attempt.                                                           |
-| Result unknown          | Preserve request ID and values in memory; offer exact retry or authoritative refresh.                            |
-| Stale revision          | Refresh and require a new edit/delete decision.                                                                  |
-| Delete confirmation     | Focus trapped, Escape supported while idle, destructive action named, focus restored.                            |
+| State                   | Presentation and allowed action                                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Initial loading         | Skeleton/plain loading text with `aria-busy`; form may wait for session/profile bootstrap but not AI capability.                     |
+| Empty                   | Non-diagnostic invitation to record a current check-in.                                                                              |
+| Submitting              | One active request, controls remain readable, duplicate submit disabled.                                                             |
+| Validation failure      | Field-associated text via `aria-describedby`; focus the first invalid field.                                                         |
+| Definite server failure | Preserve editable draft; allow a new explicit attempt.                                                                               |
+| Create result unknown   | Preserve request ID and values in memory; use read-only confirmation. An absent result requires a new explicit create with a new ID. |
+| Update/delete unknown   | Reload authoritative state; never auto-retry a destructive request or claim which request changed the row.                           |
+| Stale revision          | Refresh and require a new edit/delete decision.                                                                                      |
+| Delete confirmation     | Focus trapped, Escape supported while idle, destructive action named, focus restored.                                                |
 
 On mobile, the form and history are single-column, controls have adequate touch
 targets, text wraps, and the action menu/dialog remains keyboard complete. On
@@ -127,17 +132,17 @@ not create a separate dashboard framework.
 
 Proposed table `mood_entries`:
 
-| Column              | Type                  | Rule                                                |
-| ------------------- | --------------------- | --------------------------------------------------- |
-| `id`                | uuid                  | Server-generated primary key.                       |
-| `user_id`           | uuid                  | Required FK to `users.id`, `ON DELETE CASCADE`.     |
-| `client_request_id` | uuid                  | Required creation-idempotency boundary.             |
-| `mood_score`        | integer               | Required, database check 1–5.                       |
-| `emotion`           | varchar(32) nullable  | Application/Zod bounded code; no diagnostic label.  |
-| `note`              | varchar(500) nullable | Trimmed; empty becomes null; database length check. |
-| `state_revision`    | integer               | Starts at 1 and remains positive.                   |
-| `created_at`        | timestamptz           | Server-owned, immutable.                            |
-| `updated_at`        | timestamptz           | Server-owned; must not precede `created_at`.        |
+| Column              | Type                  | Rule                                                          |
+| ------------------- | --------------------- | ------------------------------------------------------------- |
+| `id`                | uuid                  | Server-generated primary key.                                 |
+| `user_id`           | uuid                  | Required FK to `users.id`, `ON DELETE CASCADE`.               |
+| `client_request_id` | uuid                  | Required creation-idempotency boundary.                       |
+| `mood_score`        | integer               | Required, database check 1–5.                                 |
+| `emotion`           | varchar(32) nullable  | Application/Zod bounded code; no diagnostic label.            |
+| `note`              | varchar(500) nullable | Trimmed; empty becomes null; maximum 500 Unicode code points. |
+| `state_revision`    | integer               | Starts at 1 and remains positive.                             |
+| `created_at`        | timestamptz           | Server-owned, immutable.                                      |
+| `updated_at`        | timestamptz           | Server-owned; must not precede `created_at`.                  |
 
 Indexes and constraints:
 
@@ -145,6 +150,14 @@ Indexes and constraints:
 - index `(user_id, created_at, id)` for range and cursor reads;
 - score, revision, note-length, and timestamp-order checks;
 - no local-date, derived trend, diagnosis, risk, AI, deleted, or expiry columns.
+
+After trimming leading/trailing whitespace, Web and API count Unicode code points
+with code-point iteration, not JavaScript UTF-16 `.length`, bytes, or grapheme
+clusters. PostgreSQL `varchar(500)` and an explicit `char_length(note) <= 500` check
+apply the same limit. Chinese characters and a simple emoji each count as one;
+multi-code-point emoji sequences and combining sequences count by their constituent
+code points. The UI counter is informative, while API and database validation remain
+authoritative.
 
 The table is separate from Conversation, Message, RiskEvent, and Profile. User
 deletion cascading the table is only the database lifecycle relationship; production
@@ -155,14 +168,23 @@ account deletion, backup deletion, and retention wording remain unapproved.
 `MoodDateRangePolicy` owns the Asia/Shanghai boundary and a testable Clock. For
 `days=7`, the interval is `[00:00 today-6 days, 00:00 tomorrow)` in Asia/Shanghai;
 `days=30` uses today-29 days. The boundaries are converted to UTC before querying.
-The first page also records an `asOf` ceiling equal to the service Clock's current
-instant (bounded by the range end), and both entries and summaries use that ceiling.
+The first page also records a `createdAtCeiling` equal to the service Clock's current
+instant, bounded by the range end.
 
-The first page cursor contains a version, kind, selected range, frozen UTC start/end,
-`asOf`, last `createdAt`, and last ID. Subsequent pages must match the requested
-range and reuse those boundaries. New records after `asOf` appear only after an
-explicit refresh. A malformed, non-canonical, or mismatched cursor is a validation
-error.
+The cursor contains a version, kind, selected range, frozen UTC start/end,
+`createdAtCeiling`, last `createdAt`, and last ID. Subsequent pages must match the
+requested range and reuse those predicates, so crossing midnight cannot change from
+one calendar window to another. A malformed, non-canonical, or mismatched cursor is
+a validation error.
+
+The ceiling is a query bound, not a transaction snapshot. It does not freeze a
+later edit or deletion. A create assigned an earlier timestamp but committed after
+the first request is eligible, although its keyset position can mean that it only
+appears after a refresh. Each HTTP response obtains its entry page and complete
+daily trend in one short read-only, repeatable-read transaction so those two pieces
+agree for that response. No database transaction spans pagination requests, and
+cross-page results do not promise a complete historical snapshot. Create, update,
+or delete success always refreshes page one and the trend.
 
 Daily summaries group with the same Asia/Shanghai date interpretation and return:
 
@@ -184,15 +206,16 @@ All routes require the server-side session. GET responses and errors are private
 store. POST/PATCH/DELETE use the existing CSRF guard. The authenticated user ID is
 never accepted from a request body.
 
-| Method   | Path                  | Purpose                                                              |
-| -------- | --------------------- | -------------------------------------------------------------------- |
-| `POST`   | `/mood-entries`       | Create or replay one check-in.                                       |
-| `GET`    | `/mood-entries?days=7 | 30&limit=&cursor=`                                                   | Frozen-window entries plus daily trend. |
-| `GET`    | `/mood-entries/:id`   | Owner-scoped authoritative entry for reconciliation.                 |
-| `PATCH`  | `/mood-entries/:id`   | Replace editable fields at an expected revision.                     |
-| `DELETE` | `/mood-entries/:id`   | Hard-delete at an expected revision.                                 |
-| `DELETE` | `/mood-entries`       | Hard-delete every owned Mood row, including records outside 30 days. |
-| `GET`    | `/profile`            | Read existing minimal account facts.                                 |
+| Method   | Path                                             | Purpose                                                              |
+| -------- | ------------------------------------------------ | -------------------------------------------------------------------- |
+| `POST`   | `/mood-entries`                                  | Create once or resolve an existing live creation key.                |
+| `GET`    | `/mood-entries?days=7\|30&limit=&cursor=`        | Bounded-window entries plus daily trend.                             |
+| `GET`    | `/mood-entries/creation-status/:clientRequestId` | Read-only confirmation of a currently existing create result.        |
+| `GET`    | `/mood-entries/:id`                              | Owner-scoped authoritative entry for reconciliation.                 |
+| `PATCH`  | `/mood-entries/:id`                              | Replace editable fields at an expected revision.                     |
+| `DELETE` | `/mood-entries/:id`                              | Hard-delete at an expected revision.                                 |
+| `DELETE` | `/mood-entries`                                  | Hard-delete every owned Mood row, including records outside 30 days. |
+| `GET`    | `/profile`                                       | Read existing minimal account facts.                                 |
 
 History uses the existing pagination defaults: `limit=20`, bounded to 1–100. The
 shared schemas reject unknown fields. Validation and cursor errors use the existing
@@ -224,14 +247,46 @@ HTTP 400 `VALIDATION_ERROR`; missing authentication uses 401, CSRF rejection use
       "createdAt": "2026-09-11T04:00:00.000Z",
       "updatedAt": "2026-09-11T04:00:00.000Z"
     },
-    "replayed": false
+    "disposition": "created"
   }
 }
 ```
 
-An exact ID retry returns the existing current entry with `replayed=true` and does
-not create another row. A buggy same-ID/different-payload request also returns that
-first entry; the server does not store or compare a sensitive note fingerprint.
+While the row exists, a repeated ID returns `disposition: "existing"` and the
+entry's current state. A buggy same-ID/different-payload request applies none of the
+new fields. Because an intervening edit may have changed the row, `existing` is not
+an immutable receipt of the original create payload. The server stores neither a
+payload copy nor a sensitive note fingerprint.
+
+### Read-only create confirmation
+
+An unknown POST result is checked without another create mutation:
+
+```json
+{
+  "success": true,
+  "data": {
+    "status": "present",
+    "entry": {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "moodScore": 4,
+      "emotion": "calm",
+      "note": null,
+      "stateRevision": 2,
+      "createdAt": "2026-09-11T04:00:00.000Z",
+      "updatedAt": "2026-09-11T04:10:00.000Z"
+    }
+  }
+}
+```
+
+The response is a strict discriminated union:
+`{ status: "present", entry } | { status: "absent" }`. The `entry` is the current
+row and may reflect a later edit. If no owned live row matches, the endpoint returns
+`absent` with no `entry`. It deliberately does not claim whether the original
+request never committed or the row was later hard-deleted. The endpoint never
+creates or restores data. Cross-user keys are isolated and indistinguishable from
+absent.
 
 ### History response
 
@@ -289,6 +344,20 @@ count comes from the transactional database result rather than loaded UI history
 The transaction appends one content-free audit action and commits both effects or
 neither. A repeated explicit delete-all after success returns `entryCount: 0`.
 
+The existing application-level Audit allowlists gain only:
+
+| Action                 | Resource type  | Resource ID | Idempotency key                              | Safe metadata                            |
+| ---------------------- | -------------- | ----------- | -------------------------------------------- | ---------------------------------------- |
+| `mood_entry_deleted`   | `mood_entry`   | Entry ID    | `mood_entry_deleted:<userId>:<entryId>`      | `{}`                                     |
+| `mood_history_deleted` | `mood_history` | User ID     | `mood_history_deleted:<userId>:<serverUuid>` | `{ entryCount }` with a positive integer |
+
+The database continues to store Audit action/resource values as text, while Zod
+provides the bounded allowlists and action-specific metadata schema. A delete-all
+that removes zero rows returns `entryCount: 0` and does not create a meaningless
+audit row. Audit insertion and deletion share the Mood repository transaction;
+failure of either rolls back both. These actions do not change Audit read
+authorization and never include score, emotion, note, or trend.
+
 ### Profile response
 
 ```json
@@ -315,9 +384,20 @@ load account PII into every route.
 
 - UI button state reduces accidental double-clicks, while the database unique key
   provides the real guarantee.
-- Concurrent same-user/same-ID creates converge on one row and one response identity.
+- Concurrent same-user/same-ID creates converge on one row. The winner returns
+  `created`; a loser re-queries after the unique conflict and returns `existing`.
 - The same ID for different users is independent.
+- Same-ID/different-payload never updates the existing row; the new payload is
+  ignored and the current row is returned.
+- If that row was edited, the returned current state can differ from the original
+  create body and is not described as an immutable create receipt.
 - No content hash or creation-operation ledger is added.
+
+The read-only creation-status route is the supported unknown-result path. A
+`present` result confirms only that a live row currently owns the key. An `absent`
+result cannot distinguish never-created from hard-deleted, so the UI offers no
+“retry old request” mutation. A user who still wants to record the draft performs a
+new explicit create with a new ID.
 
 ### Update/update race
 
@@ -332,10 +412,27 @@ Writes use a consistent owner/id row lock or equivalent conditional transaction:
 - update first: delete's expected revision is stale and returns conflict;
 - no partial audit record is committed when the hard delete fails.
 
+### Delete-all/create/update race
+
+Delete-all issues one owner-scoped `DELETE ... RETURNING` inside its audit
+transaction. Its `entryCount` is exactly the returned row count:
+
+- a create committed and visible before the delete statement is included;
+- a create that becomes visible after the statement may remain as the later
+  database action and is not counted;
+- an update committed first can still be deleted and contributes one row;
+- an update that encounters a row already deleted returns not found and cannot
+  recreate it.
+
+This defines a short database-order boundary without a user-wide distributed lock.
+After any mutation the UI reloads page one and trend; it does not infer all-time
+state from the previous 7/30-day list.
+
 ### Network uncertainty
 
-- A pending create retains its request ID and body only in React memory and may be
-  exactly retried.
+- A pending create retains its request ID and body only in React memory. An unknown
+  result uses read-only creation-status confirmation; it is not automatically
+  submitted again.
 - Update/delete are not automatically retried because Phase 5D has no immutable
   operation receipt. The client fetches authoritative state before enabling another
   explicit action.
@@ -349,6 +446,21 @@ Writes use a consistent owner/id row lock or equivalent conditional transaction:
 
 This is intentionally smaller than ADR-016's legal-decision ledger. A general Mood
 event-sourcing or permanent idempotency table is not justified.
+
+### Required timing outcomes
+
+| Scenario                                                                             | Required result                                                                                                                                              |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Two concurrent creates use the same user/key                                         | One row. One request inserts; the other resolves the same current row after the unique conflict.                                                             |
+| A successful row is edited, then the original create POST is repeated                | No new write; the new payload is ignored; return the edited current row as `existing`, not as an immutable receipt.                                          |
+| A create result is unknown, another tab deletes the row, then the first tab confirms | Read-only confirmation returns `absent`; it neither recreates the row nor claims the original POST failed.                                                   |
+| Delete-all commits before a late create becomes visible                              | The late create may survive and is absent from `entryCount`; refresh displays it as a later database action.                                                 |
+| Create commits before delete-all's delete statement                                  | Delete-all removes it and includes it in `entryCount`; later read-only confirmation returns `absent`.                                                        |
+| An old create POST is manually repeated after hard deletion                          | With no durable tombstone it can create again; the supported Web flow prevents this by requiring a new explicit action/new key after an absent confirmation. |
+| Delete-all result is unknown                                                         | Reload only; do not retry automatically. A new confirmation is required before another delete-all.                                                           |
+| Range pagination crosses Asia/Shanghai midnight                                      | Cursor retains the original calendar bounds and creation ceiling; a fresh first page starts the new window.                                                  |
+| An entry is edited/deleted between page requests                                     | Later responses may show the change; no cross-page snapshot is promised; refresh page one and trend.                                                         |
+| A row has an eligible earlier `createdAt` but commits after page one                 | It may affect a later response or be missed by the current keyset position; explicit refresh is the reconciliation boundary.                                 |
 
 ## 8. Profile scope
 
@@ -448,18 +560,27 @@ delivery is held back. Neither batch begins Phase 5E or Phase 6.
 
 ### API/domain
 
-- score bounds, emotion allowlist, whitespace/null normalization, and note length;
-- multiple same-day entries and create idempotency;
-- same key across users remains isolated;
+- score bounds, emotion allowlist, whitespace/null normalization, and the same
+  500-code-point limit for Chinese, Latin text, simple emoji, combining characters,
+  and multi-code-point emoji sequences in Web/API/PostgreSQL;
+- multiple same-day entries, concurrent same-key create, and cross-user isolation;
+- same-key/different-payload first-write-wins, including return of a subsequently
+  edited current row without applying the retry payload;
+- read-only unknown-create confirmation after another-tab single/delete-all removal,
+  proving that confirmation does not recreate content;
 - seven/thirty-day Asia/Shanghai boundaries with a controlled Clock, including
   exact local midnight and cross-UTC-day cases;
-- frozen cursor window and `asOf` ceiling, ordering, pagination, and
-  malformed/mismatched cursors;
+- fixed range/creation ceiling, ordering, pagination, and malformed/mismatched
+  cursors without claiming a cross-page snapshot;
+- same-response entries/trend consistency under a concurrent edit, plus documented
+  refresh behavior for cross-page edit/delete/late-commit races;
 - daily average/count and missing-date behavior;
 - owner isolation for read/update/delete;
 - update/update and update/delete concurrency with barriers, not sleeps;
-- no-change update, stale revision, per-entry/delete-all hard deletion, server count,
-  and content-free atomic audit;
+- delete-all interleavings with create/update, exact server count, zero-row no-audit,
+  and content-free atomic audit rollback;
+- exact Audit action/resource/idempotency/metadata allowlists and unchanged Audit
+  read authorization;
 - AI disabled, quota exhausted, and Consent withdrawal do not block Mood/Profile;
 - Mood calls no classifier/provider and creates no RiskEvent;
 - errors/logs contain no score, emotion, note, email, request body, or SQL detail.
@@ -474,9 +595,12 @@ delivery is held back. Neither batch begins Phase 5E or Phase 6.
 
 ### Web
 
-- create, exact create retry, unknown result, edit conflict, per-entry/delete-all
-  confirmation, empty/loading/error states, and seven/thirty-day selection;
+- create, read-only unknown-result confirmation, explicit new-key recreation,
+  edit conflict, per-entry/delete-all confirmation, empty/loading/error states, and
+  seven/thirty-day selection;
+- unknown create followed by other-tab delete never re-POSTs the old key;
 - multi-tab stale update/delete refresh;
+- delete-all/late-create refresh and unknown delete-all no-auto-retry behavior;
 - missing dates and multiple-entry daily summary presentation;
 - keyboard score selection, visible labels/errors, dialog focus trap/restore, and
   non-color-only trend text;
@@ -493,18 +617,20 @@ trend → edit one → delete one → refresh → verify remaining history → d
 logout. It uses the existing protected `_test` database/seed and no real user or
 model data. Component tests retain the detailed failure/concurrency UI cases.
 
-## 14. Decisions required before implementation
+## 14. Implementation approval boundary
 
-Only these product-engineering choices require approval of ADR-017:
+The following product scope was approved for contract finalization on 2026-09-11:
 
-1. 1–5 score, the proposed optional emotion vocabulary, and 500-character note;
+1. 1–5 score, the optional bounded emotion vocabulary, and a 500-code-point note;
 2. multiple entries per day with no backdating in the first implementation;
-3. hard delete plus content-free Audit Log action;
+3. per-entry/delete-all hard deletion plus content-free Audit actions;
 4. a read-only Profile made solely from existing identity data, with no new profile
    attributes or account-credential mutation.
 
-There is no discovered technical blocker to implementation if those decisions are
-accepted.
+ADR-017 remains Proposed and the PR remains Draft until this finalized engineering
+contract is reviewed. There is no discovered implementation-blocking ambiguity in
+the contract. Accepting the ADR would authorize implementation, not any production
+policy or AI enablement.
 
 ## 15. Production-only unresolved matters
 
