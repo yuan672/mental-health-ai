@@ -216,19 +216,15 @@ describe('Phase 5D-1 Mood and Profile backend integration', () => {
     const clientRequestId = randomUUID();
     const responses = await Promise.all(
       Array.from({ length: 12 }, (_, index) =>
-        post(auth, '/mood-entries')
-          .send({
-            clientRequestId,
-            moodScore: index === 0 ? 1 : 5,
-            emotion: index === 0 ? 'sad' : 'joyful',
-            note: `synthetic-${index}`,
-          })
-          .expect(201),
+        moodService.create(auth.userId, {
+          clientRequestId,
+          moodScore: index === 0 ? 1 : 5,
+          emotion: index === 0 ? 'sad' : 'joyful',
+          note: `synthetic-${index}`,
+        }),
       ),
     );
-    expect(
-      responses.filter((response) => response.body.data.disposition === 'created'),
-    ).toHaveLength(1);
+    expect(responses.filter((response) => response.data.disposition === 'created')).toHaveLength(1);
     const rows = await database.database
       .select()
       .from(moodEntries)
