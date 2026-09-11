@@ -49,7 +49,6 @@ import {
 } from '../src/ai/safety/safety-gates';
 import type { RiskDecision } from '../src/safety/safety.types';
 import { AiTurnService } from '../src/ai/turns/ai-turn.service';
-import { AiExecutionTotalTimeoutError } from '../src/ai/runtime/active-ai-execution.registry';
 import { AppModule } from '../src/app.module';
 import { hashSessionToken, SessionsService } from '../src/auth/sessions.service';
 import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
@@ -1122,7 +1121,7 @@ describe('Phase 3 AI foundation integration', () => {
       });
   });
 
-  it('returns a bounded timeout response when a Persistent execution expires after prepare', async () => {
+  it('returns a bounded timeout before SSE headers when the deadline passes before its timer runs', async () => {
     const now = new Date();
     const userId = await createUser();
     const conversation = await conversationsService.create(userId, now);
@@ -1140,7 +1139,7 @@ describe('Phase 3 AI foundation integration', () => {
       .mockImplementationOnce(async (...input) => {
         const prepared = await originalPrepare(...input);
         if (prepared.kind !== 'ready') throw new Error('Expected a ready Persistent turn');
-        prepared.execution.abort(new AiExecutionTotalTimeoutError());
+        prepared.execution.deadlineAt.setTime(Date.now() - 1);
         return prepared;
       });
 
@@ -1172,6 +1171,62 @@ describe('Phase 3 AI foundation integration', () => {
         status: 'failed',
         failureCode: 'TOTAL_TIMEOUT_BEFORE_PROVIDER',
       });
+    } finally {
+      prepareSpy.mockRestore();
+    }
+  });
+
+  it('returns the same bounded timeout for Incognito before SSE headers when its timer is delayed', async () => {
+    const now = new Date();
+    const userId = await createUser();
+    const sessionId = randomUUID();
+    const rawToken = `synthetic-incognito-pre-stream-timeout-${randomUUID()}`;
+    await databaseService.database.insert(sessions).values({
+      id: sessionId,
+      userId,
+      tokenHash: hashSessionToken(rawToken),
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+    });
+    const context = await incognitoContexts.create(
+      {
+        id: sessionId,
+        userId,
+        expiresAt: new Date(now.getTime() + 60_000),
+        revokedAt: null,
+      },
+      now,
+    );
+    const originalPrepare = orchestration.prepareIncognitoTurn.bind(orchestration);
+    const prepareSpy = jest
+      .spyOn(orchestration, 'prepareIncognitoTurn')
+      .mockImplementationOnce(async (...input) => {
+        const prepared = await originalPrepare(...input);
+        if (prepared.kind !== 'ready') throw new Error('Expected a ready Incognito turn');
+        prepared.execution.deadlineAt.setTime(Date.now() - 1);
+        return prepared;
+      });
+
+    try {
+      await request(app.getHttpServer())
+        .post('/ai/chat/stream')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', `mh_session=${rawToken}; mh_csrf=synthetic-csrf`)
+        .set('x-csrf-token', 'synthetic-csrf')
+        .send({
+          mode: 'incognito',
+          clientRequestId: randomUUID(),
+          contextId: context.id,
+          message: 'synthetic-incognito-pre-stream-timeout',
+        })
+        .expect(504)
+        .expect({
+          success: false,
+          error: { code: 'AI_PROVIDER_TIMEOUT', message: 'AI 服务响应超时，请稍后重试' },
+        });
+
+      expect(provider.streamCalls).toBe(0);
+      expect(await quotaService.getUsage(userId, now)).toMatchObject({ usedCount: 0 });
     } finally {
       prepareSpy.mockRestore();
     }

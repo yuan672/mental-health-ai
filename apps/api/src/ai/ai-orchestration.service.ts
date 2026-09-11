@@ -318,7 +318,13 @@ export class AiOrchestrationService {
         now,
       });
     } catch (error) {
+      if (error instanceof AiExecutionTotalTimeoutError) {
+        pendingExecution.abort(error);
+      }
       pendingExecution.dispose();
+      if (error instanceof AiExecutionTotalTimeoutError) {
+        throw new AIProviderTimeoutError();
+      }
       throw error;
     }
 
@@ -413,6 +419,12 @@ export class AiOrchestrationService {
         knowledgeGrounding: preparedContext.knowledgeGrounding,
       };
     } catch (error) {
+      const timedOut =
+        error instanceof AiExecutionTotalTimeoutError ||
+        execution.signal.reason instanceof AiExecutionTotalTimeoutError;
+      if (error instanceof AiExecutionTotalTimeoutError && !execution.signal.aborted) {
+        execution.abort(error);
+      }
       if (admission.kind === 'generation') {
         await this.quota.refundQuota(principal.userId, admission.quotaIdempotencyKey, now);
       }
@@ -420,6 +432,9 @@ export class AiOrchestrationService {
       execution.dispose();
       if (error instanceof IncognitoContextLimitError) {
         throw new ValidationError('无痕对话上下文已达到容量限制，请重新开始');
+      }
+      if (timedOut) {
+        throw new AIProviderTimeoutError();
       }
       throw error;
     }
@@ -520,6 +535,9 @@ export class AiOrchestrationService {
             throwIfAborted(execution.signal);
             return { kind: 'trusted', turn: completed, response: trustedResponse, execution };
           } catch (error) {
+            if (error instanceof AiExecutionTotalTimeoutError && !execution.signal.aborted) {
+              execution.abort(error);
+            }
             if (execution.signal.aborted) {
               throw execution.signal.reason ?? error;
             }
@@ -606,7 +624,12 @@ export class AiOrchestrationService {
           knowledgeGrounding: preparedContext.knowledgeGrounding,
         };
       } catch (error) {
-        const timedOut = execution.signal.reason instanceof AiExecutionTotalTimeoutError;
+        const timedOut =
+          error instanceof AiExecutionTotalTimeoutError ||
+          execution.signal.reason instanceof AiExecutionTotalTimeoutError;
+        if (error instanceof AiExecutionTotalTimeoutError && !execution.signal.aborted) {
+          execution.abort(error);
+        }
         const cancelled = execution.signal.aborted && !timedOut;
         try {
           // This transaction locks the turn before refunding. It therefore orders cleanup
@@ -631,7 +654,13 @@ export class AiOrchestrationService {
         throw error;
       }
     } catch (error) {
+      if (error instanceof AiExecutionTotalTimeoutError) {
+        pendingExecution.abort(error);
+      }
       pendingExecution.dispose();
+      if (error instanceof AiExecutionTotalTimeoutError) {
+        throw new AIProviderTimeoutError();
+      }
       throw error;
     }
   }
@@ -785,11 +814,17 @@ export class AiOrchestrationService {
     if (execution.signal.aborted) {
       throw execution.signal.reason ?? error;
     }
+    if (error instanceof AiExecutionTotalTimeoutError) {
+      execution.abort(error);
+      throw new AIProviderTimeoutError();
+    }
     if (
       error instanceof KnowledgeRetrievalDeadlineExceededError ||
       execution.deadlineAt.getTime() <= Date.now()
     ) {
-      throw new AIProviderTimeoutError();
+      const timeout = new AiExecutionTotalTimeoutError();
+      execution.abort(timeout);
+      throw timeout;
     }
   }
 
@@ -1256,6 +1291,7 @@ export class AiOrchestrationService {
         return;
       }
       const timedOut =
+        error instanceof AiExecutionTotalTimeoutError ||
         error instanceof ProviderEventTimeout ||
         generationController.signal.reason instanceof ProviderEventTimeout ||
         generationController.signal.reason instanceof AiExecutionTotalTimeoutError ||
@@ -1831,6 +1867,7 @@ export class AiOrchestrationService {
       }
 
       const timedOut =
+        error instanceof AiExecutionTotalTimeoutError ||
         error instanceof ProviderEventTimeout ||
         generationController.signal.reason instanceof ProviderEventTimeout ||
         prepared.execution.signal.reason instanceof AiExecutionTotalTimeoutError;
@@ -1974,6 +2011,17 @@ export class AiOrchestrationService {
       }
     } finally {
       if (prepared.kind !== 'existing') prepared.execution.dispose();
+    }
+  }
+
+  enforcePreparedExecutionDeadline(
+    prepared: Exclude<PreparedAiTurn, { kind: 'existing' }> | PreparedIncognitoTurn,
+  ): void {
+    if (
+      !prepared.execution.signal.aborted &&
+      prepared.execution.deadlineAt.getTime() <= Date.now()
+    ) {
+      prepared.execution.abort(new AiExecutionTotalTimeoutError());
     }
   }
 

@@ -585,7 +585,10 @@ metadata.
   opened, the controller performs that same pre-dispatch cleanup. A still-writable
   response receives the existing typed timeout, Consent-required, Incognito-context,
   or cancellation error; a disconnected response receives no late write. The API
-  does not silently return while leaving a writable HTTP response open.
+  does not silently return while leaving a writable HTTP response open. The
+  pre-header boundary synchronously compares the execution deadline as well as
+  observing its timer signal, so event-loop delay cannot turn an expired execution
+  into a `200 text/event-stream` response.
 
 The body is reference data, not trusted instructions. This framing plus strict
 output/reference validation reduces one injection path but does not replace the
@@ -858,10 +861,11 @@ fixture. CI uses no real Provider key, user psychological data, or live source U
   row makes pre-dispatch cleanup wait at that row; after the writer resolves, turn
   termination and quota refund commit atomically, and Provider transport remains at
   zero calls;
-- Persistent total timeout and Incognito Consent withdrawal in the
+- Persistent and Incognito total timeout, including a deadline that expires before
+  its timer callback runs, plus Incognito Consent withdrawal in the
   prepare-return-to-SSE window terminate the prepared execution, perform the
   pre-dispatch refund/release, and close a writable request with the corresponding
-  typed response rather than hanging it;
+  typed response rather than opening SSE or hanging it;
 - Persistent uncertain delivery recovers only through a strict v2 authoritative
   history read, while Incognito discards and retires the affected context without
   persistence, generation replay, or reuse of the old request ID;

@@ -1,5 +1,8 @@
 import type { IncognitoContextStore } from '../src/ai/incognito/incognito-context.store';
-import { ActiveAiExecutionRegistry } from '../src/ai/runtime/active-ai-execution.registry';
+import {
+  ActiveAiExecutionRegistry,
+  AiExecutionTotalTimeoutError,
+} from '../src/ai/runtime/active-ai-execution.registry';
 import {
   ConsentExecutionCoordinator,
   type WithdrawnConsentDependency,
@@ -262,6 +265,18 @@ describe('Consent runtime coordination', () => {
       ),
     ).rejects.toBeInstanceOf(ConsentCoordinationNotStartedError);
     expect(commitCalls).toBe(0);
+  });
+
+  it('uses the canonical AI total-timeout error when lock acquisition sees an expired deadline', async () => {
+    await expect(
+      lock.runExclusive(
+        USER_ID,
+        new AbortController().signal,
+        new Date(Date.now() - 1),
+        () => undefined,
+      ),
+    ).rejects.toBeInstanceOf(AiExecutionTotalTimeoutError);
+    expect(lock.diagnostics()).toEqual({ users: 0, waiters: 0 });
   });
 
   it('publishes an exact withdrawal after a committed operation loses its acknowledgement', async () => {

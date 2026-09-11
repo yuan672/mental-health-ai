@@ -109,7 +109,9 @@ starts use the standard JSON API error contract. This includes a timeout, Consen
 withdrawal, or Incognito-context termination that wins after server preparation
 but before SSE headers: the server first performs the pre-dispatch cleanup and then
 returns the corresponding typed JSON error while the connection remains writable.
-No Provider transport is started in that window.
+The deadline is checked synchronously before headers as well as by its timer, so a
+delayed timer callback cannot open a late SSE response. No Provider transport is
+started in that window.
 
 The client cancels through `AbortController`. The API does not automatically retry
 a generation or reconnect an SSE stream. A no-new-work persistent recovery may

@@ -162,6 +162,7 @@ export class AiController {
       return;
     }
 
+    this.orchestration.enforcePreparedExecutionDeadline(prepared);
     if (prepared.execution.signal.aborted || response.destroyed || response.writableEnded) {
       try {
         await this.orchestration.cancelPreparedPersistentTurnBeforeProvider(prepared);
@@ -319,14 +320,20 @@ export class AiController {
       throw error;
     }
 
-    if (prepared.generation.signal.aborted || response.destroyed || response.writableEnded) {
+    this.orchestration.enforcePreparedExecutionDeadline(prepared);
+    if (
+      prepared.execution.signal.aborted ||
+      prepared.generation.signal.aborted ||
+      response.destroyed ||
+      response.writableEnded
+    ) {
       try {
         await this.orchestration.cancelPreparedIncognitoTurnBeforeProvider(prepared);
       } finally {
         response.removeListener('close', onClose);
       }
       if (response.destroyed || response.writableEnded) return;
-      if (prepared.generation.signal.aborted) {
+      if (prepared.execution.signal.aborted || prepared.generation.signal.aborted) {
         throw this.orchestration.preProviderTerminationError(prepared);
       }
       return;

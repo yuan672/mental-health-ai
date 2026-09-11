@@ -1,8 +1,14 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { SessionRecord } from '../../users/users.repository';
-import { AIChatDisabledError, AuthenticationError, RateLimitError } from '../../common/errors';
+import {
+  AIChatDisabledError,
+  AIProviderTimeoutError,
+  AuthenticationError,
+  RateLimitError,
+} from '../../common/errors';
 import { env } from '../../config/env';
 import { ConsentExecutionCoordinator } from '../../consents/runtime/consent-execution.coordinator';
+import { AiExecutionTotalTimeoutError } from '../runtime/active-ai-execution.registry';
 import {
   INCOGNITO_CONTEXT_STORE,
   type IncognitoContext,
@@ -37,6 +43,9 @@ export class IncognitoContextsService {
       }
       if (error instanceof IncognitoSessionExpiredError) {
         throw new AuthenticationError('登录已失效，请重新登录');
+      }
+      if (error instanceof AiExecutionTotalTimeoutError) {
+        throw new AIProviderTimeoutError();
       }
       throw error;
     }

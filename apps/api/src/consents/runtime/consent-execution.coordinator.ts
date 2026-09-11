@@ -6,6 +6,7 @@ import {
 } from '../../ai/incognito/incognito-context.store';
 import {
   ActiveAiExecutionRegistry,
+  AiExecutionTotalTimeoutError,
   type ActiveAiExecution,
   type ConsentBoundExecution,
 } from '../../ai/runtime/active-ai-execution.registry';
@@ -348,7 +349,7 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
   private assertExecutionTime(execution: ActiveAiExecution): void {
     if (execution.signal.aborted) throw execution.signal.reason;
     if (execution.deadlineAt.getTime() <= Date.now()) {
-      execution.abort(new Error('consent_execution_deadline_exceeded'));
+      execution.abort(new AiExecutionTotalTimeoutError());
       throw execution.signal.reason;
     }
   }
