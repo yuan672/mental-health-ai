@@ -22,8 +22,9 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
 - Phase 5E — Knowledge Base: ADR-018 and the minimum design are accepted;
   Phase 5E-1 content-foundation engineering is complete and delivered by PR #22;
   Phase 5E-2 Web reader engineering is complete and delivered by PR #23; curated
-  production content and later AI integration remain separate work, so Phase 5E
-  is not phase-complete
+  production content remains unverified and unpublished; the bounded LLM +
+  Knowledge integration is in a docs-only design review under Proposed ADR-019,
+  with no implementation authorized, so Phase 5E is not phase-complete
 - Phase 6 — Admin and operations features: Not started
 
 ## Current Production State
@@ -88,10 +89,12 @@ safety, or validation for clinical use.
   experience, strict response validation, safe bounded-block rendering, exact
   source and source-review-date display, empty-state recovery, session cleanup,
   and synthetic browser coverage. Phase 5E-2 Web engineering is complete. No
-  curated production content has been published. The
-  LLM-plus-Knowledge direction remains a later independent Phase 5E batch requiring
-  separate design and authorization. Admin/Reviewer features and production
-  enablement remain outside completed scope.
+  curated production content has been published. The first three content candidates
+  remain unverified and awaiting article-by-article human review. Proposed ADR-019
+  and `docs/architecture/phase-5e-llm-knowledge-integration-design.md` now define a
+  bounded local lexical-retrieval and exact-version citation option for separate
+  review; no implementation, model evaluation, or AI enablement is authorized.
+  Admin/Reviewer features and production enablement remain outside completed scope.
 
 ## Phase 5C Batch Scope and Open Consent Product Flow
 
