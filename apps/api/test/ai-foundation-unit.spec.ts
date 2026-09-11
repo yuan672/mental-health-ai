@@ -184,6 +184,7 @@ describe('pre-stream response lifecycle', () => {
           await Promise.resolve();
           response.destroyed = true;
         }),
+        enforcePreparedExecutionDeadline: jest.fn(),
         preProviderTerminationError,
       } as unknown as AiOrchestrationService;
       const controller = new AiController(orchestration, {} as ConsentExecutionCoordinator);
