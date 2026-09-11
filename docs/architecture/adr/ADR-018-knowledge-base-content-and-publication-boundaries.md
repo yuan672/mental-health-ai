@@ -33,9 +33,9 @@ date, and ordered source citations. The initial release has no search, category
 taxonomy, personalization, bookmarks, comments, ratings, or reading history.
 
 Knowledge reading remains available when AI Chat is disabled, quota is exhausted,
-or AI-admission Consent is not current. It requires only a valid session. It does
-not invoke an LLM, classifier, embedding provider, Risk Detection, or user-content
-analysis.
+or AI-admission Consent is not current. It requires only a valid session. The
+independent read path does not invoke an LLM, classifier, embedding provider, Risk
+Detection, or user-content analysis.
 
 ### Runtime and editorial sources of truth
 
@@ -128,12 +128,18 @@ an explicit external-navigation label. Content and reading state are not persist
 to browser storage. Logout/session expiry aborts reads and clears state. The system
 does not create reading histories, analytics profiles, or Mood/chat correlations.
 
-### Future AI boundary
+### AI integration boundary
 
-This decision does not implement the HANDOFF's future LLM-plus-Knowledge direction.
-RAG or retrieval must be separately reviewed for indexing/withdrawal consistency,
-citations, provider/Consent boundaries, safety gates, and quality evaluation. It may
-not bypass the existing AI orchestration or Production Safety Lock.
+The HANDOFF's LLM-plus-Knowledge direction is retained. This decision establishes
+the independent content/read foundation but does not decide whether a bounded AI
+retrieval implementation belongs to a later Phase 5E batch or a separately
+authorized later phase. That is an explicit scope confirmation before AI code
+starts, not a permanent exclusion.
+
+Any approved RAG or retrieval batch must be separately reviewed for indexing and
+withdrawal consistency, citations, provider/Consent boundaries, safety gates, and
+quality evaluation. It may not bypass the existing AI orchestration or Production
+Safety Lock. The minimum reader adds no speculative retrieval infrastructure.
 
 ## Consequences
 
@@ -154,7 +160,8 @@ not bypass the existing AI orchestration or Production Safety Lock.
   publication.
 - Authentication prevents public indexing/SEO in V1.
 - There is no search, taxonomy, professional review workflow, live withdrawal push,
-  automatic link monitoring, RAG, or Admin UI.
+  automatic link monitoring, or Admin UI in the minimum reader. AI retrieval timing
+  remains the explicit scope decision above.
 - Content already delivered to an open browser cannot be recalled after withdrawal.
 
 ## Alternatives considered
@@ -181,15 +188,18 @@ Deferred until a real corpus and user need justify the extra content governance,
 ranking, state, and tests. Personalized recommendations are specifically excluded
 because they would introduce reading profiles and psychological inference.
 
-### RAG in the Knowledge release
+### RAG in the first Knowledge foundation PR
 
-Rejected. It expands provider, privacy, safety, indexing, evaluation, and deletion
-boundaries and is not required for independent educational reading.
+Deferred from the first PR because it expands provider, privacy, safety, indexing,
+evaluation, and deletion boundaries and is not required for independent educational
+reading. This does not reject the HANDOFF's overall LLM-plus-Knowledge direction;
+the later delivery boundary still requires explicit confirmation.
 
 ## Adoption boundary
 
 This ADR remains Proposed until the Phase 5E design is explicitly accepted. If
 accepted, it authorizes the bounded data/read architecture and synthetic engineering
-fixtures. It does not approve an article body, source citation, copyright/reuse
-basis, reviewer identity, professional-review claim, production content release,
-Production AI enablement, or real-model evaluation.
+fixtures. It does not by itself decide or authorize the AI retrieval batch, nor
+approve an article body, source citation, copyright/reuse basis, reviewer identity,
+professional-review claim, production content release, Production AI enablement, or
+real-model evaluation.

@@ -25,8 +25,10 @@ Phase 5E can reuse:
 
 There is no Knowledge module, article table, source table, read API, Web route,
 content publishing workflow, embedding pipeline, or retrieval integration today.
-`LLMProvider.embed()` remains an unsupported capability and is not needed for this
-proposal.
+`LLMProvider.embed()` remains an unsupported capability and is not needed for the
+independent reading foundation. The HANDOFF's wider `LLM + Knowledge` direction is
+retained; the implementation-batch boundary for that integration is the one open
+scope decision in this proposal.
 
 `docs/HANDOFF.md` section 17 is the controlling content boundary: V1 may use only
 public, authoritative, traceable material; every article must preserve its source;
@@ -34,16 +36,16 @@ and `source_verified` must not be presented as professional or clinical review.
 
 ## 2. Recommended V1 product scope
 
-| Decision               | Recommendation                                                                            | Alternative considered                       | Reason and impact                                                                                                                                       |
-| ---------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Audience               | Authenticated users in `/app/knowledge`                                                   | Public/SEO pages                             | Matches the current age-verified account product and avoids adding a second public delivery/cache policy. Public access can be reconsidered separately. |
-| List                   | Paginated published articles, newest publication first                                    | Categories and featured collections          | A small curated launch corpus does not justify taxonomy management.                                                                                     |
-| Detail                 | Title, summary, structured body, article version, verification date, and source citations | Historical-version browser                   | Users need the version they read, not a Phase 6 editorial history UI.                                                                                   |
-| Search                 | Do not build in first release                                                             | Database title/full-text search              | A small corpus is scannable; search quality, no-result language, indexing, and ranking are unproven requirements.                                       |
-| Categories             | Do not build in first release                                                             | Fixed topic enum                             | No accepted taxonomy exists. Adding categories now would create content and navigation policy before demand is known.                                   |
-| Personalization        | None                                                                                      | Recommendations based on Mood/chat/history   | Avoids creating reading profiles or inferring psychological interests.                                                                                  |
-| AI integration         | None                                                                                      | RAG, embeddings, or “ask about this article” | Independent reading is useful while Production AI is disabled and does not expand third-party processing.                                               |
-| Content administration | Version-controlled release manifest plus a restricted internal command                    | Phase 6 admin UI or SQL/manual row edits     | Gives a reviewable V1 release path without building admin authentication or a CMS.                                                                      |
+| Decision               | Recommendation                                                                                                               | Alternative considered                        | Reason and impact                                                                                                                                       |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Audience               | Authenticated users in `/app/knowledge`                                                                                      | Public/SEO pages                              | Matches the current age-verified account product and avoids adding a second public delivery/cache policy. Public access can be reconsidered separately. |
+| List                   | Paginated published articles, newest publication first                                                                       | Categories and featured collections           | A small curated launch corpus does not justify taxonomy management.                                                                                     |
+| Detail                 | Title, summary, structured body, article version, verification date, and source citations                                    | Historical-version browser                    | Users need the version they read, not a Phase 6 editorial history UI.                                                                                   |
+| Search                 | Do not build in first release                                                                                                | Database title/full-text search               | A small corpus is scannable; search quality, no-result language, indexing, and ranking are unproven requirements.                                       |
+| Categories             | Do not build in first release                                                                                                | Fixed topic enum                              | No accepted taxonomy exists. Adding categories now would create content and navigation policy before demand is known.                                   |
+| Personalization        | None                                                                                                                         | Recommendations based on Mood/chat/history    | Avoids creating reading profiles or inferring psychological interests.                                                                                  |
+| AI integration         | Keep the overall direction; start with an independent reader and confirm a separate integration batch before implementing it | Bundle retrieval into the first foundation PR | Retrieval changes provider, safety, Consent, indexing, and evaluation scope. Deferring that code from the first PR is not a permanent exclusion.        |
+| Content administration | Version-controlled release manifest plus a restricted internal command                                                       | Phase 6 admin UI or SQL/manual row edits      | Gives a reviewable V1 release path without building admin authentication or a CMS.                                                                      |
 
 Search or categories should be reconsidered only after a real curated corpus makes
 linear browsing measurably inadequate. An indicative article count is not made a
@@ -444,12 +446,20 @@ Phase 5E does not implement automated link monitoring, source archiving, or a
 professional-review expiry scheduler. These may be considered after a real content
 operation exists.
 
-## 13. Relationship to future AI knowledge use
+## 13. AI integration boundary — scope confirmation required
 
-The HANDOFF's wider “LLM + Knowledge” direction remains future architecture. This
-proposal intentionally delivers only independent educational reading.
+The HANDOFF's wider `LLM + Knowledge` direction remains part of the product
+direction. The minimum reader, source, and version foundation is useful on its own
+and should be implemented first. Whether a bounded AI retrieval integration is a
+later Phase 5E delivery batch or a separately authorized later phase is not clear in
+the existing baseline and needs one explicit scope decision before such code starts.
 
-A future AI retrieval design must separately decide:
+The recommendation is to make it a separate, later Phase 5E batch after the read
+model and curated publication contract exist. That preserves the overall direction
+without coupling the first reversible reader delivery to unapproved provider and
+evaluation work. It is not a decision to exclude Knowledge from AI permanently.
+
+If that batch is approved, its narrow design must decide:
 
 - embedding/retrieval provider and data boundary;
 - whether only currently published versions are indexable;
@@ -459,9 +469,9 @@ A future AI retrieval design must separately decide:
 - pre/post safety gates and crisis behavior; and
 - evaluation of retrieval quality and harmful omission.
 
-It must continue through the existing AI orchestration and safety chain. Phase 5E
-does not enable `embed()`, a vector database, RAG, direct provider endpoints, or a
-Knowledge-to-chat shortcut.
+It must continue through the existing AI orchestration and safety chain. Until the
+batch is explicitly approved, the initial implementation must not enable `embed()`,
+a vector database, RAG, direct provider endpoints, or a Knowledge-to-chat shortcut.
 
 ## 14. Minimal implementation split
 
@@ -503,6 +513,15 @@ affected version; it never edits old evidence or publishes a replacement silentl
 
 This release is not Phase 6 Knowledge Management and creates no Admin UI or admin
 authentication.
+
+### Conditional Phase 5E AI integration batch
+
+Only if the open scope decision explicitly keeps AI retrieval inside Phase 5E, use
+a later independent design/implementation PR after the read foundation and content
+contract are stable. Its acceptance, tests, and rollback boundary must cover
+indexing/version invalidation, provider/Consent privacy, AI safety, citations, and
+quality evaluation. No infrastructure for that hypothetical batch is added by the
+reader implementation.
 
 ## 15. Acceptance and test plan
 
@@ -554,19 +573,25 @@ login → Knowledge list → open synthetic article → verify version/source la
 return to list → logout. The source target is local/synthetic; CI performs no live
 third-party request. Component/API tests keep detailed withdrawal/error cases.
 
-## 16. Decisions required before implementation
+## 16. Default implementation assumptions and one open scope decision
 
-Design review should explicitly accept or reject only these engineering choices:
+The minimum reader implementation uses these ordinary V1 recommendations without
+turning them into permanent product exclusions:
 
-1. authenticated-only V1 read access;
-2. no initial search or category taxonomy;
-3. database article/version/source model with a controlled manifest release path;
-4. restricted structured blocks instead of Markdown/HTML; and
-5. three independently reviewable delivery PRs: backend foundation, Web UI, and
-   later curated content release.
+- authenticated-only read access;
+- no initial search or category taxonomy;
+- the database article/version/source model and controlled manifest release path;
+- restricted structured blocks rather than Markdown/HTML; and
+- separate backend, Web, and curated-content PRs.
 
-If these recommendations are accepted, no unresolved engineering ambiguity blocks
-Phase 5E-1 or 5E-2 using synthetic fixtures.
+These choices can be revisited from usage evidence through normal reviewed changes.
+They do not need separate product decisions before the synthetic Phase 5E-1/5E-2
+engineering work.
+
+The only material scope confirmation is: **should bounded AI retrieval be a later
+Phase 5E batch, as recommended, or be authorized under a separate later phase?**
+Until answered, it neither blocks the independent reader nor authorizes any AI
+integration.
 
 ## 17. Production publication prerequisites
 
@@ -592,11 +617,13 @@ or weaken them.
 
 ## 18. Explicitly deferred scope
 
-Phase 5E does not include:
+The minimum reading delivery does not include:
 
 - full-text search, taxonomy, recommendations, bookmarks, reading history, ratings,
   comments, or sharing analytics;
-- RAG, embeddings, vector databases, retrieval evaluation, or LLM calls;
+- RAG, embeddings, vector databases, retrieval evaluation, or LLM calls unless the
+  separate Phase 5E AI integration batch is explicitly approved; this is not a
+  permanent exclusion from the product direction;
 - Phase 6 Admin/Knowledge Management, editor authentication, reviewer RBAC,
   dashboards, bulk import UI, or approval workflow UI;
 - clinician/expert claims, medical diagnosis, individualized treatment, or crisis
