@@ -89,6 +89,25 @@ describe('identity environment validation', () => {
     ).toThrow();
   });
 
+  it('bounds application database acquisition and query waits', () => {
+    const parsed = parseEnvironment({
+      ...baseEnvironment,
+      APP_ENV: 'test',
+      AGE_VERIFICATION_PROVIDER: 'mock',
+    });
+    expect(parsed.DATABASE_CONNECTION_TIMEOUT_MS).toBe(5_000);
+    expect(parsed.DATABASE_QUERY_TIMEOUT_MS).toBe(30_000);
+
+    expect(() =>
+      parseEnvironment({
+        ...baseEnvironment,
+        APP_ENV: 'test',
+        AGE_VERIFICATION_PROVIDER: 'mock',
+        DATABASE_QUERY_TIMEOUT_MS: '0',
+      }),
+    ).toThrow();
+  });
+
   it('rejects an unsupported quota time zone', () => {
     expect(() =>
       parseEnvironment({
@@ -133,5 +152,56 @@ describe('identity environment validation', () => {
         LLM_TOTAL_TIMEOUT_MS: '1000',
       }),
     ).toThrow('First-token timeout cannot exceed total timeout');
+  });
+
+  it('keeps Knowledge augmentation disabled by default and bounds its local query', () => {
+    const parsed = parseEnvironment({
+      ...baseEnvironment,
+      APP_ENV: 'test',
+      AGE_VERIFICATION_PROVIDER: 'mock',
+    });
+
+    expect(parsed.AI_KNOWLEDGE_ENABLED).toBe(false);
+    expect(parsed.AI_KNOWLEDGE_SYNTHETIC_FIXTURES_ENABLED).toBe(false);
+    expect(parsed.AI_KNOWLEDGE_CONTEXT_TOKEN_BUDGET).toBeGreaterThanOrEqual(800);
+    expect(parsed.AI_KNOWLEDGE_CONTEXT_TOKEN_BUDGET).toBeLessThanOrEqual(1_200);
+  });
+
+  it.each(['staging', 'production'] as const)(
+    'rejects synthetic Knowledge retrieval in %s',
+    (appEnvironment) => {
+      expect(() =>
+        parseEnvironment({
+          ...baseEnvironment,
+          APP_ENV: appEnvironment,
+          AGE_VERIFICATION_PROVIDER: 'unconfigured',
+          AI_KNOWLEDGE_SYNTHETIC_FIXTURES_ENABLED: 'true',
+        }),
+      ).toThrow('Synthetic Knowledge retrieval is restricted to development and test');
+    },
+  );
+
+  it('rejects a Knowledge retrieval timeout beyond the total turn deadline', () => {
+    expect(() =>
+      parseEnvironment({
+        ...baseEnvironment,
+        APP_ENV: 'test',
+        AGE_VERIFICATION_PROVIDER: 'mock',
+        AI_KNOWLEDGE_RETRIEVAL_TIMEOUT_MS: '2001',
+        LLM_TOTAL_TIMEOUT_MS: '2000',
+        LLM_FIRST_TOKEN_TIMEOUT_MS: '1000',
+        LLM_STREAM_IDLE_TIMEOUT_MS: '1000',
+      }),
+    ).toThrow('Knowledge retrieval timeout cannot exceed total timeout');
+  });
+
+  it('requires the Knowledge allowance to leave room for instructions and the user message', () => {
+    expect(() =>
+      parseEnvironment({
+        ...baseEnvironment,
+        LLM_CONTEXT_TOKEN_BUDGET: '1000',
+        AI_KNOWLEDGE_CONTEXT_TOKEN_BUDGET: '1000',
+      }),
+    ).toThrow();
   });
 });

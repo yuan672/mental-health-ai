@@ -12,7 +12,10 @@ export class DatabaseService implements OnApplicationShutdown {
   private readonly client: DatabaseClient;
 
   constructor() {
-    this.client = createDatabaseClient(env.DATABASE_URL);
+    this.client = createDatabaseClient(env.DATABASE_URL, {
+      connectionTimeoutMillis: env.DATABASE_CONNECTION_TIMEOUT_MS,
+      queryTimeoutMillis: env.DATABASE_QUERY_TIMEOUT_MS,
+    });
     this.database = this.client.database;
   }
 

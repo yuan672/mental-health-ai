@@ -1,6 +1,8 @@
 import {
   aiTurns,
   and,
+  asc,
+  assistantMessageKnowledgeReferences,
   conversations,
   eq,
   gt,
@@ -15,6 +17,7 @@ import {
 } from '@mental-health/database';
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service';
+import { KnowledgeMessageReferenceRepository } from '../../knowledge/knowledge-message-reference.repository';
 import { QuotaLimitReachedError, QuotaRepository } from '../../quota/quota.repository';
 import { AuditLogRepository } from '../../safety/audit/audit-log.repository';
 import { RiskEventRepository } from '../../safety/persistence/risk-event.repository';
@@ -44,6 +47,15 @@ export class ActiveAiTurnError extends Error {
   }
 }
 
+export class GroundedCompletionReconciliationError extends Error {
+  constructor() {
+    super('Grounded completion outcome could not be reconciled');
+    this.name = GroundedCompletionReconciliationError.name;
+  }
+}
+
+const AI_TURN_SETTLEMENT_TIMEOUT_MS = 5_000;
+
 function activeOwnedConversation(userId: string, conversationId: string, now: Date) {
   return and(
     eq(conversations.id, conversationId),
@@ -58,6 +70,7 @@ export class AiTurnRepository {
   constructor(
     private readonly audits: AuditLogRepository,
     private readonly databaseService: DatabaseService,
+    private readonly knowledgeReferences: KnowledgeMessageReferenceRepository,
     private readonly quotaRepository: QuotaRepository,
     private readonly riskEvents: RiskEventRepository,
   ) {}
@@ -234,8 +247,14 @@ export class AiTurnRepository {
         })
         .where(eq(aiTurns.id, input.turnId))
         .returning();
+      await this.beforeStartCommit(transaction);
       return started ?? null;
     });
+  }
+
+  protected async beforeStartCommit(_transaction: AppTransaction): Promise<void> {
+    void _transaction;
+    return Promise.resolve();
   }
 
   async completeTrusted(input: {
@@ -446,6 +465,162 @@ export class AiTurnRepository {
     });
   }
 
+  async completeGrounded(input: {
+    turnId: string;
+    userId: string;
+    conversationId: string;
+    assistantMessageId: string;
+    assistantContent: string;
+    articleVersionIds: readonly string[];
+    now: Date;
+  }): Promise<AiTurnRecord | null> {
+    return this.databaseService.database.transaction(async (transaction) => {
+      const [conversation] = await transaction
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(activeOwnedConversation(input.userId, input.conversationId, input.now))
+        .limit(1)
+        .for('update');
+      if (!conversation) {
+        return null;
+      }
+
+      const [turn] = await transaction
+        .select()
+        .from(aiTurns)
+        .where(
+          and(
+            eq(aiTurns.id, input.turnId),
+            eq(aiTurns.userId, input.userId),
+            eq(aiTurns.status, 'streaming'),
+          ),
+        )
+        .limit(1)
+        .for('update');
+      if (!turn) {
+        return null;
+      }
+
+      const sequenceNumber = await this.nextMessageSequence(transaction, input.conversationId);
+      await transaction.insert(messages).values({
+        id: input.assistantMessageId,
+        conversationId: input.conversationId,
+        role: 'assistant',
+        sequenceNumber,
+        content: input.assistantContent,
+        createdAt: input.now,
+      });
+      await this.knowledgeReferences.persistWithinTransaction(transaction, {
+        assistantMessageId: input.assistantMessageId,
+        articleVersionIds: input.articleVersionIds,
+      });
+
+      const [completed] = await transaction
+        .update(aiTurns)
+        .set({
+          status: 'completed',
+          assistantMessageId: input.assistantMessageId,
+          completedAt: input.now,
+          failureCode: null,
+        })
+        .where(eq(aiTurns.id, input.turnId))
+        .returning();
+      await this.beforeGroundedCompletionCommit(transaction);
+      return completed ?? null;
+    });
+  }
+
+  protected async beforeGroundedCompletionCommit(_transaction: AppTransaction): Promise<void> {
+    void _transaction;
+    return Promise.resolve();
+  }
+
+  protected async beforeGroundedCompletionReconciliationLock(
+    _transaction: AppTransaction,
+  ): Promise<void> {
+    void _transaction;
+    return Promise.resolve();
+  }
+
+  protected async afterGroundedCompletionReconciliationLock(
+    _transaction: AppTransaction,
+  ): Promise<void> {
+    void _transaction;
+    return Promise.resolve();
+  }
+
+  async findCommittedGroundedCompletion(input: {
+    turnId: string;
+    userId: string;
+    assistantMessageId: string;
+    assistantContent: string;
+    articleVersionIds: readonly string[];
+    lockTimeoutMs: number;
+  }): Promise<AiTurnRecord | null> {
+    if (!Number.isInteger(input.lockTimeoutMs) || input.lockTimeoutMs <= 0) {
+      throw new GroundedCompletionReconciliationError();
+    }
+    try {
+      return await this.databaseService.database.transaction(async (transaction) => {
+        const timeout = `${input.lockTimeoutMs}ms`;
+        await transaction.execute(sql`SELECT set_config('lock_timeout', ${timeout}, true)`);
+        await transaction.execute(sql`SELECT set_config('statement_timeout', ${timeout}, true)`);
+        await this.beforeGroundedCompletionReconciliationLock(transaction);
+        const [turn] = await transaction
+          .select()
+          .from(aiTurns)
+          .where(and(eq(aiTurns.id, input.turnId), eq(aiTurns.userId, input.userId)))
+          .limit(1)
+          .for('update');
+        await this.afterGroundedCompletionReconciliationLock(transaction);
+
+        if (!turn) throw new GroundedCompletionReconciliationError();
+        if (turn.status !== 'completed') return null;
+        if (turn.assistantMessageId !== input.assistantMessageId) {
+          throw new GroundedCompletionReconciliationError();
+        }
+
+        const [message] = await transaction
+          .select({
+            conversationId: messages.conversationId,
+            role: messages.role,
+            content: messages.content,
+          })
+          .from(messages)
+          .where(eq(messages.id, input.assistantMessageId))
+          .limit(1);
+        if (
+          !message ||
+          message.conversationId !== turn.conversationId ||
+          message.role !== 'assistant' ||
+          message.content !== input.assistantContent
+        ) {
+          throw new GroundedCompletionReconciliationError();
+        }
+
+        const references = await transaction
+          .select({ articleVersionId: assistantMessageKnowledgeReferences.articleVersionId })
+          .from(assistantMessageKnowledgeReferences)
+          .where(
+            eq(assistantMessageKnowledgeReferences.assistantMessageId, input.assistantMessageId),
+          )
+          .orderBy(asc(assistantMessageKnowledgeReferences.ordinal));
+        if (
+          references.length !== input.articleVersionIds.length ||
+          references.some(
+            (reference, index) => reference.articleVersionId !== input.articleVersionIds[index],
+          )
+        ) {
+          throw new GroundedCompletionReconciliationError();
+        }
+        return turn;
+      });
+    } catch (error) {
+      if (error instanceof GroundedCompletionReconciliationError) throw error;
+      throw new GroundedCompletionReconciliationError();
+    }
+  }
+
   async finish(
     turnId: string,
     userId: string,
@@ -463,6 +638,61 @@ export class AiTurnRepository {
           inArray(aiTurns.status, ['claimed', 'streaming']),
         ),
       );
+  }
+
+  async settleBeforeProviderFailure(input: {
+    turnId: string;
+    userId: string;
+    status: 'failed' | 'cancelled';
+    failureCode: string;
+    now: Date;
+  }): Promise<void> {
+    await this.databaseService.database.transaction(async (transaction) => {
+      const timeout = `${AI_TURN_SETTLEMENT_TIMEOUT_MS}ms`;
+      await transaction.execute(sql`SELECT set_config('lock_timeout', ${timeout}, true)`);
+      await transaction.execute(sql`SELECT set_config('statement_timeout', ${timeout}, true)`);
+      const [turn] = await transaction
+        .select({ status: aiTurns.status, failureCode: aiTurns.failureCode })
+        .from(aiTurns)
+        .where(and(eq(aiTurns.id, input.turnId), eq(aiTurns.userId, input.userId)))
+        .limit(1)
+        .for('update');
+      if (!turn) return;
+
+      // A live worker can observe its no-delivery failure after a replacement
+      // claim has already performed stale-lease recovery. The stale transition
+      // is authoritative, but this worker still owns the evidence needed to
+      // apply the existing no-approved-segment refund rule. A crashed worker
+      // performs no such reconciliation, so stale recovery alone never grants
+      // a speculative refund.
+      if (turn.status === 'failed' && turn.failureCode === 'STALE_TURN') {
+        await this.quotaRepository.refundWithinTransaction(
+          transaction,
+          input.userId,
+          input.turnId,
+          input.now,
+        );
+        return;
+      }
+      if (!['claimed', 'streaming'].includes(turn.status)) return;
+
+      await transaction
+        .update(aiTurns)
+        .set({ status: input.status, failureCode: input.failureCode, completedAt: input.now })
+        .where(
+          and(
+            eq(aiTurns.id, input.turnId),
+            eq(aiTurns.userId, input.userId),
+            inArray(aiTurns.status, ['claimed', 'streaming']),
+          ),
+        );
+      await this.quotaRepository.refundWithinTransaction(
+        transaction,
+        input.userId,
+        input.turnId,
+        input.now,
+      );
+    });
   }
 
   private async nextMessageSequence(

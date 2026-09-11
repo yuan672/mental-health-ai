@@ -87,3 +87,20 @@ separately authorized management workflow.
 
 No read operation calls an LLM, classifier, embedding provider, Risk Detection, or
 AI orchestration service, and no reading-history record is created.
+
+## Relationship to chat grounding
+
+Accepted ADR-019 defines a separate, bounded chat-grounding path. The Knowledge
+AI-A backend uses local lexical retrieval over eligible current article
+versions and preserves the exact selected article-version/source relation with a
+persistent assistant message. Migration `0008_gorgeous_gladiator` adds
+`assistant_message_knowledge_references`; it does not change this independent
+reader's list or detail contract.
+
+Grounding defaults to `AI_KNOWLEDGE_ENABLED=false`, and synthetic Knowledge is
+eligible only when the separate fixture flag passes its Development/Test
+environment guard. No real model is called by the engineering tests, and their
+results are not a real-model safety or quality evaluation. Citation presentation
+in the chat Web application remains the separate Knowledge AI-B delivery; see
+`docs/api/ai-chat-streaming.md` for the negotiated v2 transport and history
+contract.

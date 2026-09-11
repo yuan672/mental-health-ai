@@ -1,5 +1,8 @@
 import type { IncognitoContextStore } from '../src/ai/incognito/incognito-context.store';
-import { ActiveAiExecutionRegistry } from '../src/ai/runtime/active-ai-execution.registry';
+import {
+  ActiveAiExecutionRegistry,
+  AiExecutionTotalTimeoutError,
+} from '../src/ai/runtime/active-ai-execution.registry';
 import {
   ConsentExecutionCoordinator,
   type WithdrawnConsentDependency,
@@ -77,8 +80,14 @@ class MutableAuthorization implements ConsentAuthorizationSnapshotPort {
 
 class TrackingContexts {
   cleared: string[] = [];
+  createCalls = 0;
   dependencies = new Set<string>();
   throwOnClear = false;
+
+  create(): never {
+    this.createCalls += 1;
+    throw new Error('unexpected_context_create');
+  }
 
   clearDependency(_userId: string, acceptanceDecisionId: string): number {
     this.cleared.push(acceptanceDecisionId);
@@ -262,6 +271,94 @@ describe('Consent runtime coordination', () => {
       ),
     ).rejects.toBeInstanceOf(ConsentCoordinationNotStartedError);
     expect(commitCalls).toBe(0);
+  });
+
+  it('uses the canonical AI total-timeout error when lock acquisition sees an expired deadline', async () => {
+    await expect(
+      lock.runExclusive(
+        USER_ID,
+        new AbortController().signal,
+        new Date(Date.now() - 1),
+        () => undefined,
+      ),
+    ).rejects.toBeInstanceOf(AiExecutionTotalTimeoutError);
+    expect(lock.diagnostics()).toEqual({ users: 0, waiters: 0 });
+  });
+
+  it('does not create an Incognito context when authorization lookup crosses its deadline', async () => {
+    const deadlineAt = new Date(Date.now() + 5_000);
+    const dateSpy = jest.spyOn(Date, 'now');
+    const loadSpy = jest
+      .spyOn(authorization, 'loadRequiredDependencies')
+      .mockImplementationOnce(() => {
+        dateSpy.mockReturnValue(deadlineAt.getTime() + 1);
+        return Promise.resolve([first]);
+      });
+
+    try {
+      await expect(
+        coordinator.createIncognitoContext({
+          userId: USER_ID,
+          sessionId: SESSION_ID,
+          sessionExpiresAt: new Date(deadlineAt.getTime() + 5_000),
+          signal: new AbortController().signal,
+          deadlineAt,
+        }),
+      ).rejects.toBeInstanceOf(AiExecutionTotalTimeoutError);
+    } finally {
+      loadSpy.mockRestore();
+      dateSpy.mockRestore();
+    }
+
+    expect(contexts.createCalls).toBe(0);
+    expect(lock.diagnostics()).toEqual({ users: 0, waiters: 0 });
+  });
+
+  it('aborts the execution when an execution-aware lock call sees an expired deadline', async () => {
+    const execution = await boundExecution();
+    execution.deadlineAt.setTime(Date.now() - 1);
+
+    await expect(coordinator.assertStillUsable(execution)).rejects.toBeInstanceOf(
+      AiExecutionTotalTimeoutError,
+    );
+    expect(execution.signal.aborted).toBe(true);
+    expect(execution.signal.reason).toBeInstanceOf(AiExecutionTotalTimeoutError);
+    expect(lock.diagnostics()).toEqual({ users: 0, waiters: 0 });
+    execution.dispose();
+  });
+
+  it('rechecks a queued waiter deadline at lock handoff without running its operation', async () => {
+    const held = deferred();
+    const releaseHeld = deferred();
+    const owner = lock.runExclusive(
+      USER_ID,
+      new AbortController().signal,
+      new Date(Date.now() + 10_000),
+      async () => {
+        held.resolve();
+        await releaseHeld.promise;
+      },
+    );
+    await held.promise;
+
+    const deadlineAt = new Date(Date.now() + 5_000);
+    let operationCalls = 0;
+    const waiter = lock.runExclusive(USER_ID, new AbortController().signal, deadlineAt, () => {
+      operationCalls += 1;
+    });
+    expect(lock.diagnostics()).toEqual({ users: 1, waiters: 1 });
+
+    const dateSpy = jest.spyOn(Date, 'now').mockReturnValue(deadlineAt.getTime() + 1);
+    try {
+      releaseHeld.resolve();
+      await owner;
+      await expect(waiter).rejects.toBeInstanceOf(AiExecutionTotalTimeoutError);
+    } finally {
+      dateSpy.mockRestore();
+    }
+
+    expect(operationCalls).toBe(0);
+    expect(lock.diagnostics()).toEqual({ users: 0, waiters: 0 });
   });
 
   it('publishes an exact withdrawal after a committed operation loses its acknowledgement', async () => {

@@ -442,6 +442,34 @@ export const messages = pgTable(
   ],
 );
 
+export const assistantMessageKnowledgeReferences = pgTable(
+  'assistant_message_knowledge_references',
+  {
+    assistantMessageId: uuid('assistant_message_id')
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    articleVersionId: uuid('article_version_id')
+      .notNull()
+      .references(() => knowledgeArticleVersions.id, { onDelete: 'restrict' }),
+    ordinal: integer('ordinal').notNull(),
+  },
+  (table) => [
+    primaryKey({
+      name: 'assistant_message_knowledge_references_pk',
+      columns: [table.assistantMessageId, table.articleVersionId],
+    }),
+    uniqueIndex('assistant_message_knowledge_references_message_ordinal_unique').on(
+      table.assistantMessageId,
+      table.ordinal,
+    ),
+    index('assistant_message_knowledge_references_version_idx').on(table.articleVersionId),
+    check(
+      'assistant_message_knowledge_references_ordinal_check',
+      sql`${table.ordinal} BETWEEN 1 AND 2`,
+    ),
+  ],
+);
+
 export const aiTurns = pgTable(
   'ai_turns',
   {
@@ -571,6 +599,7 @@ export const auditLogs = pgTable(
 
 export const schema = {
   ageVerifications,
+  assistantMessageKnowledgeReferences,
   aiTurns,
   auditLogs,
   consents,

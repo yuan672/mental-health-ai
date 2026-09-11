@@ -40,6 +40,11 @@ describe('sensitive logging redaction', () => {
       'mood-note-secret',
       'mood-emotion-secret',
       'mood-trend-secret',
+      'knowledge-query-secret',
+      'knowledge-body-secret',
+      'knowledge-snippet-secret',
+      'knowledge-reference-secret',
+      'knowledge-source-url-secret',
     ];
     logger.info({
       req: {
@@ -69,6 +74,11 @@ describe('sensitive logging redaction', () => {
       emotion: sensitiveValues[15],
       note: sensitiveValues[14],
       dailyTrend: sensitiveValues[16],
+      query: sensitiveValues[17],
+      knowledgeBody: sensitiveValues[18],
+      knowledgeSnippet: sensitiveValues[19],
+      knowledgeReferences: [{ title: sensitiveValues[20] }],
+      sourceUrl: sensitiveValues[21],
     });
 
     for (const sensitiveValue of [...sensitiveValues, 'sensitive body', 'private-context-id']) {

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { MessageRole } from '@mental-health/database';
+import type { AppTransaction, MessageRole } from '@mental-health/database';
 import { Injectable } from '@nestjs/common';
 import { DatabaseError, NotFoundError, ValidationError } from '../common/errors';
 import { ConversationLoggingService } from '../conversations/conversation-logging.service';
@@ -72,6 +72,33 @@ export class MessageService {
     let records: MessageRecord[] | null;
     try {
       records = await this.repository.readActiveOwnedPage(
+        userId,
+        conversationId,
+        options.now,
+        options.limit,
+        options.beforeSequence,
+      );
+    } catch {
+      throw new DatabaseError();
+    }
+
+    if (!records) {
+      throw new NotFoundError('对话不存在');
+    }
+
+    return records;
+  }
+
+  async readMessagePageWithinTransaction(
+    transaction: AppTransaction,
+    userId: string,
+    conversationId: string,
+    options: Readonly<{ now: Date; limit: number; beforeSequence: number | null }>,
+  ): Promise<MessageRecord[]> {
+    let records: MessageRecord[] | null;
+    try {
+      records = await this.repository.readActiveOwnedPageWithinTransaction(
+        transaction,
         userId,
         conversationId,
         options.now,

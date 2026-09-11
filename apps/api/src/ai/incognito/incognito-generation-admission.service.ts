@@ -158,7 +158,12 @@ export class IncognitoGenerationAdmissionService {
         new Date(),
       );
       if (!currentContext) {
-        await this.quota.refundQuota(input.userId, quotaIdempotencyKey, now);
+        try {
+          await this.quota.refundQuota(input.userId, quotaIdempotencyKey, now);
+        } catch {
+          // Context loss is authoritative for this request. The consumption remains
+          // idempotent and prevents the lost context from receiving a free replay.
+        }
         throw new AIIncognitoContextLostError();
       }
       return {

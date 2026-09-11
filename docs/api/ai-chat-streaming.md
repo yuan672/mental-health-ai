@@ -1,4 +1,4 @@
-# Phase 3 AI Chat Streaming API
+# AI Chat Streaming API
 
 Phase 3 exposes one AI transport endpoint:
 
@@ -46,22 +46,92 @@ four event names. Clients must reject a mode/identifier mismatch, out-of-order
 segments, and events arriving after completion, failure, cancellation, or context
 termination.
 
+## Negotiated Knowledge-reference representation
+
+The Phase 5E Knowledge AI-A backend adds an opt-in v2 representation without
+changing the four SSE event names. The client requests it on both the stream and
+message-history requests:
+
+```http
+X-MH-Knowledge-References: 1
+```
+
+An omitted or empty header selects v1 and disables Knowledge augmentation for that
+stream. The value `1` selects v2; a different non-empty value returns the typed
+`VALIDATION_ERROR` response. Successful v2 responses echo the header and all
+representations include `Vary: X-MH-Knowledge-References`. CORS exposes the
+acknowledgement header to the configured Web origin.
+
+Every v2 `message.segment` adds a required `deliveryMode`:
+
+- `immediate` preserves the existing semantic-stream behavior. Its matching
+  completion has `knowledgeReferences: []`.
+- `commit_with_references` is used only for a Knowledge hit. The server emits one
+  full-buffered, Output-Safety-approved segment. A citation-aware client holds the
+  text in bounded memory and makes it visible only after a matching
+  `turn.completed` carries the same delivery mode and one or two validated
+  `knowledgeReferences`.
+
+Each public reference identifies the exact article key and version used, the
+frozen ordered source set, review state and review time, and whether that version
+is still published. It does not expose an internal article-version UUID, retrieval
+query, selected excerpt, prompt, model-authored URL, or user risk metadata. Trusted
+safety replacements remain `immediate` and carry no Knowledge reference.
+
+Persistent message history negotiates the same header on
+`GET /conversations/:id/messages`. A v2 response adds a required
+`knowledgeReferences` array to every message. A v1 request for a page that contains
+a referenced assistant message fails closed with HTTP 406
+`CLIENT_CAPABILITY_REQUIRED`; an affected client must update instead of displaying
+the body without its provenance. Unreferenced pages remain readable as v1. Owner
+and active-state validation, message pagination, exact-version references, and
+their ordered sources are read through one short repeatable-read database snapshot,
+so deletion cannot splice an older message body together with missing provenance.
+Staging and Production fail closed if persisted historical evidence is synthetic;
+this guard remains active even while new Knowledge augmentation is disabled and
+does not delete or rewrite the stored evidence.
+
+The existing Web application deliberately remains a v1 client until the separately
+reviewed Knowledge AI-B batch. Therefore the AI-A enhancement is disabled by
+default and cannot create a grounded answer for that client. If persistent
+references already exist, disabling new augmentation does not remove the v2
+history reader or the v1 406 guard.
+
 Segments are ordered and have passed the configured post-generation gate before
 delivery. `turn.completed` is emitted only after the complete assistant message is
 committed. A `turn.failed` event means any displayed partial text is transient and
 must not be treated as committed conversation history.
 
+For a v2 grounded turn, a lost database commit acknowledgement is reconciled with
+a bounded wait on that exact turn before any answer is emitted. If the result still
+cannot be proven, the stream closes without `message.segment`, `turn.completed`, or
+a definitive `turn.failed`; the client keeps the request in an uncertain state and
+uses strict v2 history reconciliation. This avoids both falsely reporting rollback
+and exposing an uncommitted answer.
+
 Provider request IDs, model/provider metadata, token accounting, prompt text and
 prompt version are not part of the public event schema. Errors before streaming
-starts use the standard JSON API error contract.
+starts use the standard JSON API error contract. This includes a timeout, Consent
+withdrawal, or Incognito-context termination that wins after server preparation
+but before SSE headers: the server first performs the pre-dispatch cleanup and then
+returns the corresponding typed JSON error while the connection remains writable.
+The deadline is checked synchronously before headers as well as by its timer, so a
+delayed timer callback cannot open a late SSE response. No Provider transport is
+started in that window.
 
-The client cancels through `AbortController`. Phase 3 does not automatically retry
-a generation or reconnect an SSE stream. For persistent chat, a network-uncertain
-reconciliation attempt reuses its `clientRequestId` to retrieve the existing turn
-state without starting another generation. An Incognito `clientRequestId` is
-single-use within its live context: reuse is rejected, and an ended, expired, or
-lost context cannot be recovered or restarted with that identifier. A deliberate
-new attempt after a definite failure uses a new `clientRequestId`.
+The client cancels through `AbortController`. The API does not automatically retry
+a generation or reconnect an SSE stream. A no-new-work persistent recovery may
+replay the original `clientRequestId` only when the client has positive admission
+evidence and the confirmed original `conversationId`; the server correlates the ID
+to the retained turn. If that Conversation was deleted or purged, recovery stops
+with the existing not-found boundary and never falls back to a create-without-ID
+request. When the original Conversation identity is unknown, the client may only
+refresh read-only state and preserve an honest uncertain result. A user-approved
+unbound continuation is creation-capable and must not be presented as metadata-only
+recovery. An Incognito `clientRequestId` is single-use within its live context:
+reuse is rejected, and an ended, expired, or lost context cannot be recovered or
+restarted with that identifier. A deliberate new attempt after a definite failure
+uses a new `clientRequestId`.
 
 ## Incognito context lifecycle
 

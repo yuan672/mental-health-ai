@@ -3,6 +3,7 @@ export {
   type AppDatabase,
   type AppTransaction,
   type DatabaseClient,
+  type DatabaseClientOptions,
 } from './client.js';
 export {
   and,
@@ -23,6 +24,7 @@ export {
 export { migrate } from 'drizzle-orm/node-postgres/migrator';
 export {
   ageVerifications,
+  assistantMessageKnowledgeReferences,
   aiTurns,
   aiTurnStatus,
   auditLogs,

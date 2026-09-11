@@ -10,6 +10,7 @@ import {
   messages,
   or,
   sql,
+  type AppTransaction,
   type MessageRole,
 } from '@mental-health/database';
 import { Injectable } from '@nestjs/common';
@@ -112,7 +113,29 @@ export class MessageRepository {
     limit: number,
     beforeSequence: number | null,
   ): Promise<MessageRecord[] | null> {
-    const [conversation] = await this.databaseService.database
+    return this.databaseService.database.transaction(
+      (transaction) =>
+        this.readActiveOwnedPageWithinTransaction(
+          transaction,
+          userId,
+          conversationId,
+          now,
+          limit,
+          beforeSequence,
+        ),
+      { isolationLevel: 'repeatable read', accessMode: 'read only' },
+    );
+  }
+
+  async readActiveOwnedPageWithinTransaction(
+    transaction: AppTransaction,
+    userId: string,
+    conversationId: string,
+    now: Date,
+    limit: number,
+    beforeSequence: number | null,
+  ): Promise<MessageRecord[] | null> {
+    const [conversation] = await transaction
       .select({ id: conversations.id })
       .from(conversations)
       .where(activeOwnedConversation(userId, conversationId, now))
@@ -122,7 +145,7 @@ export class MessageRepository {
       return null;
     }
 
-    return this.databaseService.database
+    return transaction
       .select()
       .from(messages)
       .where(

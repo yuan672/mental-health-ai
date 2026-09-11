@@ -1,4 +1,5 @@
 import { Injectable, type OnModuleDestroy } from '@nestjs/common';
+import { AiExecutionTotalTimeoutError } from '../../ai/runtime/active-ai-execution.registry';
 import { env } from '../../config/env';
 
 export class ConsentCoordinationCapacityError extends Error {
@@ -41,6 +42,8 @@ export class PerUserConsentLock implements OnModuleDestroy {
   ): Promise<T> {
     const release = await this.acquire(userId, signal, deadlineAt);
     try {
+      if (signal.aborted) throw signal.reason ?? new Error('consent_lock_aborted');
+      if (deadlineAt.getTime() <= Date.now()) throw new AiExecutionTotalTimeoutError();
       return await operation();
     } finally {
       release();
@@ -66,7 +69,7 @@ export class PerUserConsentLock implements OnModuleDestroy {
     if (this.destroyed) return Promise.reject(new Error('application_shutdown'));
     if (signal.aborted) return Promise.reject(signal.reason ?? new Error('consent_lock_aborted'));
     const remaining = deadlineAt.getTime() - Date.now();
-    if (remaining <= 0) return Promise.reject(new Error('consent_lock_deadline_exceeded'));
+    if (remaining <= 0) return Promise.reject(new AiExecutionTotalTimeoutError());
 
     const state = this.locks.get(userId) ?? { held: false, waiters: [] };
     this.locks.set(userId, state);
@@ -92,7 +95,7 @@ export class PerUserConsentLock implements OnModuleDestroy {
       };
       waiter.timer = setTimeout(() => {
         if (!this.removeWaiter(userId, state, waiter)) return;
-        reject(new Error('consent_lock_deadline_exceeded'));
+        reject(new AiExecutionTotalTimeoutError());
       }, remaining);
       waiter.timer.unref();
       signal.addEventListener('abort', waiter.onAbort, { once: true });

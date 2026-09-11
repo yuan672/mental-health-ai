@@ -1,7 +1,9 @@
 import type { ConsentType } from './consents.js';
+import type { AiDeliveryMode, KnowledgeReference } from './knowledge-references.js';
 
 export * from './consents.js';
 export * from './knowledge.js';
+export * from './knowledge-references.js';
 export * from './mood.js';
 
 export type AppEnvironment = 'development' | 'staging' | 'production';
@@ -125,7 +127,7 @@ export type IncognitoAiChatRequest = {
 
 export type AiChatRequest = PersistentAiChatRequest | IncognitoAiChatRequest;
 
-export type PersistentAiStreamEvent =
+export type PersistentAiStreamEventV1 =
   | {
       type: 'turn.started';
       data: { mode: 'persistent'; turnId: string; conversationId: string };
@@ -148,7 +150,7 @@ export type PersistentAiStreamEvent =
       data: ApiErrorResponse['error'] & { mode: 'persistent'; turnId: string };
     };
 
-export type IncognitoAiStreamEvent =
+export type IncognitoAiStreamEventV1 =
   | {
       type: 'turn.started';
       data: { mode: 'incognito'; generationId: string };
@@ -170,7 +172,81 @@ export type IncognitoAiStreamEvent =
       data: ApiErrorResponse['error'] & { mode: 'incognito'; generationId: string };
     };
 
-export type AiStreamEvent = PersistentAiStreamEvent | IncognitoAiStreamEvent;
+export type PersistentAiStreamEventV2 =
+  | {
+      type: 'turn.started';
+      data: { mode: 'persistent'; turnId: string; conversationId: string };
+    }
+  | {
+      type: 'message.segment';
+      data: {
+        mode: 'persistent';
+        turnId: string;
+        sequence: number;
+        text: string;
+        deliveryMode: AiDeliveryMode;
+      };
+    }
+  | {
+      type: 'turn.completed';
+      data: {
+        mode: 'persistent';
+        turnId: string;
+        assistantMessageId: string;
+        finishReason: AiPublicFinishReason;
+      } & (
+        | { deliveryMode: 'immediate'; knowledgeReferences: [] }
+        | {
+            deliveryMode: 'commit_with_references';
+            knowledgeReferences: [KnowledgeReference, ...KnowledgeReference[]];
+          }
+      );
+    }
+  | {
+      type: 'turn.failed';
+      data: ApiErrorResponse['error'] & { mode: 'persistent'; turnId: string };
+    };
+
+export type IncognitoAiStreamEventV2 =
+  | {
+      type: 'turn.started';
+      data: { mode: 'incognito'; generationId: string };
+    }
+  | {
+      type: 'message.segment';
+      data: {
+        mode: 'incognito';
+        generationId: string;
+        sequence: number;
+        text: string;
+        deliveryMode: AiDeliveryMode;
+      };
+    }
+  | {
+      type: 'turn.completed';
+      data: {
+        mode: 'incognito';
+        generationId: string;
+        finishReason: AiPublicFinishReason;
+      } & (
+        | { deliveryMode: 'immediate'; knowledgeReferences: [] }
+        | {
+            deliveryMode: 'commit_with_references';
+            knowledgeReferences: [KnowledgeReference, ...KnowledgeReference[]];
+          }
+      );
+    }
+  | {
+      type: 'turn.failed';
+      data: ApiErrorResponse['error'] & { mode: 'incognito'; generationId: string };
+    };
+
+// Existing Web clients deliberately remain on the v1 contract until AI-B.
+export type PersistentAiStreamEvent = PersistentAiStreamEventV1;
+export type IncognitoAiStreamEvent = IncognitoAiStreamEventV1;
+export type AiStreamEvent = PersistentAiStreamEventV1 | IncognitoAiStreamEventV1;
+export type AiStreamEventV2 = PersistentAiStreamEventV2 | IncognitoAiStreamEventV2;
+export type NegotiatedAiStreamEvent = AiStreamEvent | AiStreamEventV2;
 
 export type CreateIncognitoContextResponse = ApiSuccessResponse<{
   context: { id: string; expiresAt: string };

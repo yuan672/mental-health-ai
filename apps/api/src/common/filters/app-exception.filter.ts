@@ -71,6 +71,10 @@ export class AppExceptionFilter implements ExceptionFilter {
       errorName: exception instanceof Error ? exception.name : 'UnknownError',
     });
 
+    // A client can disconnect while bounded cleanup is still waiting on the database.
+    // Preserve the operational record, but never attempt a late JSON write to a closed socket.
+    if (response.destroyed || response.writableEnded) return;
+
     const payload: ErrorResponse = {
       success: false,
       error: {

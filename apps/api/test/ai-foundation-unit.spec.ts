@@ -1,4 +1,9 @@
+import { EventEmitter } from 'node:events';
+import { Logger, type ArgumentsHost } from '@nestjs/common';
+import type { Response } from 'express';
 import type { PinoLogger } from 'nestjs-pino';
+import { AiController } from '../src/ai/ai.controller';
+import type { AiOrchestrationService } from '../src/ai/ai-orchestration.service';
 import { AiOperationalLoggingService } from '../src/ai/logging/ai-operational-logging.service';
 import {
   deriveIncognitoQuotaIdempotencyKey,
@@ -11,6 +16,10 @@ import {
 } from '../src/ai/safety/safety-gates';
 import { SentenceSegmentBuffer } from '../src/ai/streaming/sentence-segment-buffer';
 import { ConservativeTokenEstimator } from '../src/ai/context/token-estimator';
+import type { AuthenticatedRequest } from '../src/auth/authenticated-request';
+import { AIProviderError } from '../src/common/errors';
+import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
+import type { ConsentExecutionCoordinator } from '../src/consents/runtime/consent-execution.coordinator';
 
 describe('Phase 3 AI foundation units', () => {
   it('buffers complete sentences, newlines, hard caps, and elapsed partial segments', () => {
@@ -119,5 +128,212 @@ describe('Phase 3 AI foundation units', () => {
     expect(serialized).not.toContain('message');
     expect(serialized).not.toContain('prompt');
     expect(serialized).not.toContain('apiKey');
+  });
+});
+
+describe('pre-stream response lifecycle', () => {
+  function responseDouble() {
+    const response = new EventEmitter() as EventEmitter & {
+      destroyed: boolean;
+      writableEnded: boolean;
+      vary: jest.Mock;
+      removeHeader: jest.Mock;
+    };
+    response.destroyed = false;
+    response.writableEnded = false;
+    response.vary = jest.fn();
+    response.removeHeader = jest.fn();
+    return response;
+  }
+
+  const request = {
+    authenticatedSession: { id: 'session-1', userId: 'user-1' },
+  } as AuthenticatedRequest;
+
+  it.each(['persistent', 'incognito'] as const)(
+    'does not raise a late %s error when the response closes during cleanup',
+    async (mode) => {
+      const aborted = new AbortController();
+      aborted.abort(new Error('consent_withdrawn'));
+      const execution = {
+        id: 'execution-1',
+        userId: 'user-1',
+        sessionId: 'session-1',
+        signal: aborted.signal,
+        deadlineAt: new Date(Date.now() + 1_000),
+        dependencies: [],
+        abort: jest.fn(),
+        dispose: jest.fn(),
+      };
+      const prepared =
+        mode === 'persistent'
+          ? { kind: 'ready', turn: { id: 'turn-1' }, execution }
+          : {
+              kind: 'ready',
+              generation: { id: 'generation-1', signal: aborted.signal },
+              execution,
+            };
+      const response = responseDouble();
+      const preProviderTerminationError = jest.fn(() => new AIProviderError());
+      const orchestration = {
+        preparePersistentTurn: jest.fn().mockResolvedValue(prepared),
+        prepareIncognitoTurn: jest.fn().mockResolvedValue(prepared),
+        cancelPreparedPersistentTurnBeforeProvider: jest.fn(async () => {
+          await Promise.resolve();
+          response.destroyed = true;
+        }),
+        cancelPreparedIncognitoTurnBeforeProvider: jest.fn(async () => {
+          await Promise.resolve();
+          response.destroyed = true;
+        }),
+        enforcePreparedExecutionDeadline: jest.fn(),
+        preProviderTerminationError,
+      } as unknown as AiOrchestrationService;
+      const controller = new AiController(orchestration, {} as ConsentExecutionCoordinator);
+
+      await expect(
+        controller.streamChat(
+          request,
+          response as unknown as Response,
+          undefined,
+          mode === 'persistent'
+            ? {
+                mode: 'persistent',
+                clientRequestId: '11111111-1111-4111-8111-111111111111',
+                conversationId: '22222222-2222-4222-8222-222222222222',
+                message: 'synthetic',
+              }
+            : {
+                mode: 'incognito',
+                clientRequestId: '11111111-1111-4111-8111-111111111111',
+                contextId: '22222222-2222-4222-8222-222222222222',
+                message: 'synthetic',
+              },
+        ),
+      ).resolves.toBeUndefined();
+      expect(preProviderTerminationError).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['persistent', 'incognito'] as const)(
+    'preserves the typed %s termination when bounded cleanup rejects',
+    async (mode) => {
+      const aborted = new AbortController();
+      aborted.abort(new Error('consent_withdrawn'));
+      const execution = {
+        id: 'execution-1',
+        userId: 'user-1',
+        sessionId: 'session-1',
+        signal: aborted.signal,
+        deadlineAt: new Date(Date.now() + 1_000),
+        dependencies: [],
+        abort: jest.fn(),
+        dispose: jest.fn(),
+      };
+      const prepared =
+        mode === 'persistent'
+          ? { kind: 'ready', turn: { id: 'turn-1' }, execution }
+          : {
+              kind: 'ready',
+              generation: { id: 'generation-1', signal: aborted.signal },
+              execution,
+            };
+      const response = responseDouble();
+      const typedTermination = new AIProviderError('typed termination');
+      const orchestration = {
+        preparePersistentTurn: jest.fn().mockResolvedValue(prepared),
+        prepareIncognitoTurn: jest.fn().mockResolvedValue(prepared),
+        cancelPreparedPersistentTurnBeforeProvider: jest
+          .fn()
+          .mockRejectedValue(new Error('cleanup failed')),
+        cancelPreparedIncognitoTurnBeforeProvider: jest
+          .fn()
+          .mockRejectedValue(new Error('cleanup failed')),
+        enforcePreparedExecutionDeadline: jest.fn(),
+        preProviderTerminationError: jest.fn(() => typedTermination),
+      } as unknown as AiOrchestrationService;
+      const controller = new AiController(orchestration, {} as ConsentExecutionCoordinator);
+
+      await expect(
+        controller.streamChat(
+          request,
+          response as unknown as Response,
+          undefined,
+          mode === 'persistent'
+            ? {
+                mode: 'persistent',
+                clientRequestId: '11111111-1111-4111-8111-111111111111',
+                conversationId: '22222222-2222-4222-8222-222222222222',
+                message: 'synthetic',
+              }
+            : {
+                mode: 'incognito',
+                clientRequestId: '11111111-1111-4111-8111-111111111111',
+                contextId: '22222222-2222-4222-8222-222222222222',
+                message: 'synthetic',
+              },
+        ),
+      ).rejects.toBe(typedTermination);
+    },
+  );
+
+  it('does not write replay metadata when the response closes during prepare', async () => {
+    const response = responseDouble() as ReturnType<typeof responseDouble> & {
+      status: jest.Mock;
+      json: jest.Mock;
+    };
+    response.status = jest.fn(() => response);
+    response.json = jest.fn(() => response);
+    const orchestration = {
+      preparePersistentTurn: jest.fn(async () => {
+        response.destroyed = true;
+        return {
+          kind: 'existing',
+          turn: { id: 'turn-1' },
+          deadlineAt: new Date(Date.now() + 1_000),
+        };
+      }),
+    } as unknown as AiOrchestrationService;
+    const controller = new AiController(orchestration, {} as ConsentExecutionCoordinator);
+
+    await expect(
+      controller.streamChat(request, response as unknown as Response, undefined, {
+        mode: 'persistent',
+        clientRequestId: '11111111-1111-4111-8111-111111111111',
+        conversationId: '22222222-2222-4222-8222-222222222222',
+        message: 'synthetic',
+      }),
+    ).resolves.toBeUndefined();
+    expect(response.status).not.toHaveBeenCalled();
+    expect(response.json).not.toHaveBeenCalled();
+  });
+
+  it('logs but never writes an exception envelope after the socket is closed', () => {
+    const logger = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const response = {
+      destroyed: true,
+      writableEnded: false,
+      headersSent: false,
+      setHeader: jest.fn(),
+      status: jest.fn(),
+      json: jest.fn(),
+    };
+    const request = { id: 'request-1', method: 'POST', path: '/ai/chat/stream' };
+    const host = {
+      switchToHttp: () => ({
+        getResponse: () => response,
+        getRequest: () => request,
+      }),
+    } as unknown as ArgumentsHost;
+
+    try {
+      new AppExceptionFilter().catch(new AIProviderError(), host);
+      expect(response.setHeader).not.toHaveBeenCalled();
+      expect(response.status).not.toHaveBeenCalled();
+      expect(response.json).not.toHaveBeenCalled();
+      expect(logger).toHaveBeenCalled();
+    } finally {
+      logger.mockRestore();
+    }
   });
 });

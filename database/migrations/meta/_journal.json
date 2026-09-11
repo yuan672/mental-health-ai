@@ -57,6 +57,13 @@
       "when": 1789114350337,
       "tag": "0007_cynical_banshee",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789129853897,
+      "tag": "0008_gorgeous_gladiator",
+      "breakpoints": true
     }
   ]
 }

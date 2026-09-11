@@ -23,6 +23,8 @@ const environmentSchema = z
       .refine((value) => value.startsWith('postgresql://') || value.startsWith('postgres://'), {
         message: 'DATABASE_URL must be a PostgreSQL connection string',
       }),
+    DATABASE_CONNECTION_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+    DATABASE_QUERY_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),
@@ -49,6 +51,16 @@ const environmentSchema = z
       .enum(['true', 'false'])
       .default('false')
       .transform((value) => value === 'true'),
+    AI_KNOWLEDGE_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+    AI_KNOWLEDGE_SYNTHETIC_FIXTURES_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+    AI_KNOWLEDGE_RETRIEVAL_TIMEOUT_MS: z.coerce.number().int().positive().default(2_000),
+    AI_KNOWLEDGE_CONTEXT_TOKEN_BUDGET: z.coerce.number().int().min(800).max(1_200).default(1_000),
     LLM_PROVIDER: z.enum(['none', 'siliconflow']).default('none'),
     LLM_API_KEY: z.string().default(''),
     LLM_BASE_URL: z.string().url().default('https://api.siliconflow.cn/v1'),
@@ -144,6 +156,32 @@ const environmentSchema = z
         code: 'custom',
         path: ['LLM_STREAM_IDLE_TIMEOUT_MS'],
         message: 'Stream idle timeout cannot exceed total timeout',
+      });
+    }
+    if (value.AI_KNOWLEDGE_RETRIEVAL_TIMEOUT_MS > value.LLM_TOTAL_TIMEOUT_MS) {
+      context.addIssue({
+        code: 'custom',
+        path: ['AI_KNOWLEDGE_RETRIEVAL_TIMEOUT_MS'],
+        message: 'Knowledge retrieval timeout cannot exceed total timeout',
+      });
+    }
+    if (value.AI_KNOWLEDGE_CONTEXT_TOKEN_BUDGET >= value.LLM_CONTEXT_TOKEN_BUDGET) {
+      context.addIssue({
+        code: 'custom',
+        path: ['AI_KNOWLEDGE_CONTEXT_TOKEN_BUDGET'],
+        message: 'Knowledge context allowance must leave room in the total LLM context budget',
+      });
+    }
+
+    if (
+      value.AI_KNOWLEDGE_SYNTHETIC_FIXTURES_ENABLED &&
+      value.APP_ENV !== 'development' &&
+      value.APP_ENV !== 'test'
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['AI_KNOWLEDGE_SYNTHETIC_FIXTURES_ENABLED'],
+        message: 'Synthetic Knowledge retrieval is restricted to development and test',
       });
     }
 
