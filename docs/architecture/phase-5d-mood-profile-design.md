@@ -194,7 +194,7 @@ Daily summaries group with the same Asia/Shanghai date interpretation and return
 {
   "localDate": "2026-09-11",
   "entryCount": 2,
-  "averageScore": 3.5
+  "averageMoodScore": 3.5
 }
 ```
 

@@ -240,6 +240,48 @@ export const quotaConsumptions = pgTable(
   ],
 );
 
+export const moodEntries = pgTable(
+  'mood_entries',
+  {
+    id: uuid('id').primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    clientRequestId: uuid('client_request_id').notNull(),
+    moodScore: integer('mood_score').notNull(),
+    emotion: varchar('emotion', { length: 32 }).$type<
+      | 'joyful'
+      | 'calm'
+      | 'hopeful'
+      | 'neutral'
+      | 'tired'
+      | 'stressed'
+      | 'sad'
+      | 'angry'
+      | 'overwhelmed'
+    >(),
+    note: varchar('note', { length: 500 }),
+    stateRevision: integer('state_revision').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('mood_entries_user_client_request_unique').on(table.userId, table.clientRequestId),
+    index('mood_entries_user_created_id_idx').on(table.userId, table.createdAt, table.id),
+    check('mood_entries_score_check', sql`${table.moodScore} BETWEEN 1 AND 5`),
+    check(
+      'mood_entries_emotion_check',
+      sql`${table.emotion} IS NULL OR ${table.emotion} IN ('joyful', 'calm', 'hopeful', 'neutral', 'tired', 'stressed', 'sad', 'angry', 'overwhelmed')`,
+    ),
+    check(
+      'mood_entries_note_length_check',
+      sql`${table.note} IS NULL OR char_length(${table.note}) <= 500`,
+    ),
+    check('mood_entries_revision_check', sql`${table.stateRevision} > 0`),
+    check('mood_entries_timestamps_check', sql`${table.updatedAt} >= ${table.createdAt}`),
+  ],
+);
+
 export const conversations = pgTable(
   'conversations',
   {
@@ -419,6 +461,7 @@ export const schema = {
   conversations,
   dailyUsageQuotas,
   messages,
+  moodEntries,
   passwordCredentials,
   quotaConsumptions,
   humanReviewQueueItems,
