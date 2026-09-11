@@ -146,6 +146,7 @@ export class AiController {
 
     if (prepared.kind === 'existing') {
       response.removeListener('close', onClose);
+      if (response.destroyed || response.writableEnded) return;
       applyKnowledgeReferenceResponseHeaders(response, representation);
       response.status(200).json({
         success: true,

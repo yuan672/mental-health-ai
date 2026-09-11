@@ -212,6 +212,33 @@ describe('pre-stream response lifecycle', () => {
     },
   );
 
+  it('does not write replay metadata when the response closes during prepare', async () => {
+    const response = responseDouble() as ReturnType<typeof responseDouble> & {
+      status: jest.Mock;
+      json: jest.Mock;
+    };
+    response.status = jest.fn(() => response);
+    response.json = jest.fn(() => response);
+    const orchestration = {
+      preparePersistentTurn: jest.fn(async () => {
+        response.destroyed = true;
+        return { kind: 'existing', turn: { id: 'turn-1' } };
+      }),
+    } as unknown as AiOrchestrationService;
+    const controller = new AiController(orchestration, {} as ConsentExecutionCoordinator);
+
+    await expect(
+      controller.streamChat(request, response as unknown as Response, undefined, {
+        mode: 'persistent',
+        clientRequestId: '11111111-1111-4111-8111-111111111111',
+        conversationId: '22222222-2222-4222-8222-222222222222',
+        message: 'synthetic',
+      }),
+    ).resolves.toBeUndefined();
+    expect(response.status).not.toHaveBeenCalled();
+    expect(response.json).not.toHaveBeenCalled();
+  });
+
   it('logs but never writes an exception envelope after the socket is closed', () => {
     const logger = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     const response = {
