@@ -38,7 +38,7 @@ export async function parseApiError(response: Response): Promise<ApiErrorRespons
 }
 
 type ApiRequestOptions = Readonly<{
-  method?: 'GET' | 'POST' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   body?: unknown;
   signal?: AbortSignal;
   csrf?: boolean;

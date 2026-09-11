@@ -1,7 +1,11 @@
+import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 
 const EMAIL = 'phase5b-e2e@example.test';
 const PASSWORD = 'Synthetic-E2E-Password-9!';
+const moodScreenshotDirectory = fileURLToPath(
+  new URL('../../../docs/reviews/phase-5d-mood-profile-web/', import.meta.url),
+);
 
 async function login(page: Page): Promise<void> {
   await page.goto('/login');
@@ -24,6 +28,22 @@ async function clearConversationHistory(page: Page): Promise<void> {
       headers: { 'x-csrf-token': decodeURIComponent(csrf) },
     });
     if (!response.ok) throw new Error('Synthetic E2E history cleanup failed');
+  });
+}
+
+async function clearMoodHistory(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const csrf = document.cookie
+      .split(';')
+      .map((item) => item.trim().split('='))
+      .find(([name]) => name === 'mh_csrf')?.[1];
+    if (!csrf) throw new Error('Synthetic E2E session has no CSRF cookie');
+    const response = await fetch('http://127.0.0.1:3101/mood-entries', {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: { 'x-csrf-token': decodeURIComponent(csrf) },
+    });
+    if (!response.ok) throw new Error('Synthetic E2E Mood cleanup failed');
   });
 }
 
@@ -342,4 +362,130 @@ test('two Privacy tabs resolve a stale revision without automatic acceptance', a
   await page.reload();
   await expect(page.getByText('已接受').first()).toBeVisible();
   await stalePage.close();
+});
+
+test('Mood/Profile supports the complete synthetic P0 lifecycle', async ({ page }) => {
+  await login(page);
+  await clearMoodHistory(page);
+  await page.goto('/app/mood');
+  await expect(page.getByRole('heading', { name: '心情记录' })).toBeVisible();
+  await expect(page.getByText(/不是医疗诊断、持续监测或紧急响应渠道/u)).toBeVisible();
+
+  await page.getByRole('radio', { name: '2' }).click();
+  await page.getByLabel('日常情绪（可选）').selectOption('stressed');
+  await page.getByLabel('备注（可选）').fill('第一条合成心情记录。');
+  await page.getByRole('button', { name: '保存心情记录' }).click();
+  await expect(page.getByText('第一条合成心情记录。')).toBeVisible();
+
+  await page.getByRole('radio', { name: '4' }).click();
+  await page.getByLabel('日常情绪（可选）').selectOption('hopeful');
+  await page.getByLabel('备注（可选）').fill('第二条合成心情记录。');
+  await page.getByRole('button', { name: '保存心情记录' }).click();
+  await expect(page.getByText('第二条合成心情记录。')).toBeVisible();
+  await expect(page.getByText('平均 3.0 分 · 2 条')).toBeVisible();
+  if (process.env.UPDATE_MOOD_SCREENSHOTS === '1') {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: `${moodScreenshotDirectory}mood-desktop.png` });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: `${moodScreenshotDirectory}mood-mobile.png` });
+    await page.setViewportSize({ width: 1280, height: 720 });
+  }
+
+  await page.getByRole('button', { name: '30 天' }).click();
+  await expect(page.getByRole('list', { name: '30 天每日趋势' })).toBeVisible();
+  await expect(page.getByText('平均 3.0 分 · 2 条')).toBeVisible();
+  await page.getByRole('button', { name: '30 天' }).click();
+  await expect(page.getByText('第一条合成心情记录。')).toBeVisible();
+  await expect(page.getByText('平均 3.0 分 · 2 条')).toBeVisible();
+  await page.getByRole('button', { name: '7 天' }).click();
+  await expect(page.getByRole('list', { name: '7 天每日趋势' })).toBeVisible();
+  await page.getByRole('button', { name: '7 天' }).click();
+  await expect(page.getByText('第二条合成心情记录。')).toBeVisible();
+
+  const firstEntry = page.getByText('第一条合成心情记录。').locator('..');
+  await firstEntry.getByRole('button', { name: '编辑' }).click();
+  const editForm = page.getByRole('heading', { name: '编辑记录' }).locator('..');
+  await editForm.getByRole('radio', { name: '5' }).click();
+  await editForm.getByLabel('备注（可选）').fill('第一条已编辑的合成记录。');
+  await editForm.getByRole('button', { name: '保存修改' }).click();
+  await expect(page.getByText('第一条已编辑的合成记录。')).toBeVisible();
+  await expect(page.getByText('平均 4.5 分 · 2 条')).toBeVisible();
+
+  const secondEntry = page.getByText('第二条合成心情记录。').locator('..');
+  await secondEntry.getByRole('button', { name: '删除' }).click();
+  const singleDeleteDialog = page.getByRole('dialog', { name: '删除这条心情记录？' });
+  await expect(singleDeleteDialog.getByRole('button', { name: '取消' })).toBeFocused();
+  await singleDeleteDialog.getByRole('button', { name: '删除记录' }).click();
+  await expect(page.getByText('第二条合成心情记录。')).toHaveCount(0);
+
+  await page.reload();
+  await expect(page.getByText('第一条已编辑的合成记录。')).toBeVisible();
+  await page.getByRole('button', { name: '删除全部心情记录' }).click();
+  const deleteAllDialog = page.getByRole('dialog', { name: '删除全部心情记录？' });
+  await expect(deleteAllDialog.getByText(/当前 7 天或 30 天窗口之外/u)).toBeVisible();
+  await expect(deleteAllDialog.getByText(/独立 Audit 和备份/u)).toBeVisible();
+  await deleteAllDialog.getByRole('button', { name: '删除全部' }).click();
+  await expect(page.getByText('服务器实际删除了 1 条心情记录。')).toBeVisible();
+  await expect(page.getByText('这段时间还没有心情记录。')).toBeVisible();
+
+  for (const width of [320, 390, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    ).toBe(true);
+  }
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: '打开聊天记录' }).click();
+  await page
+    .getByRole('dialog', { name: '聊天记录' })
+    .getByRole('link', { name: '个人资料' })
+    .click();
+  await expect(page).toHaveURL(/\/app\/profile$/u);
+  await expect(page.getByText(EMAIL)).toBeVisible();
+  await expect(page.getByText('成年资格已验证。此页面不展示验证方式或内部证据。')).toBeVisible();
+  if (process.env.UPDATE_MOOD_SCREENSHOTS === '1') {
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: `${moodScreenshotDirectory}profile-mobile.png` });
+  }
+  await page.getByRole('button', { name: '退出' }).click();
+  await expect(page).toHaveURL(/\/login\?returnTo=/u);
+  await expect(page.getByText('第一条已编辑的合成记录。')).toHaveCount(0);
+});
+
+test('Mood preserves read-only unknown-create recovery across a range change', async ({ page }) => {
+  await login(page);
+  await clearMoodHistory(page);
+  await page.goto('/app/mood');
+  await expect(page.getByRole('heading', { name: '心情记录' })).toBeVisible();
+
+  let moodCreateCalls = 0;
+  await page.route('**/mood-entries*', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (request.method() === 'POST' && url.pathname === '/mood-entries') {
+      moodCreateCalls += 1;
+      await route.abort('connectionfailed');
+      return;
+    }
+    await route.continue();
+  });
+
+  await page.getByLabel('备注（可选）').fill('结果未知的合成浏览器记录。');
+  await page.getByRole('button', { name: '保存心情记录' }).click();
+  await expect(page.getByText(/不会自动重新提交原创建请求/u)).toBeVisible();
+  await expect(page.getByRole('button', { name: '核对创建结果' })).toBeVisible();
+
+  await page.getByRole('button', { name: '30 天' }).click();
+  await expect(page.getByRole('list', { name: '30 天每日趋势' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '核对创建结果' })).toBeVisible();
+  await page.getByRole('button', { name: '核对创建结果' }).click();
+
+  await expect(page.getByText(/不保证它以后不会提交/u)).toBeVisible();
+  expect(moodCreateCalls).toBe(1);
+  await expect(page.getByRole('button', { name: '保存心情记录' })).toBeDisabled();
 });

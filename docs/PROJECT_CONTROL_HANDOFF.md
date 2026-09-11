@@ -11,13 +11,14 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
 - Phase 4 — AI Safety: Engineering scope complete
 - Phase 5 — User Features: In progress; Phase 5A and Phase 5B are complete, and
   the bounded Phase 5C Incognito, Consent backend, and Privacy Consent lifecycle
-  UI engineering scope is complete; remaining Phase 5 work has not started
+  UI engineering scope is complete; Phase 5D Mood/Profile engineering is complete;
+  remaining Phase 5 work has not started
 - Phase 5C — Incognito and Privacy Experience: Engineering complete; production
   policy/content approval and production enablement remain incomplete
 - Phase 5B — Chat Product Experience: Product UI engineering complete
-- Phase 5D — Mood / Profile: ADR-017 and the engineering contract are accepted;
-  Phase 5D-1 backend delivery is tracked by PR #18; Phase 5D-2 Web has not started,
-  so overall Phase 5D remains incomplete
+- Phase 5D — Mood / Profile: Engineering complete; ADR-017 and the engineering
+  contract are accepted, with the backend delivered by PR #18 and the Web
+  experience delivered by PR #20
 - Phase 6 — Admin and operations features: Not started
 
 ## Current Production State
@@ -47,6 +48,12 @@ safety, or validation for clinical use.
 - [PR #15](https://github.com/yuan672/mental-health-ai/pull/15) — Consent withdrawal race-test
   finalization
 - [PR #16](https://github.com/yuan672/mental-health-ai/pull/16) — Privacy Consent lifecycle UI
+- [PR #17](https://github.com/yuan672/mental-health-ai/pull/17) — Accepted Mood/Profile architecture
+- [PR #18](https://github.com/yuan672/mental-health-ai/pull/18) — Mood/Profile backend
+- [PR #19](https://github.com/yuan672/mental-health-ai/pull/19) — Privacy, registration,
+  narrow-layout, and session-expiry Web fixes
+- [PR #20](https://github.com/yuan672/mental-health-ai/pull/20) — Mood/Profile Web
+  experience and final state-recovery fixes
 
 ## Current Feature Status
 
@@ -61,8 +68,10 @@ safety, or validation for clinical use.
 - Mood/Profile product scope and engineering contract are accepted in ADR-017.
   [PR #18](https://github.com/yuan672/mental-health-ai/pull/18) is the delivery record
   for the Mood/Profile API, generated 0006 migration, content-free deletion Audit
-  actions, and final-check tests. Consult the PR state for integration status.
-  Phase 5D-2 Web, Knowledge Base, Admin/Reviewer features, and production enablement
+  actions, and final-check tests. [PR #20](https://github.com/yuan672/mental-health-ai/pull/20)
+  delivers the bounded Mood/Profile Web experience, including authoritative
+  recovery after unknown or conflicting mutations. Phase 5D is engineering
+  complete. Knowledge Base, Admin/Reviewer features, and production enablement
   remain outside completed scope.
 
 ## Phase 5C Batch Scope and Open Consent Product Flow
@@ -123,8 +132,8 @@ None.
 
 ## Immediate Next Step
 
-Consult PR #18 for the bounded Phase 5D-1 backend integration result. Do not begin
-Phase 5D-2, Phase 5E, or Phase 6 without a separate authorized task.
+No further implementation is currently authorized. Do not begin Phase 5E or Phase
+6 without a separate design and implementation authorization.
 
 ## Source of Truth
 

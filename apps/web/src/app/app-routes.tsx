@@ -4,6 +4,8 @@ import { IncognitoChatPage } from '../features/chat/incognito-chat-page';
 import { LandingPage } from '../routes/landing-page';
 import { LoginPage } from '../routes/login-page';
 import { NotFoundPage } from '../routes/not-found-page';
+import { MoodPage } from '../routes/mood-page';
+import { ProfilePage } from '../routes/profile-page';
 import { RegisterPage } from '../routes/register-page';
 import { PrivacyPage } from '../routes/privacy-page';
 import { AppShell } from './app-shell';
@@ -20,6 +22,8 @@ export function AppRoutes() {
           <Route index element={<Navigate replace to="chat" />} />
           <Route path="chat/incognito" element={<IncognitoChatPage />} />
           <Route path="chat/:conversationId?" element={<ChatPage />} />
+          <Route path="mood" element={<MoodPage />} />
+          <Route path="profile" element={<ProfilePage />} />
           <Route path="privacy" element={<PrivacyPage />} />
         </Route>
       </Route>
