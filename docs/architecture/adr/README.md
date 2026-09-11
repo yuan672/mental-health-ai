@@ -25,3 +25,7 @@ New decisions should use the next sequential ADR number. Existing accepted ADRs 
 ADR-016 narrowly supersedes ADR-011's Consent single-lifecycle/no-reaccept rule
 and ADR-015's broad all-user withdrawal cleanup rule. All other decisions in
 ADR-011 and ADR-015 remain Accepted.
+
+Proposed decisions:
+
+18. ADR-018 Knowledge Base Content and Publication Boundaries

@@ -19,6 +19,8 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
 - Phase 5D — Mood / Profile: Engineering complete; ADR-017 and the engineering
   contract are accepted, with the backend delivered by PR #18 and the Web
   experience delivered by PR #20
+- Phase 5E — Knowledge Base: Design proposed and pending review; implementation
+  and curated content publication have not started
 - Phase 6 — Admin and operations features: Not started
 
 ## Current Production State
@@ -71,8 +73,9 @@ safety, or validation for clinical use.
   actions, and final-check tests. [PR #20](https://github.com/yuan672/mental-health-ai/pull/20)
   delivers the bounded Mood/Profile Web experience, including authoritative
   recovery after unknown or conflicting mutations. Phase 5D is engineering
-  complete. Knowledge Base, Admin/Reviewer features, and production enablement
-  remain outside completed scope.
+  complete. The Phase 5E Knowledge Base design and Proposed ADR-018 are pending
+  review; no Knowledge implementation or curated content publication has started.
+  Admin/Reviewer features and production enablement remain outside completed scope.
 
 ## Phase 5C Batch Scope and Open Consent Product Flow
 
@@ -132,8 +135,9 @@ None.
 
 ## Immediate Next Step
 
-No further implementation is currently authorized. Do not begin Phase 5E or Phase
-6 without a separate design and implementation authorization.
+Review the Phase 5E Knowledge Base proposal and Proposed ADR-018. Do not begin
+Phase 5E implementation, publish curated content, or start Phase 6 without separate
+authorization.
 
 ## Source of Truth
 
