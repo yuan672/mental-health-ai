@@ -18,6 +18,7 @@ Accepted decisions:
 14. ADR-014 AI Safety and Crisis Response Architecture
 15. ADR-015 User-Facing Conversation, Incognito, and Client Data Boundaries
 16. ADR-016 Consent Lifecycle and Policy Evidence
+17. ADR-017 Mood Tracking and Minimal Profile Data Boundaries
 
 New decisions should use the next sequential ADR number. Existing accepted ADRs should not be silently rewritten; supersede them with a new ADR when the decision materially changes.
 
