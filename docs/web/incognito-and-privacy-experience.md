@@ -39,3 +39,33 @@ backups, and final Risk Event/Audit retention remain unresolved readiness work.
 
 Production Safety Lock remains enforced, Production AI Chat remains disabled,
 `productionSafe=false`, and real-model safety evaluation remains not evaluated.
+
+## Consent lifecycle UI implementation plan
+
+The next bounded Phase 5C delivery turns the authenticated Privacy page into the
+client for ADR-016 without changing its backend semantics. The page treats
+`currentRequiredConsents` as the admission-policy view, `consentStates` as the
+authoritative revision source for current and historical projections,
+`acceptableDocument` as the only source for a new acceptance, and paginated
+decision receipts as immutable history only.
+
+The page state is `loading | ready | load_failed` plus one in-memory mutation at
+a time: `confirming | submitting | result_unknown | stale | failed`. A new
+affirmative action creates one operation ID and an immutable request snapshot.
+Double clicks are disabled; an unknown-result retry reuses that snapshot and ID.
+A 409 refreshes server state and requires a new explicit action. Route changes,
+logout, and newer operations invalidate older responses. No Consent interaction
+state is written to `localStorage`, `sessionStorage`, or IndexedDB.
+
+Development/Test document links point to version-controlled, visibly synthetic
+read-only pages whose key and revision match the server registry. They are test
+fixtures, not approved production policy. Staging/Production acceptance remains
+unavailable until the server exposes a `production_reviewed` document.
+
+Verification covers current acceptance, withdrawal, same-version re-acceptance,
+new-version and legacy confirmation states, historical withdrawal, unavailable
+documents, exact unknown-result retry, stale multi-tab responses, late-response
+rejection, accessible confirmation focus, and active Persistent/Incognito cleanup.
+Existing chat, Incognito, session-isolation, privacy, and Chromium P0 regressions
+remain required. This delivery does not add account deletion/export, policy CMS,
+new Consent types, cross-instance cancellation, or Phase 5D/5E/6 features.
