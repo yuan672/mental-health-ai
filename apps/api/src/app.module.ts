@@ -10,6 +10,7 @@ import { DatabaseModule } from './database/database.module';
 import { env } from './config/env';
 import { HealthModule } from './health/health.module';
 import { MessageModule } from './messages/message.module';
+import { KnowledgeModule } from './knowledge/knowledge.module';
 import { MoodModule } from './mood/mood.module';
 import { ProfileModule } from './profile/profile.module';
 import { QuotaModule } from './quota/quota.module';
@@ -100,6 +101,7 @@ export const LOG_REDACT_PATHS = [
     ConversationAccessModule,
     ConversationModule,
     MessageModule,
+    KnowledgeModule,
     MoodModule,
     ProfileModule,
     QuotaModule,

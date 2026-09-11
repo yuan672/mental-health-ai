@@ -1,0 +1,32 @@
+{
+  "articleKey": "synthetic-everyday-stress",
+  "version": 1,
+  "title": "合成测试：认识日常压力",
+  "summary": "仅用于开发与自动化测试的合成知识内容，不代表正式发布材料。",
+  "contentOrigin": "synthetic_fixture",
+  "reviewStatus": "unverified",
+  "reviewedBy": null,
+  "reviewedAt": null,
+  "contentBlocks": [
+    {
+      "type": "paragraph",
+      "text": "这是合成测试正文，用于验证知识内容读取、版本和来源展示契约。"
+    },
+    {
+      "type": "callout",
+      "tone": "important",
+      "text": "本页是测试内容，不是医疗建议，也不是紧急响应服务。"
+    }
+  ],
+  "sources": [
+    {
+      "publisherName": "合成测试发布者",
+      "sourceTitle": "合成测试来源",
+      "sourceUrl": "https://synthetic.invalid/knowledge/everyday-stress-v1",
+      "sourcePublishedAt": null,
+      "sourceVersionLabel": "synthetic-v1",
+      "sourceLocator": "synthetic-section",
+      "retrievedAt": "2026-09-11T00:00:00.000Z"
+    }
+  ]
+}
