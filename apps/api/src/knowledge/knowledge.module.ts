@@ -6,6 +6,13 @@ import { KnowledgeMessageReferenceRepository } from './knowledge-message-referen
 import { KnowledgePublicationRepository } from './knowledge-publication.repository';
 import { KnowledgePublicationService } from './knowledge-publication.service';
 import { KnowledgeRepository } from './knowledge.repository';
+import { KnowledgeRetrievalPolicy } from './knowledge-retrieval.policy';
+import { KnowledgeRetrievalRepository } from './knowledge-retrieval.repository';
+import {
+  createKnowledgeRetrievalRuntimeConfig,
+  KNOWLEDGE_RETRIEVAL_RUNTIME_CONFIG,
+  KnowledgeRetrievalService,
+} from './knowledge-retrieval.service';
 import { KnowledgeService } from './knowledge.service';
 import { KnowledgeVisibilityPolicy } from './knowledge-visibility.policy';
 
@@ -18,6 +25,13 @@ import { KnowledgeVisibilityPolicy } from './knowledge-visibility.policy';
     KnowledgePublicationRepository,
     KnowledgePublicationService,
     KnowledgeRepository,
+    KnowledgeRetrievalPolicy,
+    KnowledgeRetrievalRepository,
+    KnowledgeRetrievalService,
+    {
+      provide: KNOWLEDGE_RETRIEVAL_RUNTIME_CONFIG,
+      useFactory: createKnowledgeRetrievalRuntimeConfig,
+    },
     KnowledgeService,
     KnowledgeVisibilityPolicy,
   ],
@@ -25,6 +39,7 @@ import { KnowledgeVisibilityPolicy } from './knowledge-visibility.policy';
     KnowledgeFixtureService,
     KnowledgeMessageReferenceRepository,
     KnowledgePublicationService,
+    KnowledgeRetrievalService,
     KnowledgeService,
   ],
 })
