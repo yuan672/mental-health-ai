@@ -37,14 +37,13 @@ export class ConsentsController {
 
   @Post()
   @HttpCode(200)
+  @Header('Cache-Control', 'private, no-store')
   @UseGuards(AuthenticatedSessionGuard, CsrfGuard)
   async mutate(
     @Req() request: AuthenticatedRequest,
     @Body(new ZodValidationPipe(consentMutationSchema)) body: ConsentMutationRequest,
   ) {
     const userId = request.authenticatedSession.userId;
-    return body.action === 'accept'
-      ? this.consentsService.accept(userId, body.consentType, body.consentVersion)
-      : this.consentsService.withdraw(userId, body.consentType, body.consentVersion);
+    return this.consentsService.mutate(userId, body);
   }
 }

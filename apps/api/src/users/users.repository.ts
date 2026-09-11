@@ -1,6 +1,7 @@
 import {
   ageVerifications,
   and,
+  consentDecisions,
   consents,
   desc,
   eq,
@@ -17,8 +18,12 @@ import { DatabaseService } from '../database/database.service';
 
 export type RegistrationConsent = {
   id: string;
+  decisionId: string;
+  operationId: string;
   consentType: string;
   consentVersion: string;
+  documentKey: string;
+  documentRevision: string;
   acceptedAt: Date;
 };
 
@@ -51,6 +56,8 @@ export type ConsentRecord = {
   status: ConsentStatus;
   acceptedAt: Date;
   withdrawnAt: Date | null;
+  stateRevision?: number;
+  effectiveAt?: Date;
 };
 
 export type ConsentHistoryCursor = Readonly<{
@@ -76,12 +83,53 @@ export class UsersRepository {
         verificationMethod: input.verificationMethod,
         verifiedAt: input.verifiedAt,
       });
-      await transaction.insert(consents).values(
-        input.consents.map((consent) => ({
+      const evidencedConsents = input.consents.map((consent) => {
+        if (
+          !consent.decisionId ||
+          !consent.operationId ||
+          !consent.documentKey ||
+          !consent.documentRevision
+        ) {
+          throw new Error('Registration consent evidence is incomplete');
+        }
+        return {
           ...consent,
+          decisionId: consent.decisionId,
+          operationId: consent.operationId,
+          documentKey: consent.documentKey,
+          documentRevision: consent.documentRevision,
+        };
+      });
+      await transaction.insert(consents).values(
+        evidencedConsents.map((consent) => ({
+          id: consent.id,
           userId: input.userId,
+          consentType: consent.consentType,
+          consentVersion: consent.consentVersion,
           status: 'accepted' as const,
+          acceptedAt: consent.acceptedAt,
           withdrawnAt: null,
+          stateRevision: 1,
+          effectiveAt: consent.acceptedAt,
+        })),
+      );
+      await transaction.insert(consentDecisions).values(
+        evidencedConsents.map((consent) => ({
+          id: consent.decisionId,
+          consentId: consent.id,
+          userId: input.userId,
+          consentType: consent.consentType,
+          consentVersion: consent.consentVersion,
+          operationId: consent.operationId,
+          decision: 'accepted',
+          outcome: 'applied',
+          priorRevision: 0,
+          resultingRevision: 1,
+          occurredAt: consent.acceptedAt,
+          documentKey: consent.documentKey,
+          documentRevision: consent.documentRevision,
+          targetAcceptanceDecisionId: null,
+          decisionSource: 'registration',
         })),
       );
     });
@@ -141,6 +189,8 @@ export class UsersRepository {
         status: consents.status,
         acceptedAt: consents.acceptedAt,
         withdrawnAt: consents.withdrawnAt,
+        stateRevision: consents.stateRevision,
+        effectiveAt: consents.effectiveAt,
       })
       .from(consents)
       .where(eq(consents.userId, userId))
@@ -169,6 +219,8 @@ export class UsersRepository {
         status: consents.status,
         acceptedAt: consents.acceptedAt,
         withdrawnAt: consents.withdrawnAt,
+        stateRevision: consents.stateRevision,
+        effectiveAt: consents.effectiveAt,
       })
       .from(consents)
       .where(
@@ -200,16 +252,5 @@ export class UsersRepository {
       .limit(1);
 
     return consent ?? null;
-  }
-
-  async createConsent(input: ConsentRecord): Promise<void> {
-    await this.databaseService.database.insert(consents).values(input);
-  }
-
-  async withdrawConsent(consentId: string, withdrawnAt: Date): Promise<void> {
-    await this.databaseService.database
-      .update(consents)
-      .set({ status: 'withdrawn', withdrawnAt })
-      .where(eq(consents.id, consentId));
   }
 }

@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { SessionRecord } from '../../users/users.repository';
 import { AIChatDisabledError, AuthenticationError, RateLimitError } from '../../common/errors';
 import { env } from '../../config/env';
-import { ConsentsService } from '../../consents/consents.service';
+import { ConsentExecutionCoordinator } from '../../consents/runtime/consent-execution.coordinator';
 import {
   INCOGNITO_CONTEXT_STORE,
   type IncognitoContext,
@@ -14,16 +14,23 @@ import {
 @Injectable()
 export class IncognitoContextsService {
   constructor(
-    private readonly consents: ConsentsService,
+    private readonly consentExecutions: ConsentExecutionCoordinator,
     @Inject(INCOGNITO_CONTEXT_STORE)
     private readonly contexts: IncognitoContextStore,
   ) {}
 
   async create(session: SessionRecord, now = new Date()): Promise<IncognitoContext> {
     if (!env.AI_CHAT_ENABLED) throw new AIChatDisabledError();
-    await this.consents.ensureRequiredConsentsActive(session.userId);
     try {
-      return this.contexts.create(session.userId, session.id, session.expiresAt, now);
+      const controller = new AbortController();
+      return await this.consentExecutions.createIncognitoContext({
+        userId: session.userId,
+        sessionId: session.id,
+        sessionExpiresAt: session.expiresAt,
+        signal: controller.signal,
+        deadlineAt: new Date(Date.now() + env.LLM_TOTAL_TIMEOUT_MS),
+        now,
+      });
     } catch (error) {
       if (error instanceof IncognitoContextLimitError) {
         throw new RateLimitError('无痕对话上下文数量已达到当前限制');

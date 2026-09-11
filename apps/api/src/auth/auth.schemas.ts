@@ -17,6 +17,8 @@ const registrationConsentSchema = z
   .object({
     consentType: z.string().min(1).max(64),
     consentVersion: z.string().min(1).max(64),
+    documentKey: z.string().min(1).max(128),
+    documentRevision: z.string().min(1).max(64),
     accepted: z.literal(true),
   })
   .strict();

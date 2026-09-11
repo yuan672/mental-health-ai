@@ -16,7 +16,7 @@ import {
   ValidationError,
 } from '../common/errors';
 import { env } from '../config/env';
-import { ConsentsService } from '../consents/consents.service';
+import { ConsentExecutionCoordinator } from '../consents/runtime/consent-execution.coordinator';
 import { ConversationService } from '../conversations/conversation.service';
 import { QuotaService } from '../quota/quota.service';
 import {
@@ -53,9 +53,8 @@ import { SafetyOperationalLoggingService } from '../safety/logging/safety-operat
 import type { RiskDecision } from '../safety/safety.types';
 import { TrustedSafetyTemplateRegistry } from '../safety/templates/trusted-safety-template.registry';
 import {
-  ActiveAiExecutionRegistry,
   AiExecutionTotalTimeoutError,
-  type ActiveAiExecution,
+  type ConsentBoundExecution,
 } from './runtime/active-ai-execution.registry';
 import { IncognitoGenerationAdmissionService } from './incognito/incognito-generation-admission.service';
 import {
@@ -74,7 +73,7 @@ type PersistentAiTurnInput = Omit<PersistentAiChatRequest, 'mode'> & {
   mode?: 'persistent';
 };
 
-export type AiTurnExecutionDeadline = ActiveAiExecution;
+export type AiTurnExecutionDeadline = ConsentBoundExecution;
 
 export type PreparedAiTurn =
   | Readonly<{ kind: 'existing'; turn: AiTurnRecord }>
@@ -222,9 +221,8 @@ const MAX_OUTPUT_CHARACTERS_PER_REQUESTED_TOKEN = 16;
 export class AiOrchestrationService {
   constructor(
     private readonly aiTurns: AiTurnService,
-    private readonly activeExecutions: ActiveAiExecutionRegistry,
+    private readonly consentExecutions: ConsentExecutionCoordinator,
     private readonly audits: AuditLogService,
-    private readonly consents: ConsentsService,
     private readonly contextService: ConversationContextService,
     private readonly conversations: ConversationService,
     private readonly crisisFlow: CrisisFlowService,
@@ -249,14 +247,16 @@ export class AiOrchestrationService {
     signal: AbortSignal,
     now = new Date(),
   ): Promise<PreparedIncognitoTurn> {
-    const execution = this.activeExecutions.register({
+    const pendingExecution = this.consentExecutions.registerPending({
       userId: principal.userId,
       sessionId: principal.sessionId,
       clientSignal: signal,
     });
 
     let admission;
+    let execution: ConsentBoundExecution;
     try {
+      execution = await this.consentExecutions.bindRequired(pendingExecution);
       admission = await this.incognitoAdmission.claim({
         userId: principal.userId,
         sessionId: principal.sessionId,
@@ -264,10 +264,11 @@ export class AiOrchestrationService {
         clientRequestId: input.clientRequestId,
         message: input.message,
         signal: execution.signal,
+        execution,
         now,
       });
     } catch (error) {
-      execution.dispose();
+      pendingExecution.dispose();
       throw error;
     }
 
@@ -275,6 +276,7 @@ export class AiOrchestrationService {
       throwIfAborted(admission.generation.signal);
       if (admission.kind === 'trusted') {
         try {
+          await this.consentExecutions.assertStillUsable(execution);
           const withUserMessage = this.incognitoContexts.append(
             principal.userId,
             principal.sessionId,
@@ -296,7 +298,9 @@ export class AiOrchestrationService {
         } catch {
           // A trusted safety response remains deliverable even if the bounded runtime is full.
         }
+        await this.consentExecutions.assertStillUsable(execution);
         throwIfAborted(execution.signal);
+        throwIfAborted(admission.generation.signal);
         return {
           kind: 'trusted',
           principal,
@@ -326,6 +330,8 @@ export class AiOrchestrationService {
         await this.quota.refundQuota(principal.userId, admission.quotaIdempotencyKey, now);
         throw new AIIncognitoContextLostError();
       }
+      await this.consentExecutions.assertStillUsable(execution);
+      throwIfAborted(execution.signal);
       throwIfAborted(admission.generation.signal);
       return {
         kind: 'ready',
@@ -356,17 +362,18 @@ export class AiOrchestrationService {
     signal: AbortSignal,
     now = new Date(),
   ): Promise<PreparedAiTurn> {
-    const execution = this.activeExecutions.register({
+    const pendingExecution = this.consentExecutions.registerPending({
       userId: principal.userId,
       sessionId: principal.sessionId,
       clientSignal: signal,
     });
 
+    let execution: ConsentBoundExecution;
     try {
       if (!env.AI_CHAT_ENABLED) {
         throw new AIChatDisabledError();
       }
-      await this.consents.ensureRequiredConsentsActive(principal.userId);
+      execution = await this.consentExecutions.bindRequired(pendingExecution);
       throwIfAborted(execution.signal);
 
       const existing = await this.aiTurns.findByClientRequestId(
@@ -408,25 +415,30 @@ export class AiOrchestrationService {
             now,
           },
           execution.signal,
+          execution,
         );
         throwIfAborted(execution.signal);
 
         const trustedResponse = this.trustedResponseFor(riskDecision, quotaAvailable);
         if (trustedResponse) {
           try {
-            const completed = await this.aiTurns.completeTrusted(
-              claimed.turn,
-              {
-                userMessageContent: input.message,
-                assistantContent: trustedResponse.content,
-                promptKey: trustedResponse.templateKey,
-                promptVersion: trustedResponse.templateVersion,
-                riskDecision,
-                templateKey: trustedResponse.templateKey,
-                templateVersion: trustedResponse.templateVersion,
-              },
-              now,
+            await this.consentExecutions.assertStillUsable(execution);
+            const completed = await this.consentExecutions.runWhileUsable(execution, () =>
+              this.aiTurns.completeTrusted(
+                claimed.turn,
+                {
+                  userMessageContent: input.message,
+                  assistantContent: trustedResponse.content,
+                  promptKey: trustedResponse.templateKey,
+                  promptVersion: trustedResponse.templateVersion,
+                  riskDecision,
+                  templateKey: trustedResponse.templateKey,
+                  templateVersion: trustedResponse.templateVersion,
+                },
+                now,
+              ),
             );
+            await this.consentExecutions.assertStillUsable(execution);
             throwIfAborted(execution.signal);
             return { kind: 'trusted', turn: completed, response: trustedResponse, execution };
           } catch (error) {
@@ -472,13 +484,11 @@ export class AiOrchestrationService {
           prompt.key as 'supportive-chat' | 'supportive-chat-safety' | 'high-risk-support',
         );
         throwIfAborted(execution.signal);
-        const started = await this.aiTurns.start(
-          claimed.turn,
-          input.message,
-          prompt,
-          riskDecision,
-          now,
+        await this.consentExecutions.assertStillUsable(execution);
+        const started = await this.consentExecutions.runWhileUsable(execution, () =>
+          this.aiTurns.start(claimed.turn, input.message, prompt, riskDecision, now),
         );
+        await this.consentExecutions.assertStillUsable(execution);
         throwIfAborted(execution.signal);
         return { kind: 'ready', turn: started, context, riskDecision, execution };
       } catch (error) {
@@ -504,7 +514,7 @@ export class AiOrchestrationService {
         throw error;
       }
     } catch (error) {
-      execution.dispose();
+      pendingExecution.dispose();
       throw error;
     }
   }
@@ -605,7 +615,14 @@ export class AiOrchestrationService {
           messages: context.messages,
           maxOutputTokens: env.LLM_MAX_OUTPUT_TOKENS,
         },
-        { signal: generationController.signal },
+        {
+          signal: generationController.signal,
+          startTransport: this.consentExecutions.starter(
+            prepared.execution,
+            'generation',
+            generationController.signal,
+          ),
+        },
       );
       const iterator = stream[Symbol.asyncIterator]();
       providerIterator = iterator;
@@ -637,6 +654,7 @@ export class AiOrchestrationService {
               approvedText,
               riskDecision,
               generationController.signal,
+              prepared.execution,
             );
             if (approved.length > 0) {
               approvedText += approved;
@@ -708,6 +726,7 @@ export class AiOrchestrationService {
               approvedText,
               riskDecision,
               generationController.signal,
+              prepared.execution,
             );
             if (approved.length > 0) {
               approvedText += approved;
@@ -745,6 +764,7 @@ export class AiOrchestrationService {
           approvedText,
           riskDecision,
           generationController.signal,
+          prepared.execution,
         );
         if (approved.length > 0) {
           approvedText += approved;
@@ -766,7 +786,11 @@ export class AiOrchestrationService {
         throw new LLMProviderFailure('malformed_stream', true, providerMetadata.requestId);
       }
       throwIfAborted(generationController.signal);
-      const completed = await this.aiTurns.complete(turn, approvedText, new Date());
+      await this.consentExecutions.assertStillUsable(prepared.execution);
+      const completed = await this.consentExecutions.runWhileUsable(prepared.execution, () =>
+        this.aiTurns.complete(turn, approvedText, new Date()),
+      );
+      await this.consentExecutions.assertStillUsable(prepared.execution);
       throwIfAborted(generationController.signal);
       this.logging.turnCompleted(metadata, {
         provider: providerMetadata.provider,
@@ -837,7 +861,10 @@ export class AiOrchestrationService {
         try {
           throwIfAborted(prepared.execution.signal);
           throwIfAborted(clientSignal);
-          completed = await this.aiTurns.complete(turn, approvedText, new Date());
+          await this.consentExecutions.assertStillUsable(prepared.execution);
+          completed = await this.consentExecutions.runWhileUsable(prepared.execution, () =>
+            this.aiTurns.complete(turn, approvedText, new Date()),
+          );
         } catch (persistenceError) {
           await this.finishAfterSafetyPersistenceFailure(turn);
           throw persistenceError;
@@ -856,7 +883,8 @@ export class AiOrchestrationService {
       const timedOut =
         error instanceof ProviderEventTimeout ||
         generationController.signal.reason instanceof ProviderEventTimeout ||
-        generationController.signal.reason instanceof AiExecutionTotalTimeoutError;
+        generationController.signal.reason instanceof AiExecutionTotalTimeoutError ||
+        prepared.execution.signal.reason instanceof AiExecutionTotalTimeoutError;
       const clientCancelled = clientSignal.aborted && !timedOut;
       const category = timedOut ? 'timeout' : failureCategory(error);
 
@@ -902,7 +930,10 @@ export class AiOrchestrationService {
         try {
           throwIfAborted(prepared.execution.signal);
           throwIfAborted(clientSignal);
-          const completed = await this.aiTurns.complete(turn, fallback.content, new Date());
+          await this.consentExecutions.assertStillUsable(prepared.execution);
+          const completed = await this.consentExecutions.runWhileUsable(prepared.execution, () =>
+            this.aiTurns.complete(turn, fallback.content, new Date()),
+          );
           yield {
             type: 'turn.completed',
             data: {
@@ -1001,7 +1032,14 @@ export class AiOrchestrationService {
           messages: context.messages,
           maxOutputTokens: env.LLM_MAX_OUTPUT_TOKENS,
         },
-        { signal: generationController.signal },
+        {
+          signal: generationController.signal,
+          startTransport: this.consentExecutions.starter(
+            prepared.execution,
+            'generation',
+            generationController.signal,
+          ),
+        },
       );
       const iterator = stream[Symbol.asyncIterator]();
       providerIterator = iterator;
@@ -1037,6 +1075,7 @@ export class AiOrchestrationService {
               approvedText,
               riskDecision,
               generationController.signal,
+              prepared.execution,
             );
             throwIfAborted(generation.signal);
             if (approved.length > 0) {
@@ -1110,6 +1149,7 @@ export class AiOrchestrationService {
               approvedText,
               riskDecision,
               generationController.signal,
+              prepared.execution,
             );
             throwIfAborted(generation.signal);
             if (approved.length > 0) {
@@ -1152,6 +1192,7 @@ export class AiOrchestrationService {
           approvedText,
           riskDecision,
           generationController.signal,
+          prepared.execution,
         );
         throwIfAborted(generation.signal);
         if (approved.length > 0) {
@@ -1174,6 +1215,7 @@ export class AiOrchestrationService {
         throw new LLMProviderFailure('malformed_stream', true, providerMetadata.requestId);
       }
       throwIfAborted(generation.signal);
+      await this.consentExecutions.assertStillUsable(prepared.execution);
       const appended = this.incognitoContexts.append(
         principal.userId,
         principal.sessionId,
@@ -1183,6 +1225,7 @@ export class AiOrchestrationService {
         new Date(),
       );
       if (!appended) throw new AIIncognitoContextLostError();
+      await this.consentExecutions.assertStillUsable(prepared.execution);
       this.logging.turnCompleted(metadata, {
         provider: providerMetadata.provider,
         model: providerMetadata.model,
@@ -1243,6 +1286,7 @@ export class AiOrchestrationService {
           },
         };
         if (sideEffectError) throw sideEffectError;
+        await this.consentExecutions.assertStillUsable(prepared.execution);
         const appended = this.incognitoContexts.append(
           principal.userId,
           principal.sessionId,
@@ -1252,6 +1296,7 @@ export class AiOrchestrationService {
           new Date(),
         );
         if (!appended) throw new AIIncognitoContextLostError();
+        await this.consentExecutions.assertStillUsable(prepared.execution);
         yield {
           type: 'turn.completed',
           data: {
@@ -1305,6 +1350,7 @@ export class AiOrchestrationService {
           },
         };
         if (fallbackFailure) throw fallbackFailure;
+        await this.consentExecutions.assertStillUsable(prepared.execution);
         const appended = this.incognitoContexts.append(
           principal.userId,
           principal.sessionId,
@@ -1314,6 +1360,7 @@ export class AiOrchestrationService {
           new Date(),
         );
         if (!appended) throw new AIIncognitoContextLostError();
+        await this.consentExecutions.assertStillUsable(prepared.execution);
         yield {
           type: 'turn.completed',
           data: {
@@ -1426,6 +1473,7 @@ export class AiOrchestrationService {
     previouslyApprovedText: string,
     riskDecision: RiskDecision,
     signal: AbortSignal,
+    execution: ConsentBoundExecution,
   ): Promise<string> {
     const result = await this.postGenerationSafety.approve(
       {
@@ -1437,7 +1485,9 @@ export class AiOrchestrationService {
         riskDecision,
       },
       signal,
+      execution,
     );
+    await this.consentExecutions.assertStillUsable(execution);
     throwIfAborted(signal);
     if (result.status === 'replacement') {
       throw new OutputSafetyReplacement(result.text, result.cause);

@@ -13,6 +13,8 @@ import {
   type OutputSafetyReasonCode,
   type RiskLevel,
 } from '../safety.types';
+import type { ConsentBoundExecution } from '../../ai/runtime/active-ai-execution.registry';
+import { ConsentExecutionCoordinator } from '../../consents/runtime/consent-execution.coordinator';
 
 export const OUTPUT_SAFETY_CLASSIFIER = Symbol('OUTPUT_SAFETY_CLASSIFIER');
 
@@ -61,6 +63,7 @@ export interface OutputSafetyClassifier {
       inputRiskLevel: RiskLevel;
     }>,
     signal: AbortSignal,
+    execution: ConsentBoundExecution,
   ): Promise<OutputSafetyClassifierResult>;
 }
 
@@ -69,6 +72,7 @@ export class LlmOutputSafetyClassifier implements OutputSafetyClassifier {
   constructor(
     @Inject(LLM_PROVIDER) private readonly provider: LLMProvider,
     private readonly prompts: PromptService,
+    private readonly consentExecutions: ConsentExecutionCoordinator,
   ) {}
 
   async classify(
@@ -78,6 +82,7 @@ export class LlmOutputSafetyClassifier implements OutputSafetyClassifier {
       inputRiskLevel: RiskLevel;
     }>,
     signal: AbortSignal,
+    execution: ConsentBoundExecution,
   ): Promise<OutputSafetyClassifierResult> {
     const prompt = this.prompts.getOutputSafetyClassificationPrompt();
     const timeoutSignal = AbortSignal.timeout(env.SAFETY_CLASSIFIER_TIMEOUT_MS);
@@ -101,7 +106,14 @@ export class LlmOutputSafetyClassifier implements OutputSafetyClassifier {
           temperature: 0,
           responseFormat: 'json',
         },
-        { signal: combinedSignal },
+        {
+          signal: combinedSignal,
+          startTransport: this.consentExecutions.starter(
+            execution,
+            'output_classification',
+            combinedSignal,
+          ),
+        },
       );
       if (signal.aborted) throw signal.reason;
       if (timeoutSignal.aborted) {

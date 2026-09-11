@@ -72,6 +72,12 @@ const environmentSchema = z
     INCOGNITO_CONTEXT_MAX_MESSAGES: z.coerce.number().int().positive().default(40),
     INCOGNITO_CONTEXT_MAX_CHARACTERS: z.coerce.number().int().positive().default(32_000),
     INCOGNITO_CONTEXT_MAX_MESSAGE_CHARACTERS: z.coerce.number().int().positive().default(16_384),
+    CONSENT_LOCK_MAX_WAITERS_GLOBAL: z.coerce.number().int().positive().default(1_000),
+    CONSENT_LOCK_MAX_WAITERS_PER_USER: z.coerce.number().int().positive().default(20),
+    CONSENT_ACTIVE_EXECUTIONS_MAX_GLOBAL: z.coerce.number().int().positive().default(1_000),
+    CONSENT_ACTIVE_EXECUTIONS_MAX_PER_USER: z.coerce.number().int().positive().default(10),
+    CONSENT_REVOKED_MARKER_MAX_GLOBAL: z.coerce.number().int().positive().default(2_000),
+    CONSENT_REVOKED_MARKER_MAX_LIFETIME_MS: z.coerce.number().int().positive().default(1_800_000),
     SAFETY_CONTEXT_MAX_MESSAGES: z.coerce.number().int().positive().max(40).default(8),
     SAFETY_CONTEXT_TOKEN_BUDGET: z.coerce.number().int().positive().default(2_000),
     SAFETY_CONTEXT_MAX_CHARACTERS: z.coerce.number().int().positive().default(6_000),
@@ -160,6 +166,21 @@ const environmentSchema = z
         code: 'custom',
         path: ['INCOGNITO_CONTEXT_MAX_MESSAGE_CHARACTERS'],
         message: 'Incognito single-message limit cannot exceed the context character limit',
+      });
+    }
+    if (value.CONSENT_LOCK_MAX_WAITERS_PER_USER > value.CONSENT_LOCK_MAX_WAITERS_GLOBAL) {
+      context.addIssue({
+        code: 'custom',
+        path: ['CONSENT_LOCK_MAX_WAITERS_PER_USER'],
+        message: 'CONSENT_LOCK_MAX_WAITERS_PER_USER must not exceed the global waiter limit',
+      });
+    }
+    if (value.CONSENT_ACTIVE_EXECUTIONS_MAX_PER_USER > value.CONSENT_ACTIVE_EXECUTIONS_MAX_GLOBAL) {
+      context.addIssue({
+        code: 'custom',
+        path: ['CONSENT_ACTIVE_EXECUTIONS_MAX_PER_USER'],
+        message:
+          'CONSENT_ACTIVE_EXECUTIONS_MAX_PER_USER must not exceed the global execution limit',
       });
     }
   });

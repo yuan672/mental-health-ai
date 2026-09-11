@@ -1,7 +1,7 @@
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { LLMProviderFailure } from '../src/ai/providers/llm-provider';
+import { LLMProviderFailure, type LLMCallOptions } from '../src/ai/providers/llm-provider';
 import { SiliconFlowProvider } from '../src/ai/providers/siliconflow.provider';
 
 type Scenario =
@@ -22,6 +22,13 @@ const REQUEST = {
   maxOutputTokens: 100,
 };
 
+function directOptions(signal = new AbortController().signal): LLMCallOptions {
+  return {
+    signal,
+    startTransport: async (startTransport) => ({ transport: startTransport(signal) }),
+  };
+}
+
 describe('SiliconFlowProvider', () => {
   let server: Server;
   let baseUrl: string;
@@ -29,9 +36,11 @@ describe('SiliconFlowProvider', () => {
   let streamEnded = false;
   let receivedAuthorization = '';
   let receivedBody = '';
+  let receivedRequests = 0;
 
   beforeAll(async () => {
     server = createServer((request, response) => {
+      receivedRequests += 1;
       receivedAuthorization = String(request.headers.authorization ?? '');
       request.setEncoding('utf8');
       request.on('data', (chunk: string) => {
@@ -50,6 +59,7 @@ describe('SiliconFlowProvider', () => {
     streamEnded = false;
     receivedAuthorization = '';
     receivedBody = '';
+    receivedRequests = 0;
   });
 
   afterAll(async () => {
@@ -153,7 +163,7 @@ describe('SiliconFlowProvider', () => {
 
   it('maps non-streaming chat responses without exposing raw payloads', async () => {
     scenario = 'chat';
-    const result = await provider().chat(REQUEST, { signal: new AbortController().signal });
+    const result = await provider().chat(REQUEST, directOptions());
 
     expect(result).toEqual({
       content: 'synthetic-answer',
@@ -167,7 +177,7 @@ describe('SiliconFlowProvider', () => {
 
   it('emits actual provider deltas before the upstream stream closes', async () => {
     scenario = 'stream';
-    const stream = provider().streamChat(REQUEST, { signal: new AbortController().signal });
+    const stream = provider().streamChat(REQUEST, directOptions());
     const iterator = stream[Symbol.asyncIterator]();
 
     await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'started' } });
@@ -193,6 +203,30 @@ describe('SiliconFlowProvider', () => {
     expect(JSON.stringify(remaining)).not.toContain('reasoning_content');
   });
 
+  it('does not start a lazy stream or classification request when the dispatch guard refuses it', async () => {
+    const refusal = new Error('synthetic_consent_withdrawn');
+    const blockedOptions: LLMCallOptions = {
+      signal: new AbortController().signal,
+      startTransport: () => Promise.reject(refusal),
+    };
+    const stream = provider().streamChat(REQUEST, blockedOptions);
+    const iterator = stream[Symbol.asyncIterator]();
+    await expect(iterator.next()).rejects.toBe(refusal);
+    await expect(
+      provider().classifyRisk(
+        {
+          requestId: REQUEST.requestId,
+          messages: REQUEST.messages,
+          maxOutputTokens: 128,
+        },
+        blockedOptions,
+      ),
+    ).rejects.toBe(refusal);
+    expect(receivedRequests).toBe(0);
+    expect(receivedAuthorization).toBe('');
+    expect(receivedBody).toBe('');
+  });
+
   it.each([
     ['authentication', 'authentication'],
     ['rate-limited', 'rate_limited'],
@@ -201,9 +235,7 @@ describe('SiliconFlowProvider', () => {
   ] as const)('maps %s failures to a safe typed category', async (testScenario, category) => {
     scenario = testScenario;
     const consume = async (): Promise<void> => {
-      const stream = provider().streamChat(REQUEST, {
-        signal: new AbortController().signal,
-      });
+      const stream = provider().streamChat(REQUEST, directOptions());
       const iterator = stream[Symbol.asyncIterator]();
       while (!(await iterator.next()).done) {
         // Consume the contract to surface deferred generator failures.
@@ -228,7 +260,7 @@ describe('SiliconFlowProvider', () => {
   it('propagates AbortSignal to the upstream stream and releases the reader', async () => {
     scenario = 'abort';
     const controller = new AbortController();
-    const stream = provider().streamChat(REQUEST, { signal: controller.signal });
+    const stream = provider().streamChat(REQUEST, directOptions(controller.signal));
     const iterator = stream[Symbol.asyncIterator]();
     await iterator.next();
     controller.abort(new Error('synthetic-abort'));
@@ -252,7 +284,7 @@ describe('SiliconFlowProvider', () => {
           messages: REQUEST.messages,
           maxOutputTokens: 128,
         },
-        { signal: new AbortController().signal },
+        directOptions(),
       ),
     ).resolves.toMatchObject({
       candidateLevel: 'HIGH',
@@ -278,14 +310,11 @@ describe('SiliconFlowProvider', () => {
           messages: REQUEST.messages,
           maxOutputTokens: 128,
         },
-        { signal: new AbortController().signal },
+        directOptions(),
       ),
     ).rejects.toMatchObject({ category: 'malformed_response' });
     await expect(
-      instance.embed(
-        { requestId: REQUEST.requestId, inputs: ['synthetic'] },
-        { signal: new AbortController().signal },
-      ),
+      instance.embed({ requestId: REQUEST.requestId, inputs: ['synthetic'] }, directOptions()),
     ).rejects.toMatchObject({ capability: 'embed' });
   });
 });

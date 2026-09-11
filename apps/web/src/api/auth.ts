@@ -48,7 +48,13 @@ export function register(input: {
   email: string;
   password: string;
   evidenceToken: string;
-  consents: Array<{ consentType: string; consentVersion: string; accepted: true }>;
+  consents: Array<{
+    consentType: string;
+    consentVersion: string;
+    documentKey: string;
+    documentRevision: string;
+    accepted: true;
+  }>;
 }): Promise<RegistrationResponse> {
   return apiRequest('/auth/register', registrationResponseSchema, {
     method: 'POST',

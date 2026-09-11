@@ -103,6 +103,36 @@ export class ConsentRequiredError extends AppError {
   }
 }
 
+export class ConsentOperationConflictError extends AppError {
+  constructor(message = '该授权操作标识已用于不同请求') {
+    super(ERROR_CODES.CONSENT_OPERATION_CONFLICT, 409, message);
+  }
+}
+
+export class ConsentStateChangedError extends AppError {
+  constructor(message = '授权状态已发生变化，请刷新后重试') {
+    super(ERROR_CODES.CONSENT_STATE_CHANGED, 409, message);
+  }
+}
+
+export class ConsentPolicyChangedError extends AppError {
+  constructor(message = '授权政策或文档已发生变化，请刷新后重试') {
+    super(ERROR_CODES.CONSENT_POLICY_CHANGED, 409, message);
+  }
+}
+
+export class ConsentResultUnknownError extends AppError {
+  constructor(message = '授权操作结果暂时无法确认，请使用同一操作标识重试') {
+    super(ERROR_CODES.CONSENT_RESULT_UNKNOWN, 503, message);
+  }
+}
+
+export class ConsentUnavailableError extends AppError {
+  constructor(message = '授权服务暂时不可用，请稍后重试') {
+    super(ERROR_CODES.CONSENT_UNAVAILABLE, 503, message);
+  }
+}
+
 export class DatabaseError extends AppError {
   constructor(message = '数据服务暂时不可用') {
     super(ERROR_CODES.DATABASE_ERROR, 500, message);

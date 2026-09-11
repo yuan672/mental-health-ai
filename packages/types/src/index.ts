@@ -30,6 +30,9 @@ export type RegistrationRequirement = {
   type: ConsentType;
   version: string;
   displayKey: 'consent.termsOfService' | 'consent.privacyPolicy';
+  documentKey: string;
+  documentRevision: string;
+  documentUrl: string;
 };
 
 export type RegistrationRequirementsResponse = ApiSuccessResponse<{

@@ -12,6 +12,8 @@ import { CsrfGuard } from '../auth/csrf.guard';
 import { AppError, ERROR_CODES } from '../common/errors';
 import { ZodValidationPipe } from '../common/validation/zod-validation.pipe';
 import { AiOrchestrationService } from './ai-orchestration.service';
+import type { ConsentBoundExecution } from './runtime/active-ai-execution.registry';
+import { ConsentExecutionCoordinator } from '../consents/runtime/consent-execution.coordinator';
 import { aiChatRequestSchema, type AiChatRequest } from './ai.schemas';
 
 export async function writeSse(
@@ -78,7 +80,10 @@ function incognitoFailedEvent(generationId: string, error: unknown): IncognitoAi
 
 @Controller('ai')
 export class AiController {
-  constructor(private readonly orchestration: AiOrchestrationService) {}
+  constructor(
+    private readonly orchestration: AiOrchestrationService,
+    private readonly consentExecutions: ConsentExecutionCoordinator,
+  ) {}
 
   @Post('chat/stream')
   @UseGuards(AuthenticatedSessionGuard, CsrfGuard)
@@ -147,7 +152,7 @@ export class AiController {
     let eventSequence = 0;
     if (prepared.kind === 'trusted' || prepared.kind === 'unpersisted_trusted') {
       try {
-        await writeSse(
+        await this.writeBoundSse(
           response,
           {
             type: 'turn.started',
@@ -158,9 +163,10 @@ export class AiController {
             },
           },
           ++eventSequence,
+          prepared.execution,
           prepared.execution.signal,
         );
-        await writeSse(
+        await this.writeBoundSse(
           response,
           {
             type: 'message.segment',
@@ -172,10 +178,11 @@ export class AiController {
             },
           },
           ++eventSequence,
+          prepared.execution,
           prepared.execution.signal,
         );
         if (prepared.kind === 'trusted') {
-          await writeSse(
+          await this.writeBoundSse(
             response,
             {
               type: 'turn.completed',
@@ -187,16 +194,18 @@ export class AiController {
               },
             },
             eventSequence + 1,
+            prepared.execution,
             prepared.execution.signal,
           );
         } else {
-          await writeSse(
+          await this.writeBoundSse(
             response,
             failedEvent(
               prepared.turn.id,
               new AppError(ERROR_CODES.DATABASE_ERROR, 500, '安全响应未能保存'),
             ),
             eventSequence + 1,
+            prepared.execution,
             prepared.execution.signal,
           );
         }
@@ -216,16 +225,23 @@ export class AiController {
         abortController.signal,
       )) {
         eventSequence += 1;
-        await writeSse(response, event, eventSequence, prepared.execution.signal);
+        await this.writeBoundSse(
+          response,
+          event,
+          eventSequence,
+          prepared.execution,
+          prepared.execution.signal,
+        );
       }
     } catch (error) {
       if (!response.destroyed && !response.writableEnded) {
         eventSequence += 1;
         try {
-          await writeSse(
+          await this.writeBoundSse(
             response,
             failedEvent(prepared.turn.id, error),
             eventSequence,
+            prepared.execution,
             prepared.execution.signal,
           );
         } catch {
@@ -278,16 +294,17 @@ export class AiController {
     let eventSequence = 0;
     if (prepared.kind === 'trusted') {
       try {
-        await writeSse(
+        await this.writeBoundSse(
           response,
           {
             type: 'turn.started',
             data: { mode: 'incognito', generationId: prepared.generation.id },
           },
           ++eventSequence,
+          prepared.execution,
           prepared.generation.signal,
         );
-        await writeSse(
+        await this.writeBoundSse(
           response,
           {
             type: 'message.segment',
@@ -299,9 +316,10 @@ export class AiController {
             },
           },
           ++eventSequence,
+          prepared.execution,
           prepared.generation.signal,
         );
-        await writeSse(
+        await this.writeBoundSse(
           response,
           {
             type: 'turn.completed',
@@ -312,6 +330,7 @@ export class AiController {
             },
           },
           ++eventSequence,
+          prepared.execution,
           prepared.generation.signal,
         );
       } catch {
@@ -330,15 +349,22 @@ export class AiController {
         abortController.signal,
       )) {
         eventSequence += 1;
-        await writeSse(response, event, eventSequence, prepared.generation.signal);
+        await this.writeBoundSse(
+          response,
+          event,
+          eventSequence,
+          prepared.execution,
+          prepared.generation.signal,
+        );
       }
     } catch (error) {
       if (!prepared.generation.signal.aborted && !response.destroyed && !response.writableEnded) {
         try {
-          await writeSse(
+          await this.writeBoundSse(
             response,
             incognitoFailedEvent(prepared.generation.id, error),
             ++eventSequence,
+            prepared.execution,
             prepared.generation.signal,
           );
         } catch {
@@ -349,5 +375,16 @@ export class AiController {
       response.removeListener('close', onClose);
       if (!response.writableEnded && !response.destroyed) response.end();
     }
+  }
+
+  private async writeBoundSse(
+    response: Response,
+    event: AiStreamEvent,
+    sequence: number,
+    execution: ConsentBoundExecution,
+    signal: AbortSignal,
+  ): Promise<void> {
+    await this.consentExecutions.assertStillUsable(execution);
+    await writeSse(response, event, sequence, signal);
   }
 }

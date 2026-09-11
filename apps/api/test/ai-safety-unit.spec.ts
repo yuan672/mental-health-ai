@@ -15,10 +15,29 @@ import { RiskDecisionPolicy } from '../src/safety/risk/risk-decision.policy';
 import { LlmRiskClassifier, type RiskClassifierResult } from '../src/safety/risk/risk-classifier';
 import type { SafetyProductionReadinessService } from '../src/safety/readiness/safety-production-readiness.service';
 import { TrustedSafetyTemplateRegistry } from '../src/safety/templates/trusted-safety-template.registry';
+import type { ConsentExecutionCoordinator } from '../src/consents/runtime/consent-execution.coordinator';
+import type { ConsentBoundExecution } from '../src/ai/runtime/active-ai-execution.registry';
 
 const detector = new DeterministicSignalDetector();
 const outputDetector = new DeterministicOutputSignalDetector();
 const policy = new RiskDecisionPolicy();
+const TEST_EXECUTION: ConsentBoundExecution = {
+  id: '11111111-1111-4111-8111-111111111111',
+  userId: 'test-user',
+  sessionId: 'test-session',
+  signal: new AbortController().signal,
+  deadlineAt: new Date(Date.now() + 60_000),
+  dependencies: [],
+  abort: () => undefined,
+  dispose: () => undefined,
+};
+const DIRECT_CONSENT_EXECUTIONS = {
+  starter:
+    (_execution: ConsentBoundExecution, _kind: string, signal: AbortSignal) =>
+    async <T>(startTransport: (transportSignal: AbortSignal) => T) => ({
+      transport: startTransport(signal),
+    }),
+} as unknown as ConsentExecutionCoordinator;
 
 function context(content: string) {
   return {
@@ -286,9 +305,14 @@ describe('safety classifier timeouts', () => {
       },
     } as unknown as LLMProvider;
     try {
-      const classifier = new LlmRiskClassifier(provider, prompts);
+      const classifier = new LlmRiskClassifier(provider, prompts, DIRECT_CONSENT_EXECUTIONS);
       await expect(
-        classifier.classify('test-turn', context('普通压力表达'), new AbortController().signal),
+        classifier.classify(
+          'test-turn',
+          context('普通压力表达'),
+          new AbortController().signal,
+          TEST_EXECUTION,
+        ),
       ).rejects.toMatchObject({ category: 'timeout' });
     } finally {
       env.SAFETY_CLASSIFIER_TIMEOUT_MS = previous;
@@ -305,11 +329,16 @@ describe('safety classifier timeouts', () => {
       },
     } as unknown as LLMProvider;
     try {
-      const classifier = new LlmOutputSafetyClassifier(provider, prompts);
+      const classifier = new LlmOutputSafetyClassifier(
+        provider,
+        prompts,
+        DIRECT_CONSENT_EXECUTIONS,
+      );
       await expect(
         classifier.classify(
           { candidate: '候选内容', previouslyApprovedText: '', inputRiskLevel: 'LOW' },
           new AbortController().signal,
+          TEST_EXECUTION,
         ),
       ).rejects.toMatchObject({ category: 'timeout' });
     } finally {
@@ -351,16 +380,18 @@ describe('safety classifier timeouts', () => {
     } as unknown as LLMProvider;
     try {
       await expect(
-        new LlmRiskClassifier(provider, prompts).classify(
+        new LlmRiskClassifier(provider, prompts, DIRECT_CONSENT_EXECUTIONS).classify(
           'late-risk-result',
           context('普通压力表达'),
           new AbortController().signal,
+          TEST_EXECUTION,
         ),
       ).rejects.toMatchObject({ category: 'timeout' });
       await expect(
-        new LlmOutputSafetyClassifier(provider, prompts).classify(
+        new LlmOutputSafetyClassifier(provider, prompts, DIRECT_CONSENT_EXECUTIONS).classify(
           { candidate: '候选内容', previouslyApprovedText: '', inputRiskLevel: 'LOW' },
           new AbortController().signal,
+          TEST_EXECUTION,
         ),
       ).rejects.toMatchObject({ category: 'timeout' });
     } finally {

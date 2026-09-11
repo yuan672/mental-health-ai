@@ -149,11 +149,17 @@ describe('Phase 5B product flows', () => {
               type: 'terms_of_service',
               version: 'synthetic-terms-v7',
               displayKey: 'consent.termsOfService',
+              documentKey: 'synthetic.terms-v7',
+              documentRevision: 'test-revision-7',
+              documentUrl: 'https://example.invalid/synthetic/terms/v7',
             },
             {
               type: 'privacy_policy',
               version: 'synthetic-privacy-v8',
               displayKey: 'consent.privacyPolicy',
+              documentKey: 'synthetic.privacy-v8',
+              documentRevision: 'test-revision-8',
+              documentUrl: 'https://example.invalid/synthetic/privacy/v8',
             },
           ],
         });
@@ -181,8 +187,20 @@ describe('Phase 5B product flows', () => {
     );
     expect(submittedBody).toMatchObject({
       consents: [
-        { consentType: 'terms_of_service', consentVersion: 'synthetic-terms-v7', accepted: true },
-        { consentType: 'privacy_policy', consentVersion: 'synthetic-privacy-v8', accepted: true },
+        {
+          consentType: 'terms_of_service',
+          consentVersion: 'synthetic-terms-v7',
+          documentKey: 'synthetic.terms-v7',
+          documentRevision: 'test-revision-7',
+          accepted: true,
+        },
+        {
+          consentType: 'privacy_policy',
+          consentVersion: 'synthetic-privacy-v8',
+          documentKey: 'synthetic.privacy-v8',
+          documentRevision: 'test-revision-8',
+          accepted: true,
+        },
       ],
     });
   });

@@ -1,37 +1,49 @@
-import { randomUUID } from 'node:crypto';
 import type {
-  ConsentHistoryItem,
+  ConsentCurrentItem,
+  ConsentDecisionReceipt,
+  ConsentDocumentEvidenceStatus,
   ConsentHistoryResponse,
+  ConsentMutationRequest,
   ConsentMutationResponse,
-  RequiredConsentStatus,
   ConsentType,
 } from '@mental-health/types';
 import { Injectable } from '@nestjs/common';
 import {
-  ConflictError,
+  ConsentOperationConflictError,
+  ConsentPolicyChangedError,
   ConsentRequiredError,
+  ConsentResultUnknownError,
+  ConsentStateChangedError,
+  ConsentUnavailableError,
   DatabaseError,
   ValidationError,
 } from '../common/errors';
-import { isPostgresUniqueViolation } from '../common/errors/postgres-error';
 import { decodeOpaqueCursor, encodeOpaqueCursor } from '../common/pagination/opaque-cursor';
-import { UsersRepository, type ConsentRecord } from '../users/users.repository';
+import { env } from '../config/env';
+import {
+  ConsentLifecycleRepository,
+  ConsentDocumentIdentityConflictRepositoryError,
+  ConsentOperationConflictRepositoryError,
+  ConsentStateChangedRepositoryError,
+  ConsentTargetInvalidRepositoryError,
+  type ConsentDecisionRecord,
+  type ConsentProjectionRecord,
+} from './consent-lifecycle.repository';
 import { CONSENT_TYPE_VALUES, ConsentPolicyService } from './consent-policy.service';
 import { consentHistoryCursorSchema, type ConsentHistoryQuery } from './consents.schemas';
 import { ConsentWithdrawalCoordinator } from './consent-withdrawal.coordinator';
+import { ConsentCoordinationNotStartedError } from './runtime/per-user-consent-lock';
 
-function toPublicConsent(record: ConsentRecord): ConsentHistoryItem {
-  if (!CONSENT_TYPE_VALUES.some((knownType) => knownType === record.consentType)) {
+const DISPLAY_KEYS = {
+  terms_of_service: 'consent.termsOfService',
+  privacy_policy: 'consent.privacyPolicy',
+} as const;
+
+function asConsentType(value: string): ConsentType {
+  if (!CONSENT_TYPE_VALUES.some((knownType) => knownType === value)) {
     throw new DatabaseError();
   }
-
-  return {
-    consentType: record.consentType as ConsentType,
-    consentVersion: record.consentVersion,
-    status: record.status,
-    acceptedAt: record.acceptedAt.toISOString(),
-    withdrawnAt: record.withdrawnAt?.toISOString() ?? null,
-  };
+  return value as ConsentType;
 }
 
 @Injectable()
@@ -39,164 +51,362 @@ export class ConsentsService {
   constructor(
     private readonly consentPolicy: ConsentPolicyService,
     private readonly withdrawalCoordinator: ConsentWithdrawalCoordinator,
-    private readonly usersRepository: UsersRepository,
+    private readonly lifecycleRepository: ConsentLifecycleRepository,
   ) {}
 
   async list(userId: string, query: ConsentHistoryQuery): Promise<ConsentHistoryResponse> {
     const decoded = decodeOpaqueCursor(query.cursor, consentHistoryCursorSchema);
-    let records: ConsentRecord[];
     try {
-      records = await this.usersRepository.listConsentHistoryPage(
+      const records = await this.lifecycleRepository.listDecisionHistoryPage(
         userId,
         CONSENT_TYPE_VALUES,
         query.limit + 1,
-        decoded ? { acceptedAt: new Date(decoded.acceptedAt), id: decoded.id } : null,
+        decoded ? { occurredAt: new Date(decoded.occurredAt), id: decoded.id } : null,
       );
+      const hasNextPage = records.length > query.limit;
+      const page = records.slice(0, query.limit);
+      const last = page.at(-1);
+      const projections = await this.lifecycleRepository.listProjections(userId);
+      const projectionByPolicy = new Map(
+        projections.map((projection) => [
+          `${projection.consentType}:${projection.consentVersion}`,
+          projection,
+        ]),
+      );
+      const requiredPolicies = this.consentPolicy.getRequiredPolicies();
+      const currentRequiredConsents = await Promise.all(
+        requiredPolicies.map(async (policy) => {
+          const projection =
+            projectionByPolicy.get(`${policy.consentType}:${policy.consentVersion}`) ?? null;
+          return this.toCurrentFromOptionalProjection(
+            userId,
+            policy.consentType,
+            policy.consentVersion,
+            projection,
+          );
+        }),
+      );
+      const currentPolicyKeys = new Set(
+        requiredPolicies.map((policy) => `${policy.consentType}:${policy.consentVersion}`),
+      );
+      const historicalStates = await Promise.all(
+        projections
+          .filter(
+            (projection) =>
+              !currentPolicyKeys.has(`${projection.consentType}:${projection.consentVersion}`),
+          )
+          .sort(
+            (left, right) =>
+              right.effectiveAt.getTime() - left.effectiveAt.getTime() ||
+              left.consentType.localeCompare(right.consentType),
+          )
+          .map((projection) => this.toCurrentFromProjection(projection)),
+      );
+      return {
+        success: true,
+        data: {
+          currentRequiredConsents,
+          consentStates: [...currentRequiredConsents, ...historicalStates],
+          consents: page.map((record) => this.toReceipt(record)),
+          nextCursor:
+            hasNextPage && last
+              ? encodeOpaqueCursor({
+                  kind: 'consent-history',
+                  version: 2,
+                  occurredAt: last.occurredAt.toISOString(),
+                  id: last.id,
+                })
+              : null,
+        },
+      };
     } catch (error) {
-      if (error instanceof DatabaseError) {
+      if (error instanceof ValidationError || error instanceof DatabaseError) {
         throw error;
       }
       throw new DatabaseError();
     }
-
-    const hasNextPage = records.length > query.limit;
-    const page = records.slice(0, query.limit);
-    const last = page.at(-1);
-
-    const currentRequiredConsents = await Promise.all(
-      this.consentPolicy.getRequiredPolicies().map(async (policy) => {
-        let record: ConsentRecord | null;
-        try {
-          record = await this.usersRepository.findConsent(
-            userId,
-            policy.consentType,
-            policy.consentVersion,
-          );
-        } catch {
-          throw new DatabaseError();
-        }
-        const status: RequiredConsentStatus = record?.status ?? 'not_accepted';
-        return {
-          consentType: policy.consentType,
-          consentVersion: policy.consentVersion,
-          status,
-          acceptedAt: record?.acceptedAt.toISOString() ?? null,
-          withdrawnAt: record?.withdrawnAt?.toISOString() ?? null,
-        };
-      }),
-    );
-
-    return {
-      success: true,
-      data: {
-        currentRequiredConsents,
-        consents: page.map(toPublicConsent),
-        nextCursor:
-          hasNextPage && last
-            ? encodeOpaqueCursor({
-                kind: 'consent-history',
-                version: 1,
-                acceptedAt: last.acceptedAt.toISOString(),
-                id: last.id,
-              })
-            : null,
-      },
-    };
   }
 
   async ensureRequiredConsentsActive(userId: string): Promise<void> {
-    let records: ConsentRecord[];
     try {
-      records = await this.usersRepository.listConsents(userId);
-    } catch {
-      throw new DatabaseError();
-    }
-
-    const active = new Set(
-      records
-        .filter((record) => record.status === 'accepted')
-        .map((record) => `${record.consentType}:${record.consentVersion}`),
-    );
-    const allRequired = this.consentPolicy
-      .getRequiredPolicies()
-      .every((policy) => active.has(`${policy.consentType}:${policy.consentVersion}`));
-    if (!allRequired) {
-      throw new ConsentRequiredError('请先接受当前版本的必要条款后再使用 AI 对话');
-    }
-  }
-
-  async accept(
-    userId: string,
-    consentType: string,
-    consentVersion: string,
-  ): Promise<ConsentMutationResponse> {
-    if (!this.consentPolicy.isKnownConsentType(consentType)) {
-      throw new ValidationError('授权类型无效');
-    }
-    if (!this.consentPolicy.isCurrentRequiredPolicy(consentType, consentVersion)) {
-      throw new ConflictError('只能接受当前政策版本');
-    }
-
-    const existing = await this.usersRepository.findConsent(userId, consentType, consentVersion);
-    if (existing?.status === 'accepted') {
-      return { success: true, data: { consent: toPublicConsent(existing) } };
-    }
-    if (existing?.status === 'withdrawn') {
-      throw new ConflictError('同一政策版本撤回后不能再次接受');
-    }
-
-    const consent: ConsentRecord = {
-      id: randomUUID(),
-      userId,
-      consentType,
-      consentVersion,
-      status: 'accepted',
-      acceptedAt: new Date(),
-      withdrawnAt: null,
-    };
-
-    try {
-      await this.usersRepository.createConsent(consent);
-      return { success: true, data: { consent: toPublicConsent(consent) } };
+      for (const policy of this.consentPolicy.getRequiredPolicies()) {
+        const document = this.consentPolicy
+          .getDocumentRegistry()
+          .findEligible(policy.consentType, policy.consentVersion);
+        const projection = await this.lifecycleRepository.findProjection(
+          userId,
+          policy.consentType,
+          policy.consentVersion,
+        );
+        const acceptance = projection
+          ? await this.lifecycleRepository.findEffectiveAcceptance(
+              userId,
+              policy.consentType,
+              policy.consentVersion,
+            )
+          : null;
+        if (
+          !document ||
+          projection?.status !== 'accepted' ||
+          acceptance?.documentKey !== document.documentKey ||
+          acceptance.documentRevision !== document.documentRevision
+        ) {
+          throw new ConsentRequiredError('请先接受当前版本的必要条款后再使用 AI 对话');
+        }
+      }
     } catch (error) {
-      if (isPostgresUniqueViolation(error)) {
-        throw new ConflictError('该政策版本的授权状态已存在');
+      if (error instanceof ConsentRequiredError) {
+        throw error;
       }
       throw new DatabaseError();
     }
   }
 
-  async withdraw(
-    userId: string,
-    consentType: string,
-    consentVersion: string,
-  ): Promise<ConsentMutationResponse> {
-    if (!this.consentPolicy.isKnownConsentType(consentType)) {
+  async mutate(userId: string, input: ConsentMutationRequest): Promise<ConsentMutationResponse> {
+    if (!this.consentPolicy.isKnownConsentType(input.consentType)) {
       throw new ValidationError('授权类型无效');
     }
-    const existing = await this.usersRepository.findConsent(userId, consentType, consentVersion);
-    if (!existing) {
-      throw new ConflictError('该政策版本尚未接受');
-    }
-    if (existing.status === 'withdrawn') {
-      this.withdrawalCoordinator.cancelUserAiActivity(userId);
-      return { success: true, data: { consent: toPublicConsent(existing) } };
-    }
 
-    const withdrawnAt = new Date();
+    let coordinationStarted = false;
     try {
-      await this.usersRepository.withdrawConsent(existing.id, withdrawnAt);
-    } catch {
-      throw new DatabaseError();
+      const existingOperation = await this.lifecycleRepository.findOperation(
+        userId,
+        input.operationId,
+      );
+      if (existingOperation) {
+        this.lifecycleRepository.assertOperationMatches(existingOperation, input);
+      }
+      if (!existingOperation && input.action === 'accept') {
+        if (
+          !this.consentPolicy.isCurrentRequiredPolicy(input.consentType, input.consentVersion) ||
+          !this.consentPolicy.getDocumentRegistry().matchesEligible(input)
+        ) {
+          throw new ConsentPolicyChangedError();
+        }
+      }
+
+      const signal = AbortSignal.timeout(env.LLM_TOTAL_TIMEOUT_MS);
+      const deadlineAt = new Date(Date.now() + env.LLM_TOTAL_TIMEOUT_MS);
+      coordinationStarted = true;
+      const result = await this.withdrawalCoordinator.mutate(
+        {
+          userId,
+          signal,
+          deadlineAt,
+          mayWithdraw: input.action === 'withdraw',
+          operationPreviouslyCommitted: existingOperation !== null,
+          prepareWithdrawal: async () => {
+            if (input.action !== 'withdraw') return null;
+            const target =
+              existingOperation?.decision === 'withdrawn'
+                ? existingOperation
+                : await this.lifecycleRepository.findWithdrawalDependency(userId, input);
+            const acceptanceDecisionId =
+              target?.decision === 'withdrawn'
+                ? target.targetAcceptanceDecisionId
+                : target?.decision === 'accepted'
+                  ? target.id
+                  : null;
+            return acceptanceDecisionId
+              ? {
+                  acceptanceDecisionId,
+                  consentType: input.consentType,
+                  consentVersion: input.consentVersion,
+                }
+              : null;
+          },
+          resolveCommitted: () =>
+            this.lifecycleRepository.resolveCommittedOperation(userId, input, deadlineAt),
+          isDefiniteRollback: (error) =>
+            error instanceof ConsentOperationConflictRepositoryError ||
+            error instanceof ConsentDocumentIdentityConflictRepositoryError ||
+            error instanceof ConsentStateChangedRepositoryError ||
+            error instanceof ConsentTargetInvalidRepositoryError,
+        },
+        () => this.lifecycleRepository.mutate(userId, input),
+      );
+      return {
+        success: true,
+        data: {
+          receipt: this.toReceipt(result.receipt),
+          current: await this.toCurrentFromProjection(result.current),
+        },
+      };
+    } catch (error) {
+      if (
+        error instanceof ValidationError ||
+        error instanceof ConsentPolicyChangedError ||
+        error instanceof ConsentRequiredError
+      ) {
+        throw error;
+      }
+      if (error instanceof ConsentOperationConflictRepositoryError) {
+        throw new ConsentOperationConflictError();
+      }
+      if (error instanceof ConsentDocumentIdentityConflictRepositoryError) {
+        throw new ConsentPolicyChangedError();
+      }
+      if (error instanceof ConsentStateChangedRepositoryError) {
+        throw new ConsentStateChangedError();
+      }
+      if (error instanceof ConsentTargetInvalidRepositoryError) {
+        throw new ConsentStateChangedError();
+      }
+      if (error instanceof ConsentCoordinationNotStartedError) {
+        throw new ConsentUnavailableError();
+      }
+      if (!coordinationStarted) {
+        throw new ConsentUnavailableError();
+      }
+      throw new ConsentResultUnknownError();
     }
+  }
 
-    this.withdrawalCoordinator.cancelUserAiActivity(userId);
+  private async toCurrentFromProjection(
+    projection: ConsentProjectionRecord,
+  ): Promise<ConsentCurrentItem> {
+    return this.toCurrentFromOptionalProjection(
+      projection.userId,
+      asConsentType(projection.consentType),
+      projection.consentVersion,
+      projection,
+    );
+  }
 
+  private async toCurrentFromOptionalProjection(
+    userId: string,
+    consentType: ConsentType,
+    consentVersion: string,
+    projection: ConsentProjectionRecord | null,
+  ): Promise<ConsentCurrentItem> {
+    const acceptance = await this.lifecycleRepository.findEffectiveAcceptance(
+      userId,
+      consentType,
+      consentVersion,
+    );
+    return this.toCurrent(consentType, consentVersion, projection, acceptance);
+  }
+
+  private toCurrent(
+    consentType: ConsentType,
+    consentVersion: string,
+    projection: ConsentProjectionRecord | null,
+    acceptance: ConsentDecisionRecord | null,
+  ): ConsentCurrentItem {
+    const registry = this.consentPolicy.getDocumentRegistry();
+    const currentPolicy = this.consentPolicy.isCurrentRequiredPolicy(consentType, consentVersion);
+    const eligible = currentPolicy ? registry.findEligible(consentType, consentVersion) : null;
+    const verified = acceptance
+      ? registry.findVerifiedDocument(
+          consentType,
+          consentVersion,
+          acceptance.documentKey,
+          acceptance.documentRevision,
+        )
+      : null;
+    const documentEvidenceStatus = acceptance
+      ? this.documentEvidenceStatus(
+          acceptance.documentKey,
+          acceptance.documentRevision,
+          verified !== null,
+        )
+      : 'unavailable';
+    const active =
+      projection?.status === 'accepted' &&
+      eligible !== null &&
+      acceptance?.documentKey === eligible.documentKey &&
+      acceptance.documentRevision === eligible.documentRevision;
+    const confirmationRequired =
+      currentPolicy && projection?.status === 'accepted' && acceptance !== null && !active;
     return {
-      success: true,
-      data: {
-        consent: toPublicConsent({ ...existing, status: 'withdrawn', withdrawnAt }),
-      },
+      consentType,
+      consentVersion,
+      isCurrentRequired: currentPolicy,
+      status: projection?.status ?? 'not_accepted',
+      stateRevision: projection?.stateRevision ?? 0,
+      effectiveAt: projection?.effectiveAt.toISOString() ?? null,
+      acceptedAt: projection?.acceptedAt.toISOString() ?? null,
+      withdrawnAt: projection?.withdrawnAt?.toISOString() ?? null,
+      documentKey: verified?.documentKey ?? null,
+      documentRevision: verified?.documentRevision ?? null,
+      documentUrl: verified?.documentUrl ?? null,
+      displayKey: verified?.displayKey ?? eligible?.displayKey ?? DISPLAY_KEYS[consentType],
+      documentEvidenceStatus,
+      acceptableDocument: eligible
+        ? {
+            documentKey: eligible.documentKey,
+            documentRevision: eligible.documentRevision,
+            documentUrl: eligible.documentUrl,
+            displayKey: eligible.displayKey,
+          }
+        : null,
+      authorizationStatus: active
+        ? 'active'
+        : confirmationRequired
+          ? 'confirmation_required'
+          : 'inactive',
+      acceptanceEnabled: eligible !== null,
+      withdrawalEnabled: projection?.status === 'accepted',
     };
+  }
+
+  private toReceipt(record: ConsentDecisionRecord): ConsentDecisionReceipt {
+    const registry = this.consentPolicy.getDocumentRegistry();
+    const consentType = asConsentType(record.consentType);
+    const common = {
+      operationId: record.operationId,
+      outcome: record.outcome,
+      consentType,
+      consentVersion: record.consentVersion,
+      priorRevision: record.priorRevision,
+      resultingRevision: record.resultingRevision,
+      occurredAt: record.occurredAt.toISOString(),
+      decisionSource: record.decisionSource,
+    };
+    if (record.decision === 'accepted') {
+      const verified = registry.findVerifiedDocument(
+        consentType,
+        record.consentVersion,
+        record.documentKey,
+        record.documentRevision,
+      );
+      return {
+        ...common,
+        action: 'accept',
+        documentKey: verified?.documentKey ?? null,
+        documentRevision: verified?.documentRevision ?? null,
+        documentEvidenceStatus: this.documentEvidenceStatus(
+          record.documentKey,
+          record.documentRevision,
+          verified !== null,
+        ),
+      };
+    }
+    const verifiedTarget = registry.findVerifiedDocument(
+      consentType,
+      record.consentVersion,
+      record.targetDocumentKey,
+      record.targetDocumentRevision,
+    );
+    return {
+      ...common,
+      action: 'withdraw',
+      targetDocumentKey: verifiedTarget?.documentKey ?? null,
+      targetDocumentRevision: verifiedTarget?.documentRevision ?? null,
+      targetDocumentEvidenceStatus: this.documentEvidenceStatus(
+        record.targetDocumentKey,
+        record.targetDocumentRevision,
+        verifiedTarget !== null,
+      ),
+    };
+  }
+
+  private documentEvidenceStatus(
+    documentKey: string | null,
+    documentRevision: string | null,
+    verified: boolean,
+  ): ConsentDocumentEvidenceStatus {
+    if (!documentKey && !documentRevision) return 'unmapped_legacy';
+    return verified ? 'verified' : 'unavailable';
   }
 }

@@ -90,11 +90,13 @@ export function PrivacyPage() {
                   <span>{consentNames[consent.consentType]}</span>
                   <span>版本 {consent.consentVersion}</span>
                   <strong>
-                    {consent.status === 'accepted'
-                      ? '已接受'
-                      : consent.status === 'withdrawn'
-                        ? '已撤回'
-                        : '尚未接受'}
+                    {consent.authorizationStatus === 'confirmation_required'
+                      ? '需确认当前说明'
+                      : consent.status === 'accepted'
+                        ? '已接受'
+                        : consent.status === 'withdrawn'
+                          ? '已撤回'
+                          : '尚未接受'}
                   </strong>
                 </li>
               ))}
@@ -105,21 +107,21 @@ export function PrivacyPage() {
             <h2 id="consent-history-title">同意记录</h2>
             {history.length === 0 ? <p className="muted">暂无同意记录。</p> : null}
             <ol className="consent-history">
-              {history.map((consent, index) => (
-                <li
-                  key={`${consent.consentType}:${consent.consentVersion}:${consent.acceptedAt}:${index}`}
-                >
+              {history.map((consent) => (
+                <li key={consent.operationId}>
                   <div>
                     <strong>{consentNames[consent.consentType]}</strong>
                     <span>版本 {consent.consentVersion}</span>
                   </div>
                   <div>
-                    <span>接受于 {dateTimeFormatter.format(new Date(consent.acceptedAt))}</span>
-                    {consent.withdrawnAt ? (
-                      <span>撤回于 {dateTimeFormatter.format(new Date(consent.withdrawnAt))}</span>
-                    ) : (
-                      <span>状态：已接受</span>
-                    )}
+                    <span>
+                      {consent.action === 'accept' ? '接受' : '撤回'}于{' '}
+                      {dateTimeFormatter.format(new Date(consent.occurredAt))}
+                    </span>
+                    <span>{consent.outcome === 'applied' ? '状态已更新' : '状态未改变'}</span>
+                    {consent.action === 'accept' && consent.documentKey === null ? (
+                      <span>历史记录未映射到可核验的文档身份</span>
+                    ) : null}
                   </div>
                 </li>
               ))}

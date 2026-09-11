@@ -19,9 +19,11 @@ import { PasswordHasherService } from '../src/auth/password-hasher.service';
 import { hashSessionToken } from '../src/auth/sessions.service';
 import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
 import { env } from '../src/config/env';
+import { ConsentLifecycleRepository } from '../src/consents/consent-lifecycle.repository';
 import { ConsentsService } from '../src/consents/consents.service';
 import { DatabaseService } from '../src/database/database.service';
 import { UsersRepository } from '../src/users/users.repository';
+import { insertConsentFixture } from './consent-fixtures';
 
 const WEB_ORIGIN = 'http://localhost:5173';
 const VALID_PASSWORD = 'Correct-Horse-9-Battery!';
@@ -35,8 +37,20 @@ type AccountCounts = {
 
 function requiredConsents() {
   return [
-    { consentType: 'terms_of_service', consentVersion: '1.0', accepted: true as const },
-    { consentType: 'privacy_policy', consentVersion: '1.0', accepted: true as const },
+    {
+      consentType: 'terms_of_service',
+      consentVersion: '1.0',
+      documentKey: 'synthetic.terms-of-service',
+      documentRevision: 'test-revision-1',
+      accepted: true as const,
+    },
+    {
+      consentType: 'privacy_policy',
+      consentVersion: '1.0',
+      documentKey: 'synthetic.privacy-policy',
+      documentRevision: 'test-revision-1',
+      accepted: true as const,
+    },
   ];
 }
 
@@ -61,6 +75,7 @@ describe('Phase 2A identity and access integration', () => {
   let app: INestApplication;
   let migrationClient: ReturnType<typeof createDatabaseClient>;
   let databaseService: DatabaseService;
+  let consentLifecycle: ConsentLifecycleRepository;
   let consentsService: ConsentsService;
   let usersRepository: UsersRepository;
   let passwordHasher: PasswordHasherService;
@@ -93,6 +108,7 @@ describe('Phase 2A identity and access integration', () => {
     await app.init();
 
     databaseService = moduleRef.get(DatabaseService);
+    consentLifecycle = moduleRef.get(ConsentLifecycleRepository);
     consentsService = moduleRef.get(ConsentsService);
     usersRepository = moduleRef.get(UsersRepository);
     passwordHasher = moduleRef.get(PasswordHasherService);
@@ -152,11 +168,17 @@ describe('Phase 2A identity and access integration', () => {
             type: 'terms_of_service',
             version: '1.0',
             displayKey: 'consent.termsOfService',
+            documentKey: 'synthetic.terms-of-service',
+            documentRevision: 'test-revision-1',
+            documentUrl: 'https://example.invalid/mental-health-ai/synthetic/terms/1.0',
           },
           {
             type: 'privacy_policy',
             version: '1.0',
             displayKey: 'consent.privacyPolicy',
+            documentKey: 'synthetic.privacy-policy',
+            documentRevision: 'test-revision-1',
+            documentUrl: 'https://example.invalid/mental-health-ai/synthetic/privacy/1.0',
           },
         ],
       },
@@ -228,6 +250,8 @@ describe('Phase 2A identity and access integration', () => {
     body.consents[1] = {
       consentType: 'privacy_policy',
       consentVersion: '0.9',
+      documentKey: 'synthetic.privacy-policy',
+      documentRevision: 'test-revision-1',
       accepted: true,
     };
 
@@ -285,8 +309,12 @@ describe('Phase 2A identity and access integration', () => {
         consents: [
           {
             id: randomUUID(),
+            decisionId: randomUUID(),
+            operationId: randomUUID(),
             consentType: 'terms_of_service',
             consentVersion: '1.0',
+            documentKey: 'synthetic.terms-of-service',
+            documentRevision: 'test-revision-1',
             acceptedAt: new Date(),
           },
         ],
@@ -318,8 +346,22 @@ describe('Phase 2A identity and access integration', () => {
         verificationMethod: 'mock',
         verifiedAt: new Date(),
         consents: [
-          { id: randomUUID(), ...duplicateConsent },
-          { id: randomUUID(), ...duplicateConsent },
+          {
+            id: randomUUID(),
+            decisionId: randomUUID(),
+            operationId: randomUUID(),
+            documentKey: 'synthetic.terms-of-service',
+            documentRevision: 'test-revision-1',
+            ...duplicateConsent,
+          },
+          {
+            id: randomUUID(),
+            decisionId: randomUUID(),
+            operationId: randomUUID(),
+            documentKey: 'synthetic.terms-of-service',
+            documentRevision: 'test-revision-1',
+            ...duplicateConsent,
+          },
         ],
       }),
     ).rejects.toBeDefined();
@@ -438,14 +480,12 @@ describe('Phase 2A identity and access integration', () => {
     const setCookies = login.headers['set-cookie'] as unknown as string[];
     const csrfToken = cookieValue(setCookies, 'mh_csrf');
 
-    await usersRepository.createConsent({
-      id: randomUUID(),
+    await insertConsentFixture(databaseService.database, {
       userId: registeredUserId,
       consentType: 'privacy_policy',
       consentVersion: '0.9',
-      status: 'accepted',
       acceptedAt: new Date(Date.now() - 86_400_000),
-      withdrawnAt: null,
+      documentBound: false,
     });
 
     const first = await agent
@@ -485,15 +525,30 @@ describe('Phase 2A identity and access integration', () => {
       .post('/consents')
       .set('Origin', WEB_ORIGIN)
       .set('x-csrf-token', csrfToken)
-      .send({ consentType: 'terms_of_service', consentVersion: '1.0', action: 'accept' })
+      .send({
+        operationId: randomUUID(),
+        action: 'accept',
+        consentType: 'terms_of_service',
+        consentVersion: '1.0',
+        documentKey: 'synthetic.terms-of-service',
+        documentRevision: 'test-revision-1',
+        expectedRevision: 1,
+      })
+      .expect('Cache-Control', 'private, no-store')
       .expect(200);
-    expect(idempotentCurrentAcceptance.body.data.consent).toMatchObject({
+    expect(idempotentCurrentAcceptance.body.data.current).toMatchObject({
       consentType: 'terms_of_service',
       consentVersion: '1.0',
       status: 'accepted',
       withdrawnAt: null,
     });
-    expect(JSON.stringify(idempotentCurrentAcceptance.body.data.consent)).not.toMatch(
+    expect(idempotentCurrentAcceptance.body.data.receipt).toMatchObject({
+      action: 'accept',
+      outcome: 'no_change',
+      priorRevision: 1,
+      resultingRevision: 1,
+    });
+    expect(JSON.stringify(idempotentCurrentAcceptance.body.data.current)).not.toMatch(
       /"(?:id|userId)"/u,
     );
   });
@@ -509,7 +564,15 @@ describe('Phase 2A identity and access integration', () => {
     const csrfToken = cookieValue(setCookies, 'mh_csrf');
 
     await expect(
-      consentsService.accept(registeredUserId, 'research_optional', '1.0'),
+      consentsService.mutate(registeredUserId, {
+        operationId: randomUUID(),
+        action: 'accept',
+        consentType: 'research_optional' as never,
+        consentVersion: '1.0',
+        documentKey: 'synthetic.research-optional',
+        documentRevision: 'synthetic-r1',
+        expectedRevision: 0,
+      }),
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR', statusCode: 400 });
 
     await agent
@@ -523,7 +586,15 @@ describe('Phase 2A identity and access integration', () => {
       .post('/consents')
       .set('Origin', WEB_ORIGIN)
       .set('x-csrf-token', csrfToken)
-      .send({ consentType: 'privacy_policy', consentVersion: '0.9', action: 'accept' })
+      .send({
+        operationId: randomUUID(),
+        action: 'accept',
+        consentType: 'privacy_policy',
+        consentVersion: '0.9',
+        documentKey: 'synthetic.privacy-policy-legacy',
+        documentRevision: 'test-revision-legacy',
+        expectedRevision: 1,
+      })
       .expect(409);
 
     const otherEmail = `consent-owner-${randomUUID()}@example.test`;
@@ -546,16 +617,28 @@ describe('Phase 2A identity and access integration', () => {
       .post('/consents')
       .set('Origin', WEB_ORIGIN)
       .set('x-csrf-token', otherCsrfToken)
-      .send({ consentType: 'privacy_policy', consentVersion: '0.9', action: 'withdraw' })
+      .send({
+        operationId: randomUUID(),
+        action: 'withdraw',
+        consentType: 'privacy_policy',
+        consentVersion: '0.9',
+        expectedRevision: 0,
+      })
       .expect(409);
 
     const withdrawn = await agent
       .post('/consents')
       .set('Origin', WEB_ORIGIN)
       .set('x-csrf-token', csrfToken)
-      .send({ consentType: 'privacy_policy', consentVersion: '0.9', action: 'withdraw' })
+      .send({
+        operationId: randomUUID(),
+        action: 'withdraw',
+        consentType: 'privacy_policy',
+        consentVersion: '0.9',
+        expectedRevision: 1,
+      })
       .expect(200);
-    expect(withdrawn.body.data.consent).toMatchObject({
+    expect(withdrawn.body.data.current).toMatchObject({
       consentType: 'privacy_policy',
       consentVersion: '0.9',
       status: 'withdrawn',
@@ -566,16 +649,74 @@ describe('Phase 2A identity and access integration', () => {
       .post('/consents')
       .set('Origin', WEB_ORIGIN)
       .set('x-csrf-token', csrfToken)
-      .send({ consentType: 'privacy_policy', consentVersion: '0.9', action: 'accept' })
+      .send({
+        operationId: randomUUID(),
+        action: 'accept',
+        consentType: 'privacy_policy',
+        consentVersion: '0.9',
+        documentKey: 'synthetic.privacy-policy-legacy',
+        documentRevision: 'test-revision-legacy',
+        expectedRevision: 2,
+      })
       .expect(409);
 
+    const repeatOperationId = randomUUID();
     const withdrawnAgain = await agent
       .post('/consents')
       .set('Origin', WEB_ORIGIN)
       .set('x-csrf-token', csrfToken)
-      .send({ consentType: 'privacy_policy', consentVersion: '0.9', action: 'withdraw' })
+      .send({
+        operationId: repeatOperationId,
+        action: 'withdraw',
+        consentType: 'privacy_policy',
+        consentVersion: '0.9',
+        expectedRevision: 2,
+      })
       .expect(200);
-    expect(withdrawnAgain.body).toEqual(withdrawn.body);
+    expect(withdrawnAgain.body.data).toMatchObject({
+      receipt: { operationId: repeatOperationId, action: 'withdraw', outcome: 'no_change' },
+      current: { status: 'withdrawn', stateRevision: 2 },
+    });
+  });
+
+  it('distinguishes a mutation that never entered coordination from an unknown committed result', async () => {
+    const agent = request.agent(app.getHttpServer());
+    const login = await agent
+      .post('/auth/login')
+      .set('Origin', WEB_ORIGIN)
+      .send({ email: registeredEmail, password: VALID_PASSWORD })
+      .expect(200);
+    const csrfToken = cookieValue(login.headers['set-cookie'] as unknown as string[], 'mh_csrf');
+    const operationId = randomUUID();
+    const findOperation = jest
+      .spyOn(consentLifecycle, 'findOperation')
+      .mockRejectedValueOnce(new Error('synthetic pre-coordination database failure'));
+
+    try {
+      const response = await agent
+        .post('/consents')
+        .set('Origin', WEB_ORIGIN)
+        .set('x-csrf-token', csrfToken)
+        .send({
+          operationId,
+          action: 'accept',
+          consentType: 'terms_of_service',
+          consentVersion: '1.0',
+          documentKey: 'synthetic.terms-of-service',
+          documentRevision: 'test-revision-1',
+          expectedRevision: 1,
+        })
+        .expect('Cache-Control', 'private, no-store')
+        .expect(503);
+      expect(response.body.error).toEqual({
+        code: 'CONSENT_UNAVAILABLE',
+        message: '授权服务暂时不可用，请稍后重试',
+      });
+    } finally {
+      findOperation.mockRestore();
+    }
+
+    expect(await consentLifecycle.findOperation(registeredUserId, operationId)).toBeNull();
   });
 
   it('revokes logout immediately', async () => {

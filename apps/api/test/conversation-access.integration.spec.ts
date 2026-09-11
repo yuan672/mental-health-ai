@@ -10,12 +10,12 @@ import {
   riskEvents,
   sessions,
   users,
-  consents,
 } from '@mental-health/database';
 import { type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { resolve } from 'node:path';
 import request from 'supertest';
+import { insertRequiredConsentFixtures } from './consent-fixtures';
 import { AppModule } from '../src/app.module';
 import { hashSessionToken } from '../src/auth/sessions.service';
 import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
@@ -92,26 +92,7 @@ describe('Phase 5A conversation access API integration', () => {
       revokedAt: null,
     });
     if (withRequiredConsents) {
-      await database.database.insert(consents).values([
-        {
-          id: randomUUID(),
-          userId,
-          consentType: 'terms_of_service',
-          consentVersion: '1.0',
-          status: 'accepted',
-          acceptedAt: now,
-          withdrawnAt: null,
-        },
-        {
-          id: randomUUID(),
-          userId,
-          consentType: 'privacy_policy',
-          consentVersion: '1.0',
-          status: 'accepted',
-          acceptedAt: now,
-          withdrawnAt: null,
-        },
-      ]);
+      await insertRequiredConsentFixtures(database.database, userId, now);
     }
 
     return {

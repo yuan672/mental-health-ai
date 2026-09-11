@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   aiTurns,
-  and,
-  consents,
+  consentDecisions,
   conversations,
   count,
   createDatabaseClient,
@@ -19,6 +18,7 @@ import type { INestApplication } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { resolve } from 'node:path';
 import request from 'supertest';
+import { insertConsentFixture, insertRequiredConsentFixtures } from './consent-fixtures';
 import { AiOrchestrationService } from '../src/ai/ai-orchestration.service';
 import {
   deriveIncognitoQuotaIdempotencyKey,
@@ -42,6 +42,8 @@ import { hashSessionToken } from '../src/auth/sessions.service';
 import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
 import { env } from '../src/config/env';
 import { ConsentsService } from '../src/consents/consents.service';
+import { ConsentLifecycleRepository } from '../src/consents/consent-lifecycle.repository';
+import { ConsentExecutionCoordinator } from '../src/consents/runtime/consent-execution.coordinator';
 import { DatabaseService } from '../src/database/database.service';
 import { QuotaService } from '../src/quota/quota.service';
 import {
@@ -79,6 +81,7 @@ type ProviderMode = 'success' | 'fail-before-segment' | 'wait-for-release';
 class ControlledGenerationProvider implements LLMProvider {
   mode: ProviderMode = 'success';
   streamCalls = 0;
+  streamSignals: AbortSignal[] = [];
   dispatched = deferred();
   private releaseBarrier = deferred();
 
@@ -86,6 +89,7 @@ class ControlledGenerationProvider implements LLMProvider {
     this.releaseBarrier.resolve();
     this.mode = mode;
     this.streamCalls = 0;
+    this.streamSignals = [];
     this.dispatched = deferred();
     this.releaseBarrier = deferred();
   }
@@ -103,8 +107,8 @@ class ControlledGenerationProvider implements LLMProvider {
     options: LLMCallOptions,
   ): AsyncIterable<LLMProviderStreamEvent> {
     void request;
-    void options;
     this.streamCalls += 1;
+    this.streamSignals.push(options.signal);
     const metadata = { provider: 'fake', model: 'phase5c-fake', requestId: 'safe-trace' };
     this.dispatched.resolve();
     yield { type: 'started', metadata };
@@ -236,6 +240,8 @@ describe('Phase 5C Incognito and privacy API integration', () => {
   let orchestration: AiOrchestrationService;
   let contexts: InMemoryIncognitoContextStore;
   let consentsService: ConsentsService;
+  let consentLifecycle: ConsentLifecycleRepository;
+  let consentExecutions: ConsentExecutionCoordinator;
   let quota: QuotaService;
   const provider = new ControlledGenerationProvider();
   const riskClassifier = new ControlledRiskClassifier();
@@ -274,6 +280,8 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     orchestration = moduleRef.get(AiOrchestrationService);
     contexts = moduleRef.get(InMemoryIncognitoContextStore);
     consentsService = moduleRef.get(ConsentsService);
+    consentLifecycle = moduleRef.get(ConsentLifecycleRepository);
+    consentExecutions = moduleRef.get(ConsentExecutionCoordinator);
     quota = moduleRef.get(QuotaService);
   }, 60_000);
 
@@ -295,24 +303,7 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     const userId = randomUUID();
     await database.database.insert(users).values({ id: userId, createdAt: now });
     if (withRequiredConsents) {
-      await database.database.insert(consents).values([
-        {
-          id: randomUUID(),
-          userId,
-          consentType: 'terms_of_service',
-          consentVersion: env.REQUIRED_TERMS_VERSION,
-          status: 'accepted',
-          acceptedAt: now,
-        },
-        {
-          id: randomUUID(),
-          userId,
-          consentType: 'privacy_policy',
-          consentVersion: env.REQUIRED_PRIVACY_VERSION,
-          status: 'accepted',
-          acceptedAt: now,
-        },
-      ]);
+      await insertRequiredConsentFixtures(database.database, userId, now);
     }
     return createSessionForUser(userId, now);
   }
@@ -345,6 +336,26 @@ describe('Phase 5C Incognito and privacy API integration', () => {
       .set('Origin', WEB_ORIGIN)
       .set('Cookie', auth.cookie)
       .set('x-csrf-token', auth.csrfToken);
+  }
+
+  async function withdrawalRequest(
+    auth: AuthFixture,
+    consentType: 'privacy_policy' | 'terms_of_service',
+  ) {
+    const current = await consentsService.list(auth.userId, { limit: 20 });
+    const consent = current.data.currentRequiredConsents.find(
+      (candidate) => candidate.consentType === consentType,
+    );
+    if (!consent) throw new Error(`Synthetic ${consentType} Consent fixture is missing`);
+    return mutation(auth, '/consents')
+      .send({
+        operationId: randomUUID(),
+        action: 'withdraw',
+        consentType,
+        consentVersion: consent.consentVersion,
+        expectedRevision: consent.stateRevision,
+      })
+      .expect(200);
   }
 
   async function createContext(auth: AuthFixture): Promise<string> {
@@ -409,16 +420,7 @@ describe('Phase 5C Incognito and privacy API integration', () => {
   it('ends idempotently without existence disclosure even after consent withdrawal and AI disablement', async () => {
     const auth = await createAuth();
     const contextId = await createContext(auth);
-    await database.database
-      .update(consents)
-      .set({ status: 'withdrawn', withdrawnAt: new Date() })
-      .where(
-        and(
-          eq(consents.userId, auth.userId),
-          eq(consents.consentType, 'privacy_policy'),
-          eq(consents.consentVersion, env.REQUIRED_PRIVACY_VERSION),
-        ),
-      );
+    await withdrawalRequest(auth, 'privacy_policy');
     env.AI_CHAT_ENABLED = false;
 
     const first = await endContext(auth, contextId)
@@ -430,6 +432,186 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     expect(second.body).toEqual(first.body);
     expect(unknown.body).toEqual(first.body);
     expect(contexts.get(auth.userId, auth.sessionId, contextId)).toBeNull();
+  });
+
+  it('keeps an uncertain committed withdrawal fail closed and replays the same operationId', async () => {
+    const auth = await createAuth();
+    const contextId = await createContext(auth);
+    const operationId = randomUUID();
+    const body = {
+      operationId,
+      action: 'withdraw',
+      consentType: 'privacy_policy',
+      consentVersion: env.REQUIRED_PRIVACY_VERSION,
+      expectedRevision: 1,
+    } as const;
+    const originalClearDependency = contexts.clearDependency.bind(contexts);
+    const clearSpy = jest
+      .spyOn(contexts, 'clearDependency')
+      .mockImplementationOnce(() => {
+        throw new Error('synthetic_cleanup_failure');
+      })
+      .mockImplementation(originalClearDependency);
+    const decisionsBefore = await database.database
+      .select({ value: count() })
+      .from(consentDecisions)
+      .where(eq(consentDecisions.userId, auth.userId));
+
+    try {
+      const uncertain = await mutation(auth, '/consents')
+        .send(body)
+        .expect('Cache-Control', 'private, no-store')
+        .expect(503);
+      expect(uncertain.body.error.code).toBe('CONSENT_RESULT_UNKNOWN');
+      expect(contexts.get(auth.userId, auth.sessionId, contextId)).toBeNull();
+
+      const replay = await mutation(auth, '/consents').send(body).expect(200);
+      expect(replay.body.data).toMatchObject({
+        receipt: { operationId, action: 'withdraw', outcome: 'applied' },
+        current: { status: 'withdrawn', stateRevision: 2 },
+      });
+      expect(contexts.get(auth.userId, auth.sessionId, contextId)).toBeNull();
+      const decisionsAfter = await database.database
+        .select({ value: count() })
+        .from(consentDecisions)
+        .where(eq(consentDecisions.userId, auth.userId));
+      expect(decisionsAfter).toEqual(decisionsBefore.map((row) => ({ value: row.value + 1 })));
+    } finally {
+      clearSpy.mockRestore();
+    }
+  });
+
+  it('fails closed when a committed withdrawal loses its acknowledgement before runtime publication', async () => {
+    provider.reset('wait-for-release');
+    const auth = await createAuth();
+    const contextId = await createContext(auth);
+    const pendingStream = stream(auth, {
+      mode: 'incognito',
+      contextId,
+      clientRequestId: randomUUID(),
+      message: '合成的提交确认丢失竞态输入',
+    }).then((response) => response);
+    await provider.dispatched.promise;
+
+    const operationId = randomUUID();
+    const body = {
+      operationId,
+      action: 'withdraw',
+      consentType: 'privacy_policy',
+      consentVersion: env.REQUIRED_PRIVACY_VERSION,
+      expectedRevision: 1,
+    } as const;
+    const committed = deferred();
+    const dropAcknowledgement = deferred();
+    const originalMutate = consentLifecycle.mutate.bind(consentLifecycle);
+    const mutateSpy = jest
+      .spyOn(consentLifecycle, 'mutate')
+      .mockImplementationOnce(async (...args) => {
+        await originalMutate(...args);
+        committed.resolve();
+        await dropAcknowledgement.promise;
+        throw new Error('synthetic_commit_acknowledgement_lost');
+      })
+      .mockImplementation(originalMutate);
+    const decisionsBefore = await database.database
+      .select({ value: count() })
+      .from(consentDecisions)
+      .where(eq(consentDecisions.userId, auth.userId));
+
+    try {
+      const uncertainPromise = mutation(auth, '/consents')
+        .send(body)
+        .expect(503)
+        .then((response) => response);
+      await committed.promise;
+      const committedOperation = await consentLifecycle.findOperation(auth.userId, operationId);
+      expect(committedOperation).toMatchObject({
+        operationId,
+        decision: 'withdrawn',
+        outcome: 'applied',
+      });
+      expect(contexts.get(auth.userId, auth.sessionId, contextId)).not.toBeNull();
+
+      dropAcknowledgement.resolve();
+      const uncertain = await uncertainPromise;
+      expect(uncertain.body.error.code).toBe('CONSENT_RESULT_UNKNOWN');
+      expect(provider.streamSignals).toHaveLength(1);
+      expect(provider.streamSignals[0]?.aborted).toBe(true);
+      expect(contexts.get(auth.userId, auth.sessionId, contextId)).toBeNull();
+
+      mutateSpy.mockRestore();
+      const replay = await mutation(auth, '/consents').send(body).expect(200);
+      expect(replay.body.data).toMatchObject({
+        receipt: { operationId, action: 'withdraw', outcome: 'applied' },
+        current: { status: 'withdrawn', stateRevision: 2 },
+      });
+      const decisionsAfterReplay = await database.database
+        .select({ value: count() })
+        .from(consentDecisions)
+        .where(eq(consentDecisions.userId, auth.userId));
+      expect(decisionsAfterReplay).toEqual(
+        decisionsBefore.map((row) => ({ value: row.value + 1 })),
+      );
+
+      await mutation(auth, '/consents')
+        .send({
+          operationId: randomUUID(),
+          action: 'accept',
+          consentType: 'privacy_policy',
+          consentVersion: env.REQUIRED_PRIVACY_VERSION,
+          documentKey: 'synthetic.privacy-policy',
+          documentRevision: 'test-revision-1',
+          expectedRevision: 2,
+        })
+        .expect(200);
+      const replacementContextId = await createContext(auth);
+      await mutation(auth, '/consents').send(body).expect(200);
+      expect(contexts.get(auth.userId, auth.sessionId, replacementContextId)).not.toBeNull();
+
+      provider.releaseLateResult();
+      const response = await pendingStream;
+      expect(response.text).not.toContain('这是合成且安全的回复。');
+      expect(response.text).not.toContain('event: turn.completed');
+    } finally {
+      mutateSpy.mockRestore();
+      dropAcknowledgement.resolve();
+      provider.releaseLateResult();
+    }
+  });
+
+  it('replays an old withdrawal without clearing a context bound to later reacceptance', async () => {
+    const auth = await createAuth();
+    const oldContextId = await createContext(auth);
+    const withdrawalOperationId = randomUUID();
+    const withdrawalBody = {
+      operationId: withdrawalOperationId,
+      action: 'withdraw',
+      consentType: 'privacy_policy',
+      consentVersion: env.REQUIRED_PRIVACY_VERSION,
+      expectedRevision: 1,
+    } as const;
+    await mutation(auth, '/consents').send(withdrawalBody).expect(200);
+    expect(contexts.get(auth.userId, auth.sessionId, oldContextId)).toBeNull();
+
+    await mutation(auth, '/consents')
+      .send({
+        operationId: randomUUID(),
+        action: 'accept',
+        consentType: 'privacy_policy',
+        consentVersion: env.REQUIRED_PRIVACY_VERSION,
+        documentKey: 'synthetic.privacy-policy',
+        documentRevision: 'test-revision-1',
+        expectedRevision: 2,
+      })
+      .expect(200);
+    const newContextId = await createContext(auth);
+
+    const replay = await mutation(auth, '/consents').send(withdrawalBody).expect(200);
+    expect(replay.body.data).toMatchObject({
+      receipt: { operationId: withdrawalOperationId, action: 'withdraw', outcome: 'applied' },
+      current: { status: 'accepted', stateRevision: 3 },
+    });
+    expect(contexts.get(auth.userId, auth.sessionId, newContextId)).not.toBeNull();
   });
 
   it('streams a complete LOW Incognito turn with runtime-only identifiers and zero chat rows', async () => {
@@ -486,15 +668,28 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     const firstResponsePromise = stream(auth, requestBody).then((response) => response);
     await provider.dispatched.promise;
 
-    let duplicateResponses: Awaited<ReturnType<typeof stream>>[];
+    const previousGlobalExecutions = env.CONSENT_ACTIVE_EXECUTIONS_MAX_GLOBAL;
+    const previousUserExecutions = env.CONSENT_ACTIVE_EXECUTIONS_MAX_PER_USER;
+    const previousGlobalWaiters = env.CONSENT_LOCK_MAX_WAITERS_GLOBAL;
+    const previousUserWaiters = env.CONSENT_LOCK_MAX_WAITERS_PER_USER;
+    env.CONSENT_ACTIVE_EXECUTIONS_MAX_GLOBAL = Math.max(previousGlobalExecutions, 40);
+    env.CONSENT_ACTIVE_EXECUTIONS_MAX_PER_USER = 20;
+    env.CONSENT_LOCK_MAX_WAITERS_GLOBAL = Math.max(previousGlobalWaiters, 100);
+    env.CONSENT_LOCK_MAX_WAITERS_PER_USER = 50;
+    let responses: Awaited<ReturnType<typeof stream>>[];
     try {
-      duplicateResponses = await Promise.all(
+      const duplicateResponses = await Promise.all(
         Array.from({ length: 19 }, () => stream(auth, requestBody)),
       );
+      provider.releaseLateResult();
+      responses = [await firstResponsePromise, ...duplicateResponses];
     } finally {
       provider.releaseLateResult();
+      env.CONSENT_ACTIVE_EXECUTIONS_MAX_GLOBAL = previousGlobalExecutions;
+      env.CONSENT_ACTIVE_EXECUTIONS_MAX_PER_USER = previousUserExecutions;
+      env.CONSENT_LOCK_MAX_WAITERS_GLOBAL = previousGlobalWaiters;
+      env.CONSENT_LOCK_MAX_WAITERS_PER_USER = previousUserWaiters;
     }
-    const responses = [await firstResponsePromise, ...duplicateResponses];
 
     expect(responses.filter((response) => response.status === 200)).toHaveLength(1);
     expect(responses.filter((response) => response.status === 409)).toHaveLength(19);
@@ -601,12 +796,14 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     const auth = await createAuth();
     const beforeMidnight = new Date('2026-09-09T15:59:59.999Z');
     const afterMidnight = new Date('2026-09-09T16:00:00.000Z');
-    const context = contexts.create(
-      auth.userId,
-      auth.sessionId,
-      new Date('2026-09-10T16:00:00.000Z'),
-      beforeMidnight,
-    );
+    const context = await consentExecutions.createIncognitoContext({
+      userId: auth.userId,
+      sessionId: auth.sessionId,
+      sessionExpiresAt: new Date('2026-09-10T16:00:00.000Z'),
+      signal: new AbortController().signal,
+      deadlineAt: new Date(Date.now() + 30_000),
+      now: beforeMidnight,
+    });
     const clientRequestId = randomUUID();
     const key = deriveIncognitoQuotaIdempotencyKey(auth.userId, auth.sessionId, clientRequestId);
     await quota.consumeQuota(auth.userId, key, beforeMidnight);
@@ -675,12 +872,14 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     provider.reset('wait-for-release');
     const auth = await createAuth();
     const now = new Date();
-    const context = contexts.create(
-      auth.userId,
-      auth.sessionId,
-      new Date(now.getTime() + 100),
+    const context = await consentExecutions.createIncognitoContext({
+      userId: auth.userId,
+      sessionId: auth.sessionId,
+      sessionExpiresAt: new Date(now.getTime() + 100),
+      signal: new AbortController().signal,
+      deadlineAt: new Date(Date.now() + 30_000),
       now,
-    );
+    });
     const prepared = await orchestration.prepareIncognitoTurn(
       { userId: auth.userId, sessionId: auth.sessionId },
       {
@@ -766,18 +965,18 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     expect(contexts.get(auth.userId, auth.sessionId, contextId)).toBeNull();
   });
 
-  it('registers cancellation before consent lookup and clears a query-in-flight context on withdrawal', async () => {
+  it('serializes withdrawal with consent lookup and makes the prepared result unusable', async () => {
     const auth = await createAuth();
     const contextId = await createContext(auth);
     const entered = deferred();
     const release = deferred();
-    const originalEnsure = consentsService.ensureRequiredConsentsActive.bind(consentsService);
-    const ensure = jest
-      .spyOn(consentsService, 'ensureRequiredConsentsActive')
-      .mockImplementationOnce(async (userId) => {
+    const originalFindProjection = consentLifecycle.findProjection.bind(consentLifecycle);
+    const findProjection = jest
+      .spyOn(consentLifecycle, 'findProjection')
+      .mockImplementationOnce(async (...args) => {
         entered.resolve();
         await release.promise;
-        return originalEnsure(userId);
+        return originalFindProjection(...args);
       });
     const preparation = orchestration.prepareIncognitoTurn(
       { userId: auth.userId, sessionId: auth.sessionId },
@@ -791,20 +990,25 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     );
     await entered.promise;
 
-    await mutation(auth, '/consents')
+    const withdrawal = mutation(auth, '/consents')
       .send({
+        operationId: randomUUID(),
+        action: 'withdraw',
         consentType: 'privacy_policy',
         consentVersion: env.REQUIRED_PRIVACY_VERSION,
-        action: 'withdraw',
+        expectedRevision: 1,
       })
       .expect(200);
     release.resolve();
+    await withdrawal;
     await expect(preparation).rejects.toBeDefined();
-    ensure.mockRestore();
+    findProjection.mockRestore();
 
     expect(contexts.get(auth.userId, auth.sessionId, contextId)).toBeNull();
     expect(provider.streamCalls).toBe(0);
-    expect(riskClassifier.calls).toBe(0);
+    // The application-level fake may be entered before withdrawal wins the next lock,
+    // but the revoked execution cannot become usable or dispatch the generation Provider.
+    expect(riskClassifier.calls).toBe(1);
   });
 
   it('cancels after admission but before Provider dispatch without retaining quota', async () => {
@@ -823,7 +1027,18 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     expect(prepared.kind).toBe('ready');
     expect((await quota.getUsage(auth.userId, new Date())).usedCount).toBe(1);
 
-    await consentsService.withdraw(auth.userId, 'privacy_policy', env.REQUIRED_PRIVACY_VERSION);
+    const privacyConsent = await consentsService.list(auth.userId, { limit: 20 });
+    const privacy = privacyConsent.data.currentRequiredConsents.find(
+      (consent) => consent.consentType === 'privacy_policy',
+    );
+    if (!privacy) throw new Error('Synthetic privacy Consent fixture is missing');
+    await consentsService.mutate(auth.userId, {
+      operationId: randomUUID(),
+      action: 'withdraw',
+      consentType: 'privacy_policy',
+      consentVersion: env.REQUIRED_PRIVACY_VERSION,
+      expectedRevision: privacy.stateRevision,
+    });
     await orchestration.cancelPreparedIncognitoTurnBeforeProvider(prepared);
 
     expect(provider.streamCalls).toBe(0);
@@ -844,13 +1059,7 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     const responsePromise = pending.then((response) => response);
     await provider.dispatched.promise;
 
-    await mutation(auth, '/consents')
-      .send({
-        consentType: 'privacy_policy',
-        consentVersion: env.REQUIRED_PRIVACY_VERSION,
-        action: 'withdraw',
-      })
-      .expect(200);
+    await withdrawalRequest(auth, 'privacy_policy');
     provider.releaseLateResult();
 
     const response = await responsePromise;
@@ -883,25 +1092,22 @@ describe('Phase 5C Incognito and privacy API integration', () => {
 
   it('returns sanitized current consent state and bounded cursor history with no-store', async () => {
     const auth = await createAuth();
-    await database.database.insert(consents).values([
-      {
-        id: randomUUID(),
-        userId: auth.userId,
-        consentType: 'terms_of_service',
-        consentVersion: '0.9',
-        status: 'withdrawn',
-        acceptedAt: new Date(Date.now() - 20_000),
-        withdrawnAt: new Date(Date.now() - 10_000),
-      },
-      {
-        id: randomUUID(),
-        userId: auth.userId,
-        consentType: 'privacy_policy',
-        consentVersion: '0.9',
-        status: 'accepted',
-        acceptedAt: new Date(Date.now() - 30_000),
-      },
-    ]);
+    await insertConsentFixture(database.database, {
+      userId: auth.userId,
+      consentType: 'terms_of_service',
+      consentVersion: '0.9',
+      status: 'withdrawn',
+      acceptedAt: new Date(Date.now() - 20_000),
+      withdrawnAt: new Date(Date.now() - 10_000),
+      documentBound: false,
+    });
+    await insertConsentFixture(database.database, {
+      userId: auth.userId,
+      consentType: 'privacy_policy',
+      consentVersion: '0.9',
+      acceptedAt: new Date(Date.now() - 30_000),
+      documentBound: false,
+    });
 
     const first = await request(app.getHttpServer())
       .get('/consents?limit=2')
@@ -913,12 +1119,54 @@ describe('Phase 5C Incognito and privacy API integration', () => {
         expect.objectContaining({
           consentType: 'terms_of_service',
           consentVersion: env.REQUIRED_TERMS_VERSION,
+          isCurrentRequired: true,
           status: 'accepted',
+          documentEvidenceStatus: 'verified',
+          acceptableDocument: expect.objectContaining({
+            documentKey: 'synthetic.terms-of-service',
+            documentRevision: 'test-revision-1',
+          }),
         }),
         expect.objectContaining({
           consentType: 'privacy_policy',
           consentVersion: env.REQUIRED_PRIVACY_VERSION,
+          isCurrentRequired: true,
           status: 'accepted',
+          documentEvidenceStatus: 'verified',
+          acceptableDocument: expect.objectContaining({
+            documentKey: 'synthetic.privacy-policy',
+            documentRevision: 'test-revision-1',
+          }),
+        }),
+      ]),
+    );
+    expect(first.body.data.consentStates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          consentType: 'terms_of_service',
+          consentVersion: '0.9',
+          isCurrentRequired: false,
+          status: 'withdrawn',
+          stateRevision: 2,
+          documentKey: null,
+          documentRevision: null,
+          documentEvidenceStatus: 'unmapped_legacy',
+          acceptableDocument: null,
+          acceptanceEnabled: false,
+          withdrawalEnabled: false,
+        }),
+        expect.objectContaining({
+          consentType: 'privacy_policy',
+          consentVersion: '0.9',
+          isCurrentRequired: false,
+          status: 'accepted',
+          stateRevision: 1,
+          documentKey: null,
+          documentRevision: null,
+          documentEvidenceStatus: 'unmapped_legacy',
+          acceptableDocument: null,
+          acceptanceEnabled: false,
+          withdrawalEnabled: true,
         }),
       ]),
     );
@@ -933,7 +1181,36 @@ describe('Phase 5C Incognito and privacy API integration', () => {
       .set('Cookie', auth.cookie)
       .expect(200);
     expect(second.body.data.consents).toHaveLength(2);
-    expect(second.body.data.nextCursor).toBeNull();
+    expect(second.body.data.nextCursor).toEqual(expect.any(String));
+    const third = await request(app.getHttpServer())
+      .get(`/consents?limit=2&cursor=${encodeURIComponent(second.body.data.nextCursor as string)}`)
+      .set('Cookie', auth.cookie)
+      .expect(200);
+    expect(third.body.data.consents).toHaveLength(1);
+    expect(third.body.data.nextCursor).toBeNull();
+    const history = [
+      ...first.body.data.consents,
+      ...second.body.data.consents,
+      ...third.body.data.consents,
+    ] as Array<Record<string, unknown>>;
+    expect(history).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: 'accept',
+          consentVersion: '0.9',
+          documentKey: null,
+          documentRevision: null,
+          documentEvidenceStatus: 'unmapped_legacy',
+        }),
+        expect.objectContaining({
+          action: 'withdraw',
+          consentVersion: '0.9',
+          targetDocumentKey: null,
+          targetDocumentRevision: null,
+          targetDocumentEvidenceStatus: 'unmapped_legacy',
+        }),
+      ]),
+    );
   });
 
   it('rejects implicit and mixed persistent/Incognito request shapes before any classifier or Provider call', async () => {

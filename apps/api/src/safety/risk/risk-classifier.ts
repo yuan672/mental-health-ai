@@ -18,6 +18,8 @@ import {
   type RiskReasonCode,
   type SafetyAssessmentContext,
 } from '../safety.types';
+import type { ConsentBoundExecution } from '../../ai/runtime/active-ai-execution.registry';
+import { ConsentExecutionCoordinator } from '../../consents/runtime/consent-execution.coordinator';
 
 export const RISK_CLASSIFIER = Symbol('RISK_CLASSIFIER');
 
@@ -51,6 +53,7 @@ export interface RiskClassifier {
     requestId: string,
     context: SafetyAssessmentContext,
     signal: AbortSignal,
+    execution: ConsentBoundExecution,
   ): Promise<RiskClassifierResult>;
 }
 
@@ -59,12 +62,14 @@ export class LlmRiskClassifier implements RiskClassifier {
   constructor(
     @Inject(LLM_PROVIDER) private readonly provider: LLMProvider,
     private readonly prompts: PromptService,
+    private readonly consentExecutions: ConsentExecutionCoordinator,
   ) {}
 
   async classify(
     requestId: string,
     context: SafetyAssessmentContext,
     signal: AbortSignal,
+    execution: ConsentBoundExecution,
   ): Promise<RiskClassifierResult> {
     const prompt = this.prompts.getRiskClassificationPrompt();
     const timeoutSignal = AbortSignal.timeout(env.SAFETY_CLASSIFIER_TIMEOUT_MS);
@@ -76,7 +81,14 @@ export class LlmRiskClassifier implements RiskClassifier {
           messages: [{ role: 'system', content: prompt.content }, ...context.messages],
           maxOutputTokens: Math.min(512, env.LLM_MAX_OUTPUT_TOKENS),
         },
-        { signal: combinedSignal },
+        {
+          signal: combinedSignal,
+          startTransport: this.consentExecutions.starter(
+            execution,
+            'risk_classification',
+            combinedSignal,
+          ),
+        },
       );
       if (signal.aborted) throw signal.reason;
       if (timeoutSignal.aborted) {

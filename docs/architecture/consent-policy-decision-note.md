@@ -1,18 +1,20 @@
 # Consent Lifecycle Product and Technical Decision Note
 
-- Status: Engineering/product architecture accepted — backend implementation and
-  production policy/legal approvals pending
-- Scope: Phase 5C Consent lifecycle design only
+- Status: Engineering/product architecture accepted — backend implementation
+  complete in PR #14; Privacy action UI and production policy/legal approvals
+  pending
+- Scope: Phase 5C Consent lifecycle design and backend delivery record
 - Current source of truth: ADR-016 (Accepted), with the documented narrow partial
   supersession of ADR-011 and ADR-015
 
 ## 1. Purpose and limits
 
 This note records the accepted engineering/product lifecycle for accepting,
-withdrawing, and later re-accepting a current Consent version. The backend
-implementation, database migration, Privacy controls, and production content are
-not yet complete. Acceptance of the design does not change production safety
-state or imply legal approval.
+withdrawing, and later re-accepting a current Consent version. The implementation
+change set containing this update supplies the backend lifecycle, database
+migration, and single-process runtime coordination. The complete Privacy action
+UI and production content are not yet complete. Engineering delivery does not
+change production safety state or imply legal approval.
 
 The proposal separates product behavior from legal approval. Policy copy,
 third-party AI processing notices, retention, and the legal classification of
@@ -26,7 +28,7 @@ Project control status remains unchanged:
 - `productionSafe=false`
 - Real Model Safety Evaluation: Not Evaluated
 
-## 2. Current implemented behavior
+## 2. Implemented backend behavior
 
 ### Required Consent and registration
 
@@ -43,21 +45,13 @@ Project control status remains unchanged:
 
 ### Current storage and lifecycle
 
-The `consents` table has one row per
-`(user_id, consent_type, consent_version)`. The row stores `accepted_at`, current
-`status`, and optional `withdrawn_at`.
-
-- Accepting a missing current version inserts an accepted row.
-- Accepting an already accepted version is idempotent.
-- Withdrawing an accepted current or historical row changes it to `withdrawn`.
-- Repeating withdrawal returns the same public result, but currently invokes the
-  runtime cancellation coordinator again.
-- A withdrawn version cannot be re-accepted because the unique row already
-  exists and the application returns a conflict.
-- A later policy version creates a separate row.
-
-This one-row model cannot preserve more than one accept/withdraw cycle for the
-same version.
+The `consents` table remains one current-state projection per
+`(user_id, consent_type, consent_version)` and now carries a monotonic state
+revision and effective time. `consent_decisions` stores immutable applied and
+`no_change` receipts for registration, acceptance, withdrawal, exact replay, and
+concurrency resolution. Same-version re-acceptance creates a new applied decision
+without altering earlier accept/withdraw evidence. Migration backfill preserves
+legacy rows with `legacy_backfill` source and no invented document identity.
 
 ### Effect on AI and other product capabilities
 
@@ -66,25 +60,29 @@ A missing, withdrawn, or stale-version authorization blocks new AI requests.
 Authentication, Privacy/history views, and ordinary history deletion remain
 separate capabilities.
 
-On every successful withdrawal of a known owned Consent row, including a
-historical version, the current process aborts all active AI executions for that
-user and clears all of that user's Incognito contexts. Execution registration
-before Consent validation and late-result guards prevent Provider output from
-being delivered after cancellation. Cross-instance cancellation is not provided.
+Each AI execution and idle Incognito context binds the exact applied acceptance
+decisions used for admission. A withdrawal cancels or clears only runtime work
+that depends on its target acceptance. The same-process dispatch guard orders the
+final authorization check with the synchronous outbound `fetch()` initiation;
+network waiting is outside the lock, and late-result barriers still prevent
+delivery and persistence after revocation. Cross-instance cancellation is not
+provided.
 
 ### Current public surface
 
 - `GET /consents`: authenticated, private/no-store, sanitized current state and
-  cursor-paginated history.
+  cursor-paginated history. It separately returns current environment-eligible
+  acceptance documents and authoritative current revisions for all owned policy
+  projections.
 - `POST /consents`: authenticated and CSRF-protected accept/withdraw mutation.
 - `/app/privacy`: read-only current/history presentation. It has no user-facing
   accept, withdraw, or restore controls.
-- Registration requirements provide display keys, not an approved policy-content
-  repository.
+- Registration requirements expose the exact eligible document identity and
+  display metadata, not a policy CMS or production approval record.
 
-These are current implementation facts. The accepted same-version recovery flow
-below remains unimplemented until the dedicated backend and Privacy UI batches
-land.
+These are current implementation facts for the backend delivery. The user-facing
+withdraw/re-accept/new-version flows below remain unimplemented until the
+dedicated Privacy UI batch lands.
 
 ## 3. Recommended product decisions
 
@@ -955,6 +953,10 @@ Phase 5D/5E/6 work is implied.
   context deletion, or TTL cleanup and remain within configured bounds.
 - Logout/session expiry/current withdrawal cleanup remains correct.
 - Existing quota/idempotency, safety, late callback, and memory-capacity tests pass.
+- A database-visible withdrawal followed by lost commit acknowledgement publishes
+  the exact revoked dependency before the unknown result is returned, aborts
+  in-flight work, clears matching idle Incognito state, and remains exactly
+  replayable. A confirmed rollback does not publish a false revocation.
 - Single-process coverage is labelled accurately; cross-instance behavior is not
   claimed.
 
@@ -1012,6 +1014,8 @@ implementing and testing the architecture with synthetic fixtures:
 
 These production-only decisions do not prevent engineering validation with
 synthetic fixtures, but they continue to keep production acceptance and AI use
-fail closed. Until the backend implementation and migration land, the currently
-deployed ADR-011 behavior remains the runtime behavior even though ADR-016 is now
-the accepted target architecture.
+fail closed. The backend implementation and migration in PR #14 enforce ADR-016,
+including environment-filtered evidence presentation, an explicit current
+acceptable-document contract, authoritative historical projection revisions, and
+single-process acknowledgement-loss reconciliation. Phase 5C remains incomplete
+until the Privacy action UI is implemented and reviewed.

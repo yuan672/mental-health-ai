@@ -10,6 +10,7 @@ import {
   RealPreGenerationSafetyGate,
 } from '../ai/safety/safety-gates';
 import { ConversationModule } from '../conversations/conversation.module';
+import { ConsentsModule } from '../consents/consents.module';
 import { MessageModule } from '../messages/message.module';
 import { AuditModule } from './audit/audit.module';
 import { SafetyContextBuilder } from './context/safety-context.builder';
@@ -41,6 +42,7 @@ import { TrustedSafetyTemplateRegistry } from './templates/trusted-safety-templa
 @Module({
   imports: [
     ConversationModule,
+    ConsentsModule,
     AuditModule,
     IncognitoRuntimeModule,
     LlmProviderModule,

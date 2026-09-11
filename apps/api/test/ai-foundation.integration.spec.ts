@@ -3,7 +3,6 @@ import {
   aiTurns,
   and,
   auditLogs,
-  consents,
   conversations,
   count,
   createDatabaseClient,
@@ -18,9 +17,11 @@ import { type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { resolve } from 'node:path';
 import request from 'supertest';
+import { insertConsentFixture, insertRequiredConsentFixtures } from './consent-fixtures';
 import { AiOrchestrationService } from '../src/ai/ai-orchestration.service';
 import { ConversationContextService } from '../src/ai/context/conversation-context.service';
 import { IncognitoGenerationAdmissionService } from '../src/ai/incognito/incognito-generation-admission.service';
+import { ConsentExecutionCoordinator } from '../src/consents/runtime/consent-execution.coordinator';
 import {
   deriveIncognitoQuotaIdempotencyKey,
   InMemoryIncognitoContextStore,
@@ -235,6 +236,7 @@ describe('Phase 3 AI foundation integration', () => {
   let turnsService: AiTurnService;
   let incognitoStore: InMemoryIncognitoContextStore;
   let incognitoAdmission: IncognitoGenerationAdmissionService;
+  let consentExecutions: ConsentExecutionCoordinator;
   const provider = new FakeStreamingProvider();
   const postGate = new RecordingPostGenerationGate();
   const preGate = new AllowingPreGenerationGate();
@@ -278,6 +280,7 @@ describe('Phase 3 AI foundation integration', () => {
     turnsService = moduleRef.get(AiTurnService);
     incognitoStore = moduleRef.get(InMemoryIncognitoContextStore);
     incognitoAdmission = moduleRef.get(IncognitoGenerationAdmissionService);
+    consentExecutions = moduleRef.get(ConsentExecutionCoordinator);
   }, 60_000);
 
   beforeEach(() => {
@@ -294,24 +297,7 @@ describe('Phase 3 AI foundation integration', () => {
     const userId = randomUUID();
     await databaseService.database.insert(users).values({ id: userId, createdAt: BASE_NOW });
     if (withConsent) {
-      await databaseService.database.insert(consents).values([
-        {
-          id: randomUUID(),
-          userId,
-          consentType: 'terms_of_service',
-          consentVersion: '1.0',
-          status: 'accepted',
-          acceptedAt: BASE_NOW,
-        },
-        {
-          id: randomUUID(),
-          userId,
-          consentType: 'privacy_policy',
-          consentVersion: '1.0',
-          status: 'accepted',
-          acceptedAt: BASE_NOW,
-        },
-      ]);
+      await insertRequiredConsentFixtures(databaseService.database, userId, BASE_NOW);
     }
     return userId;
   }
@@ -807,41 +793,34 @@ describe('Phase 3 AI foundation integration', () => {
     const withdrawnConsentUser = await createUser(false);
     const outdatedConsentUser = await createUser(false);
 
-    await databaseService.database.insert(consents).values([
-      {
-        id: randomUUID(),
-        userId: withdrawnConsentUser,
-        consentType: 'terms_of_service',
-        consentVersion: '1.0',
-        status: 'accepted',
-        acceptedAt: BASE_NOW,
-      },
-      {
-        id: randomUUID(),
-        userId: withdrawnConsentUser,
-        consentType: 'privacy_policy',
-        consentVersion: '1.0',
-        status: 'withdrawn',
-        acceptedAt: BASE_NOW,
-        withdrawnAt: BASE_NOW,
-      },
-      {
-        id: randomUUID(),
-        userId: outdatedConsentUser,
-        consentType: 'terms_of_service',
-        consentVersion: '0.9',
-        status: 'accepted',
-        acceptedAt: BASE_NOW,
-      },
-      {
-        id: randomUUID(),
-        userId: outdatedConsentUser,
-        consentType: 'privacy_policy',
-        consentVersion: '0.9',
-        status: 'accepted',
-        acceptedAt: BASE_NOW,
-      },
-    ]);
+    await insertConsentFixture(databaseService.database, {
+      userId: withdrawnConsentUser,
+      consentType: 'terms_of_service',
+      consentVersion: '1.0',
+      acceptedAt: BASE_NOW,
+    });
+    await insertConsentFixture(databaseService.database, {
+      userId: withdrawnConsentUser,
+      consentType: 'privacy_policy',
+      consentVersion: '1.0',
+      status: 'withdrawn',
+      acceptedAt: BASE_NOW,
+      withdrawnAt: BASE_NOW,
+    });
+    await insertConsentFixture(databaseService.database, {
+      userId: outdatedConsentUser,
+      consentType: 'terms_of_service',
+      consentVersion: '0.9',
+      acceptedAt: BASE_NOW,
+      documentBound: false,
+    });
+    await insertConsentFixture(databaseService.database, {
+      userId: outdatedConsentUser,
+      consentType: 'privacy_policy',
+      consentVersion: '0.9',
+      acceptedAt: BASE_NOW,
+      documentBound: false,
+    });
 
     for (const userId of [missingConsentUser, withdrawnConsentUser, outdatedConsentUser]) {
       await expect(
@@ -980,6 +959,7 @@ describe('Phase 3 AI foundation integration', () => {
       userId,
       sessionId,
       new Date(BASE_NOW.getTime() + 60_000),
+      [],
       BASE_NOW,
     );
     const generation = incognitoStore.claimGeneration(
@@ -1018,6 +998,7 @@ describe('Phase 3 AI foundation integration', () => {
       userId,
       sessionId,
       new Date(BASE_NOW.getTime() + 60_000),
+      [],
       BASE_NOW,
     );
     const quotaIdempotencyKey = deriveIncognitoQuotaIdempotencyKey(
@@ -1029,6 +1010,12 @@ describe('Phase 3 AI foundation integration', () => {
     await quotaService.consumeQuota(userId, quotaIdempotencyKey, BASE_NOW);
     expect(incognitoStore.end(userId, sessionId, context.id)).toBe(true);
 
+    const pendingExecution = consentExecutions.registerPending({
+      userId,
+      sessionId,
+      clientSignal: new AbortController().signal,
+    });
+    const execution = await consentExecutions.bindRequired(pendingExecution);
     await expect(
       incognitoAdmission.claim({
         userId,
@@ -1037,9 +1024,11 @@ describe('Phase 3 AI foundation integration', () => {
         clientRequestId,
         message: 'must-not-reach-provider-after-context-loss',
         signal: new AbortController().signal,
+        execution,
         now: BASE_NOW,
       }),
     ).rejects.toMatchObject({ code: 'AI_INCOGNITO_CONTEXT_LOST', statusCode: 409 });
+    execution.dispose();
 
     expect(provider.streamCalls).toBe(0);
     expect(await quotaService.getUsage(userId, BASE_NOW)).toMatchObject({ usedCount: 1 });
