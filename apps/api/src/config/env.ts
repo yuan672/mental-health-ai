@@ -23,6 +23,8 @@ const environmentSchema = z
       .refine((value) => value.startsWith('postgresql://') || value.startsWith('postgres://'), {
         message: 'DATABASE_URL must be a PostgreSQL connection string',
       }),
+    DATABASE_CONNECTION_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+    DATABASE_QUERY_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),

@@ -54,6 +54,8 @@ export class GroundedCompletionReconciliationError extends Error {
   }
 }
 
+const AI_TURN_SETTLEMENT_TIMEOUT_MS = 5_000;
+
 function activeOwnedConversation(userId: string, conversationId: string, now: Date) {
   return and(
     eq(conversations.id, conversationId),
@@ -646,13 +648,33 @@ export class AiTurnRepository {
     now: Date;
   }): Promise<void> {
     await this.databaseService.database.transaction(async (transaction) => {
+      const timeout = `${AI_TURN_SETTLEMENT_TIMEOUT_MS}ms`;
+      await transaction.execute(sql`SELECT set_config('lock_timeout', ${timeout}, true)`);
+      await transaction.execute(sql`SELECT set_config('statement_timeout', ${timeout}, true)`);
       const [turn] = await transaction
-        .select({ status: aiTurns.status })
+        .select({ status: aiTurns.status, failureCode: aiTurns.failureCode })
         .from(aiTurns)
         .where(and(eq(aiTurns.id, input.turnId), eq(aiTurns.userId, input.userId)))
         .limit(1)
         .for('update');
-      if (!turn || !['claimed', 'streaming'].includes(turn.status)) return;
+      if (!turn) return;
+
+      // A live worker can observe its no-delivery failure after a replacement
+      // claim has already performed stale-lease recovery. The stale transition
+      // is authoritative, but this worker still owns the evidence needed to
+      // apply the existing no-approved-segment refund rule. A crashed worker
+      // performs no such reconciliation, so stale recovery alone never grants
+      // a speculative refund.
+      if (turn.status === 'failed' && turn.failureCode === 'STALE_TURN') {
+        await this.quotaRepository.refundWithinTransaction(
+          transaction,
+          input.userId,
+          input.turnId,
+          input.now,
+        );
+        return;
+      }
+      if (!['claimed', 'streaming'].includes(turn.status)) return;
 
       await transaction
         .update(aiTurns)

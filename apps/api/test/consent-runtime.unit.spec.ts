@@ -314,6 +314,53 @@ describe('Consent runtime coordination', () => {
     expect(lock.diagnostics()).toEqual({ users: 0, waiters: 0 });
   });
 
+  it('aborts the execution when an execution-aware lock call sees an expired deadline', async () => {
+    const execution = await boundExecution();
+    execution.deadlineAt.setTime(Date.now() - 1);
+
+    await expect(coordinator.assertStillUsable(execution)).rejects.toBeInstanceOf(
+      AiExecutionTotalTimeoutError,
+    );
+    expect(execution.signal.aborted).toBe(true);
+    expect(execution.signal.reason).toBeInstanceOf(AiExecutionTotalTimeoutError);
+    expect(lock.diagnostics()).toEqual({ users: 0, waiters: 0 });
+    execution.dispose();
+  });
+
+  it('rechecks a queued waiter deadline at lock handoff without running its operation', async () => {
+    const held = deferred();
+    const releaseHeld = deferred();
+    const owner = lock.runExclusive(
+      USER_ID,
+      new AbortController().signal,
+      new Date(Date.now() + 10_000),
+      async () => {
+        held.resolve();
+        await releaseHeld.promise;
+      },
+    );
+    await held.promise;
+
+    const deadlineAt = new Date(Date.now() + 5_000);
+    let operationCalls = 0;
+    const waiter = lock.runExclusive(USER_ID, new AbortController().signal, deadlineAt, () => {
+      operationCalls += 1;
+    });
+    expect(lock.diagnostics()).toEqual({ users: 1, waiters: 1 });
+
+    const dateSpy = jest.spyOn(Date, 'now').mockReturnValue(deadlineAt.getTime() + 1);
+    try {
+      releaseHeld.resolve();
+      await owner;
+      await expect(waiter).rejects.toBeInstanceOf(AiExecutionTotalTimeoutError);
+    } finally {
+      dateSpy.mockRestore();
+    }
+
+    expect(operationCalls).toBe(0);
+    expect(lock.diagnostics()).toEqual({ users: 0, waiters: 0 });
+  });
+
   it('publishes an exact withdrawal after a committed operation loses its acknowledgement', async () => {
     const execution = await boundExecution();
     const recovered = { committed: true, replayed: true };

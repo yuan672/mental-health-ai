@@ -10,7 +10,7 @@ import type { Response } from 'express';
 import { AuthenticatedSessionGuard } from '../auth/authenticated-session.guard';
 import type { AuthenticatedRequest } from '../auth/authenticated-request';
 import { CsrfGuard } from '../auth/csrf.guard';
-import { AppError, ERROR_CODES } from '../common/errors';
+import { AIProviderTimeoutError, AppError, ERROR_CODES } from '../common/errors';
 import {
   applyKnowledgeReferenceResponseHeaders,
   parseKnowledgeReferenceCapability,
@@ -18,7 +18,10 @@ import {
 } from '../common/http/knowledge-reference-capability';
 import { ZodValidationPipe } from '../common/validation/zod-validation.pipe';
 import { AiOrchestrationService } from './ai-orchestration.service';
-import type { ConsentBoundExecution } from './runtime/active-ai-execution.registry';
+import {
+  AiExecutionTotalTimeoutError,
+  type ConsentBoundExecution,
+} from './runtime/active-ai-execution.registry';
 import { ConsentExecutionCoordinator } from '../consents/runtime/consent-execution.coordinator';
 import { aiChatRequestSchema, type AiChatRequest } from './ai.schemas';
 import {
@@ -33,6 +36,8 @@ export async function writeSse(
   sequence: number,
   signal: AbortSignal,
   representation: KnowledgeReferenceRepresentation = 'v1',
+  execution?: Pick<ConsentBoundExecution, 'deadlineAt' | 'abort'>,
+  onFrameAccepted?: () => void,
 ): Promise<void> {
   if (signal.aborted) throw signal.reason ?? new Error('AI stream aborted');
   if (response.destroyed || response.writableEnded) throw new Error('AI stream is not writable');
@@ -45,7 +50,15 @@ export async function writeSse(
   const streamId =
     wireEvent.data.mode === 'persistent' ? wireEvent.data.turnId : wireEvent.data.generationId;
   const frame = `id: ${streamId}:${sequence}\nevent: ${wireEvent.type}\ndata: ${JSON.stringify(wireEvent.data)}\n\n`;
-  if (response.write(frame)) return;
+  if (execution && execution.deadlineAt.getTime() <= Date.now()) {
+    const timeout = new AiExecutionTotalTimeoutError();
+    execution.abort(timeout);
+    throw timeout;
+  }
+  if (signal.aborted) throw signal.reason ?? new Error('AI stream aborted');
+  const writableWithoutBackpressure = response.write(frame);
+  onFrameAccepted?.();
+  if (writableWithoutBackpressure) return;
 
   await new Promise<void>((resolve, reject) => {
     const cleanup = (): void => {
@@ -95,6 +108,14 @@ function incognitoFailedEvent(generationId: string, error: unknown): IncognitoAi
       message: appError.message,
     },
   };
+}
+
+function clearUnflushedSseHeaders(response: Response): void {
+  response.removeHeader('X-MH-Knowledge-References');
+  response.removeHeader('Content-Type');
+  response.removeHeader('Cache-Control');
+  response.removeHeader('Connection');
+  response.removeHeader('X-Accel-Buffering');
 }
 
 @Controller('ai')
@@ -147,6 +168,7 @@ export class AiController {
     if (prepared.kind === 'existing') {
       response.removeListener('close', onClose);
       if (response.destroyed || response.writableEnded) return;
+      if (prepared.deadlineAt.getTime() <= Date.now()) throw new AIProviderTimeoutError();
       applyKnowledgeReferenceResponseHeaders(response, representation);
       response.status(200).json({
         success: true,
@@ -164,8 +186,11 @@ export class AiController {
 
     this.orchestration.enforcePreparedExecutionDeadline(prepared);
     if (prepared.execution.signal.aborted || response.destroyed || response.writableEnded) {
+      let cleanupError: unknown;
       try {
         await this.orchestration.cancelPreparedPersistentTurnBeforeProvider(prepared);
+      } catch (error) {
+        cleanupError = error;
       } finally {
         response.removeListener('close', onClose);
       }
@@ -173,6 +198,7 @@ export class AiController {
       if (prepared.execution.signal.aborted) {
         throw this.orchestration.preProviderTerminationError(prepared);
       }
+      if (cleanupError) throw cleanupError;
       return;
     }
 
@@ -182,6 +208,19 @@ export class AiController {
     response.setHeader('Cache-Control', 'no-cache, no-transform');
     response.setHeader('Connection', 'keep-alive');
     response.setHeader('X-Accel-Buffering', 'no');
+    this.orchestration.enforcePreparedExecutionDeadline(prepared);
+    if (prepared.execution.signal.aborted) {
+      try {
+        await this.orchestration.cancelPreparedPersistentTurnBeforeProvider(prepared);
+      } catch {
+        // The typed execution termination remains the client-visible outcome.
+      } finally {
+        response.removeListener('close', onClose);
+      }
+      if (response.destroyed || response.writableEnded) return;
+      clearUnflushedSseHeaders(response);
+      throw this.orchestration.preProviderTerminationError(prepared);
+    }
     response.flushHeaders();
 
     let eventSequence = 0;
@@ -266,6 +305,11 @@ export class AiController {
           eventSequence,
           prepared.execution,
           prepared.execution.signal,
+          event.type === 'message.segment'
+            ? () => {
+                prepared.deliveryState.approvedSegmentWriteAccepted = true;
+              }
+            : undefined,
         );
       }
     } catch (error) {
@@ -320,22 +364,29 @@ export class AiController {
       throw error;
     }
 
-    this.orchestration.enforcePreparedExecutionDeadline(prepared);
+    if (!prepared.generation.signal.aborted) {
+      this.orchestration.enforcePreparedExecutionDeadline(prepared);
+    }
     if (
       prepared.execution.signal.aborted ||
       prepared.generation.signal.aborted ||
       response.destroyed ||
       response.writableEnded
     ) {
+      let cleanupError: unknown;
       try {
         await this.orchestration.cancelPreparedIncognitoTurnBeforeProvider(prepared);
+      } catch (error) {
+        cleanupError = error;
       } finally {
         response.removeListener('close', onClose);
       }
       if (response.destroyed || response.writableEnded) return;
       if (prepared.execution.signal.aborted || prepared.generation.signal.aborted) {
+        clearUnflushedSseHeaders(response);
         throw this.orchestration.preProviderTerminationError(prepared);
       }
+      if (cleanupError) throw cleanupError;
       return;
     }
 
@@ -345,6 +396,24 @@ export class AiController {
     response.setHeader('Cache-Control', 'no-cache, no-transform');
     response.setHeader('Connection', 'keep-alive');
     response.setHeader('X-Accel-Buffering', 'no');
+    if (!prepared.generation.signal.aborted) {
+      this.orchestration.enforcePreparedExecutionDeadline(prepared);
+    }
+    if (prepared.execution.signal.aborted || prepared.generation.signal.aborted) {
+      try {
+        await this.orchestration.cancelPreparedIncognitoTurnBeforeProvider(prepared);
+      } catch {
+        // The typed execution/context termination remains the client-visible outcome.
+      } finally {
+        response.removeListener('close', onClose);
+      }
+      if (response.destroyed || response.writableEnded) return;
+      if (prepared.execution.signal.aborted || prepared.generation.signal.aborted) {
+        clearUnflushedSseHeaders(response);
+        throw this.orchestration.preProviderTerminationError(prepared);
+      }
+      return;
+    }
     response.flushHeaders();
 
     let eventSequence = 0;
@@ -412,6 +481,11 @@ export class AiController {
           eventSequence,
           prepared.execution,
           prepared.generation.signal,
+          event.type === 'message.segment'
+            ? () => {
+                prepared.deliveryState.approvedSegmentWriteAccepted = true;
+              }
+            : undefined,
         );
         if (
           event.type === 'turn.completed' &&
@@ -455,9 +529,10 @@ export class AiController {
     sequence: number,
     execution: ConsentBoundExecution,
     signal: AbortSignal,
+    onFrameAccepted?: () => void,
   ): Promise<void> {
     await this.consentExecutions.assertStillUsable(execution);
     const representation = response.getHeader('X-MH-Knowledge-References') === '1' ? 'v2' : 'v1';
-    await writeSse(response, event, sequence, signal, representation);
+    await writeSse(response, event, sequence, signal, representation, execution, onFrameAccepted);
   }
 }

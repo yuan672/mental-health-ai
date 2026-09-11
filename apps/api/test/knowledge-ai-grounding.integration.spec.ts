@@ -21,6 +21,7 @@ import { Test } from '@nestjs/testing';
 import { resolve } from 'node:path';
 import { AppModule } from '../src/app.module';
 import { AiOrchestrationService } from '../src/ai/ai-orchestration.service';
+import { AiExecutionTotalTimeoutError } from '../src/ai/runtime/active-ai-execution.registry';
 import {
   KNOWLEDGE_AUGMENTATION_CONFIG,
   type KnowledgeAugmentationConfig,
@@ -1006,6 +1007,112 @@ describe('Knowledge-grounded AI integration boundary', () => {
       { role: 'user', content: 'incognitounique' },
       { role: 'assistant', content: provider.groundedAnswer },
     ]);
+  });
+
+  it('refunds an unrecoverable grounded Incognito answer when its first segment is not acknowledged', async () => {
+    const userId = await createUser();
+    const sessionId = randomUUID();
+    await fixtures.publishSynthetic(
+      syntheticManifest('incognito-unacknowledged', 'incognitounackunique'),
+    );
+    const context = await incognitoContexts.create(
+      {
+        id: sessionId,
+        userId,
+        expiresAt: new Date(Date.now() + 60_000),
+        revokedAt: null,
+      },
+      new Date(),
+    );
+    const prepared = await orchestration.prepareIncognitoTurn(
+      { userId, sessionId },
+      {
+        mode: 'incognito',
+        clientRequestId: randomUUID(),
+        contextId: context.id,
+        message: 'incognitounackunique',
+      },
+      new AbortController().signal,
+      new Date(),
+      'v2',
+    );
+    if (prepared.kind !== 'ready') throw new Error('Expected a prepared Incognito turn');
+    const stream = orchestration.streamPreparedIncognitoTurn(
+      prepared,
+      new AbortController().signal,
+    );
+    const iterator = stream[Symbol.asyncIterator]();
+
+    await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'turn.started' } });
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: {
+        type: 'message.segment',
+        data: { deliveryMode: 'commit_with_references' },
+      },
+    });
+    prepared.execution.abort(new AiExecutionTotalTimeoutError());
+    await iterator.return?.();
+    orchestration.retireGroundedIncognitoDelivery(prepared);
+
+    expect(provider.groundedCalls).toBe(1);
+    await expect(quota.getUsage(userId, new Date())).resolves.toMatchObject({ usedCount: 0 });
+    expect(incognitoStore.get(userId, sessionId, context.id, new Date())).toBeNull();
+  });
+
+  it('keeps the charge when Incognito context termination wins after grounded dispatch', async () => {
+    const userId = await createUser();
+    const sessionId = randomUUID();
+    await fixtures.publishSynthetic(
+      syntheticManifest('incognito-context-first', 'incognitocontextfirstunique'),
+    );
+    const context = await incognitoContexts.create(
+      {
+        id: sessionId,
+        userId,
+        expiresAt: new Date(Date.now() + 60_000),
+        revokedAt: null,
+      },
+      new Date(),
+    );
+    provider.pauseGroundedOutput = true;
+    const prepared = await orchestration.prepareIncognitoTurn(
+      { userId, sessionId },
+      {
+        mode: 'incognito',
+        clientRequestId: randomUUID(),
+        contextId: context.id,
+        message: 'incognitocontextfirstunique',
+      },
+      new AbortController().signal,
+      new Date(),
+      'v2',
+    );
+    if (prepared.kind !== 'ready') throw new Error('Expected a prepared Incognito turn');
+    const stream = orchestration.streamPreparedIncognitoTurn(
+      prepared,
+      new AbortController().signal,
+    );
+    const iterator = stream[Symbol.asyncIterator]();
+
+    try {
+      await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'turn.started' } });
+      const pendingSegment = iterator.next();
+      await provider.groundedPartial.promise;
+      expect(incognitoStore.end(userId, sessionId, context.id)).toBe(true);
+      prepared.execution.abort(new AiExecutionTotalTimeoutError());
+      provider.groundedRelease.resolve();
+
+      await expect(pendingSegment).rejects.toMatchObject({
+        code: 'AI_INCOGNITO_CONTEXT_LOST',
+        statusCode: 409,
+      });
+      expect(provider.groundedCalls).toBe(1);
+      await expect(quota.getUsage(userId, new Date())).resolves.toMatchObject({ usedCount: 1 });
+      expect(incognitoStore.get(userId, sessionId, context.id, new Date())).toBeNull();
+    } finally {
+      provider.groundedRelease.resolve();
+      await iterator.return?.();
+    }
   });
 
   it('refunds and releases an Incognito claim when delivery closes after turn.started', async () => {

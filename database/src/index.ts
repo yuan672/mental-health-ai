@@ -3,6 +3,7 @@ export {
   type AppDatabase,
   type AppTransaction,
   type DatabaseClient,
+  type DatabaseClientOptions,
 } from './client.js';
 export {
   and,

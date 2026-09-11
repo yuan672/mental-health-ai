@@ -16,7 +16,10 @@ import { LlmRiskClassifier, type RiskClassifierResult } from '../src/safety/risk
 import type { SafetyProductionReadinessService } from '../src/safety/readiness/safety-production-readiness.service';
 import { TrustedSafetyTemplateRegistry } from '../src/safety/templates/trusted-safety-template.registry';
 import type { ConsentExecutionCoordinator } from '../src/consents/runtime/consent-execution.coordinator';
-import type { ConsentBoundExecution } from '../src/ai/runtime/active-ai-execution.registry';
+import {
+  AiExecutionTotalTimeoutError,
+  type ConsentBoundExecution,
+} from '../src/ai/runtime/active-ai-execution.registry';
 
 const detector = new DeterministicSignalDetector();
 const outputDetector = new DeterministicOutputSignalDetector();
@@ -411,6 +414,7 @@ describe('SSE transport backpressure', () => {
     response.writableEnded = false;
     response.write = jest.fn<boolean, [string]>(() => false);
     let resolved = false;
+    let accepted = false;
     const pending = writeSse(
       response as unknown as Response,
       {
@@ -424,12 +428,18 @@ describe('SSE transport backpressure', () => {
       },
       1,
       new AbortController().signal,
+      'v1',
+      undefined,
+      () => {
+        accepted = true;
+      },
     ).then(() => {
       resolved = true;
     });
 
     await Promise.resolve();
     expect(resolved).toBe(false);
+    expect(accepted).toBe(true);
     expect(response.write).toHaveBeenCalledTimes(1);
     response.emit('drain');
     await pending;
@@ -464,6 +474,43 @@ describe('SSE transport backpressure', () => {
         controller.signal,
       ),
     ).rejects.toThrow('synthetic deadline');
+    expect(response.write).not.toHaveBeenCalled();
+  });
+
+  it('rechecks the wall-clock deadline synchronously immediately before response.write', async () => {
+    const response = new EventEmitter() as EventEmitter & {
+      destroyed: boolean;
+      writableEnded: boolean;
+      write: jest.Mock<boolean, [string]>;
+    };
+    response.destroyed = false;
+    response.writableEnded = false;
+    response.write = jest.fn<boolean, [string]>(() => true);
+    const controller = new AbortController();
+    const execution = {
+      deadlineAt: new Date(Date.now() - 1),
+      abort: (reason?: unknown) => controller.abort(reason),
+    };
+
+    await expect(
+      writeSse(
+        response as unknown as Response,
+        {
+          type: 'message.segment',
+          data: {
+            mode: 'persistent',
+            turnId: '11111111-1111-4111-8111-111111111111',
+            sequence: 1,
+            text: '不得越过总截止时间发送',
+          },
+        },
+        1,
+        controller.signal,
+        'v1',
+        execution,
+      ),
+    ).rejects.toBeInstanceOf(AiExecutionTotalTimeoutError);
+    expect(controller.signal.reason).toBeInstanceOf(AiExecutionTotalTimeoutError);
     expect(response.write).not.toHaveBeenCalled();
   });
 });

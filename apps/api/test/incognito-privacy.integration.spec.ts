@@ -872,6 +872,47 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     ]);
   });
 
+  it('preserves context loss and releases an Incognito claim when refund cleanup fails', async () => {
+    const auth = await createAuth();
+    const contextId = await createContext(auth);
+    const append = jest.spyOn(contexts, 'append').mockReturnValueOnce(null);
+    const refund = jest
+      .spyOn(quota, 'refundQuota')
+      .mockRejectedValue(new Error('synthetic_refund_cleanup_failure'));
+
+    try {
+      await expect(
+        orchestration.prepareIncognitoTurn(
+          { userId: auth.userId, sessionId: auth.sessionId },
+          {
+            mode: 'incognito',
+            contextId,
+            clientRequestId: randomUUID(),
+            message: '合成的退款清理失败输入',
+          },
+          new AbortController().signal,
+        ),
+      ).rejects.toMatchObject({ code: 'AI_INCOGNITO_CONTEXT_LOST', statusCode: 409 });
+    } finally {
+      append.mockRestore();
+      refund.mockRestore();
+    }
+
+    const next = await orchestration.prepareIncognitoTurn(
+      { userId: auth.userId, sessionId: auth.sessionId },
+      {
+        mode: 'incognito',
+        contextId,
+        clientRequestId: randomUUID(),
+        message: '合成的新执行可以再次登记',
+      },
+      new AbortController().signal,
+    );
+    expect(next.kind).toBe('ready');
+    await orchestration.cancelPreparedIncognitoTurnBeforeProvider(next);
+    expect(provider.streamCalls).toBe(0);
+  });
+
   it('cancels an in-flight generation at context session expiry and rejects late output', async () => {
     provider.reset('wait-for-release');
     const auth = await createAuth();
@@ -909,7 +950,10 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     expect(contexts.purgeExpired(new Date(now.getTime() + 101))).toBe(1);
     provider.releaseLateResult();
 
-    await expect(pending).rejects.toMatchObject({ code: 'AI_PROVIDER_UNAVAILABLE' });
+    await expect(pending).rejects.toMatchObject({
+      code: 'AI_INCOGNITO_CONTEXT_LOST',
+      statusCode: 409,
+    });
     expect(visibleEvents.map((event) => event.type)).toEqual(['turn.started']);
     expect(visibleEvents.some((event) => event.type === 'message.segment')).toBe(false);
     expect(visibleEvents.some((event) => event.type === 'turn.completed')).toBe(false);
@@ -1028,7 +1072,7 @@ describe('Phase 5C Incognito and privacy API integration', () => {
       await expect(iterator.next()).rejects.toBeDefined();
     } else {
       expect(preparationOutcome.reason).toEqual(
-        expect.objectContaining({ message: 'consent_withdrawn' }),
+        expect.objectContaining({ code: 'CONSENT_REQUIRED', statusCode: 400 }),
       );
     }
     findProjection.mockRestore();

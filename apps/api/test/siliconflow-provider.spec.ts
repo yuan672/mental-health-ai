@@ -227,6 +227,36 @@ describe('SiliconFlowProvider', () => {
     expect(receivedBody).toBe('');
   });
 
+  it('serializes the request before the final guarded transport start', async () => {
+    let serialized = false;
+    const refusal = new Error('synthetic_deadline_crossed_during_serialization');
+    const fetcher = jest.fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>();
+    const instance = new SiliconFlowProvider(
+      { apiKey: 'provider-secret', baseUrl, model: 'test-model' },
+      fetcher,
+    );
+    const content = {
+      toJSON: () => {
+        serialized = true;
+        return 'synthetic-provider-test';
+      },
+    } as unknown as string;
+
+    await expect(
+      instance.chat(
+        { ...REQUEST, messages: [{ role: 'user', content }] },
+        {
+          signal: new AbortController().signal,
+          startTransport: () => {
+            expect(serialized).toBe(true);
+            return Promise.reject(refusal);
+          },
+        },
+      ),
+    ).rejects.toBe(refusal);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['authentication', 'authentication'],
     ['rate-limited', 'rate_limited'],

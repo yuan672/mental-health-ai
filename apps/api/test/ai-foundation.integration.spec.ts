@@ -19,6 +19,7 @@ import { resolve } from 'node:path';
 import request from 'supertest';
 import { insertConsentFixture, insertRequiredConsentFixtures } from './consent-fixtures';
 import { AiOrchestrationService } from '../src/ai/ai-orchestration.service';
+import { AiController } from '../src/ai/ai.controller';
 import { ConversationContextService } from '../src/ai/context/conversation-context.service';
 import { IncognitoGenerationAdmissionService } from '../src/ai/incognito/incognito-generation-admission.service';
 import { IncognitoContextsService } from '../src/ai/incognito/incognito-contexts.service';
@@ -49,6 +50,7 @@ import {
 } from '../src/ai/safety/safety-gates';
 import type { RiskDecision } from '../src/safety/safety.types';
 import { AiTurnService } from '../src/ai/turns/ai-turn.service';
+import { AiExecutionTotalTimeoutError } from '../src/ai/runtime/active-ai-execution.registry';
 import { AppModule } from '../src/app.module';
 import { hashSessionToken, SessionsService } from '../src/auth/sessions.service';
 import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
@@ -75,6 +77,7 @@ type FakeMode =
 
 class FakeStreamingProvider implements LLMProvider {
   mode: FakeMode = 'success';
+  finishReason: 'stop' | 'length' = 'stop';
   streamCalls = 0;
   dispatched: Promise<void> = Promise.resolve();
   private resolveDispatched: (() => void) | null = null;
@@ -84,6 +87,7 @@ class FakeStreamingProvider implements LLMProvider {
   reset(mode: FakeMode): void {
     this.resolveCompletion?.();
     this.mode = mode;
+    this.finishReason = 'stop';
     this.streamCalls = 0;
     this.dispatched = new Promise((resolve) => {
       this.resolveDispatched = resolve;
@@ -174,7 +178,7 @@ class FakeStreamingProvider implements LLMProvider {
     yield { type: 'text_delta', text: '这是第二句。' };
     yield {
       type: 'completed',
-      finishReason: 'stop',
+      finishReason: this.finishReason,
       usage: { inputTokens: 10, outputTokens: 8, totalTokens: 18 },
       metadata: PROVIDER_METADATA,
     };
@@ -560,6 +564,62 @@ describe('Phase 3 AI foundation integration', () => {
     expect(await quotaService.getUsage(userId, BASE_NOW)).toMatchObject({ usedCount: 1 });
   });
 
+  it('does not write replay metadata when the deadline passes after orchestration returns', async () => {
+    const userId = await createUser();
+    const conversation = await conversationsService.create(userId, BASE_NOW);
+    const clientRequestId = randomUUID();
+    const principal = { userId, sessionId: randomUUID() };
+    const first = await orchestration.preparePersistentTurn(
+      principal,
+      { clientRequestId, conversationId: conversation.id, message: 'synthetic-original-turn' },
+      new AbortController().signal,
+      BASE_NOW,
+    );
+    await collect(first);
+
+    const rawToken = `synthetic-expired-replay-${randomUUID()}`;
+    await databaseService.database.insert(sessions).values({
+      id: principal.sessionId,
+      userId,
+      tokenHash: hashSessionToken(rawToken),
+      createdAt: BASE_NOW,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    const originalPrepare = orchestration.preparePersistentTurn.bind(orchestration);
+    const prepareSpy = jest
+      .spyOn(orchestration, 'preparePersistentTurn')
+      .mockImplementationOnce(async (...input) => {
+        const prepared = await originalPrepare(...input);
+        if (prepared.kind !== 'existing') throw new Error('Expected retained replay metadata');
+        prepared.deadlineAt.setTime(Date.now() - 1);
+        return prepared;
+      });
+
+    try {
+      await request(app.getHttpServer())
+        .post('/ai/chat/stream')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', `mh_session=${rawToken}; mh_csrf=synthetic-csrf`)
+        .set('x-csrf-token', 'synthetic-csrf')
+        .send({
+          mode: 'persistent',
+          clientRequestId,
+          conversationId: conversation.id,
+          message: 'synthetic-expired-replay',
+        })
+        .expect(504)
+        .expect({
+          success: false,
+          error: { code: 'AI_PROVIDER_TIMEOUT', message: 'AI 服务响应超时，请稍后重试' },
+        });
+    } finally {
+      prepareSpy.mockRestore();
+    }
+
+    expect(provider.streamCalls).toBe(1);
+    expect(await quotaService.getUsage(userId, BASE_NOW)).toMatchObject({ usedCount: 1 });
+  });
+
   it('rejects replay metadata when the supplied original conversation does not match', async () => {
     const userId = await createUser();
     const original = await conversationsService.create(userId, BASE_NOW);
@@ -764,6 +824,52 @@ describe('Phase 3 AI foundation integration', () => {
     expect(await messagesService.readMessages(userId, conversation.id, BASE_NOW)).toEqual([
       expect.objectContaining({ role: 'user', content: 'synthetic-failure' }),
     ]);
+  });
+
+  it('does not emit a HIGH fallback when the total deadline wins at Provider dispatch', async () => {
+    provider.reset('fail-before-segment');
+    const userId = await createUser();
+    const conversation = await conversationsService.create(userId, BASE_NOW);
+    const prepared = await orchestration.preparePersistentTurn(
+      { userId, sessionId: randomUUID() },
+      {
+        clientRequestId: randomUUID(),
+        conversationId: conversation.id,
+        message: 'synthetic-high-total-timeout',
+      },
+      new AbortController().signal,
+      BASE_NOW,
+    );
+    if (prepared.kind !== 'ready') throw new Error('Expected ready');
+    if (prepared.riskDecision.status !== 'assessed') {
+      throw new Error('Expected an assessed risk decision');
+    }
+    const highPrepared = {
+      ...prepared,
+      riskDecision: {
+        ...prepared.riskDecision,
+        level: 'HIGH' as const,
+        route: 'ALLOW_CONTROLLED_FULL_BUFFER' as const,
+        bufferingMode: 'full' as const,
+      },
+    };
+    const stream = orchestration.streamPreparedTurn(highPrepared, new AbortController().signal);
+    const iterator = stream[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'turn.started' } });
+    prepared.execution.deadlineAt.setTime(Date.now() - 1);
+
+    await expect(iterator.next()).rejects.toMatchObject({
+      code: 'AI_PROVIDER_TIMEOUT',
+      statusCode: 504,
+    });
+    expect(provider.streamCalls).toBe(0);
+    expect(await quotaService.getUsage(userId, BASE_NOW)).toMatchObject({ usedCount: 0 });
+    await expect(
+      turnsService.findByClientRequestId(userId, prepared.turn.clientRequestId),
+    ).resolves.toMatchObject({
+      status: 'failed',
+      failureCode: 'TOTAL_TIMEOUT_BEFORE_PROVIDER',
+    });
   });
 
   it('charges once but never saves a partial assistant message after delivered output fails', async () => {
@@ -1261,6 +1367,305 @@ describe('Phase 3 AI foundation integration', () => {
     }
   });
 
+  it('rechecks a Persistent deadline immediately before flushing SSE headers', async () => {
+    const now = new Date();
+    const userId = await createUser();
+    const conversation = await conversationsService.create(userId, now);
+    const rawToken = `synthetic-final-header-timeout-${randomUUID()}`;
+    await databaseService.database.insert(sessions).values({
+      id: randomUUID(),
+      userId,
+      tokenHash: hashSessionToken(rawToken),
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+    });
+    const originalEnforce = orchestration.enforcePreparedExecutionDeadline.bind(orchestration);
+    let checks = 0;
+    const enforceSpy = jest
+      .spyOn(orchestration, 'enforcePreparedExecutionDeadline')
+      .mockImplementation((prepared) => {
+        checks += 1;
+        if (checks === 2) {
+          prepared.execution.deadlineAt.setTime(Date.now() - 1);
+        }
+        originalEnforce(prepared);
+      });
+
+    try {
+      await request(app.getHttpServer())
+        .post('/ai/chat/stream')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', `mh_session=${rawToken}; mh_csrf=synthetic-csrf`)
+        .set('x-csrf-token', 'synthetic-csrf')
+        .send({
+          mode: 'persistent',
+          clientRequestId: randomUUID(),
+          conversationId: conversation.id,
+          message: 'synthetic-final-header-timeout',
+        })
+        .expect(504)
+        .expect({
+          success: false,
+          error: { code: 'AI_PROVIDER_TIMEOUT', message: 'AI 服务响应超时，请稍后重试' },
+        });
+
+      expect(checks).toBe(2);
+      expect(provider.streamCalls).toBe(0);
+      expect(await quotaService.getUsage(userId, now)).toMatchObject({ usedCount: 0 });
+    } finally {
+      enforceSpy.mockRestore();
+    }
+  });
+
+  it('atomically settles a Persistent turn when the first SSE write barrier sees total timeout', async () => {
+    const now = new Date();
+    const userId = await createUser();
+    const conversation = await conversationsService.create(userId, now);
+    const rawToken = `synthetic-write-barrier-timeout-${randomUUID()}`;
+    await databaseService.database.insert(sessions).values({
+      id: randomUUID(),
+      userId,
+      tokenHash: hashSessionToken(rawToken),
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+    });
+    const originalPrepare = orchestration.preparePersistentTurn.bind(orchestration);
+    const originalAssert = consentExecutions.assertStillUsable.bind(consentExecutions);
+    let assertSpy: jest.SpyInstance | undefined;
+    const prepareSpy = jest
+      .spyOn(orchestration, 'preparePersistentTurn')
+      .mockImplementationOnce(async (...input) => {
+        const prepared = await originalPrepare(...input);
+        if (prepared.kind !== 'ready') throw new Error('Expected a ready Persistent turn');
+        assertSpy = jest
+          .spyOn(consentExecutions, 'assertStillUsable')
+          .mockImplementationOnce(async (execution) => {
+            execution.deadlineAt.setTime(Date.now() - 1);
+            await originalAssert(execution);
+          });
+        return prepared;
+      });
+
+    try {
+      const response = await request(app.getHttpServer())
+        .post('/ai/chat/stream')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', `mh_session=${rawToken}; mh_csrf=synthetic-csrf`)
+        .set('x-csrf-token', 'synthetic-csrf')
+        .send({
+          mode: 'persistent',
+          clientRequestId: randomUUID(),
+          conversationId: conversation.id,
+          message: 'synthetic-write-barrier-timeout',
+        })
+        .expect(200)
+        .expect('content-type', /text\/event-stream/u);
+      expect(response.text).not.toContain('turn.started');
+      expect(response.text).not.toContain('message.segment');
+
+      expect(provider.streamCalls).toBe(0);
+      expect(await quotaService.getUsage(userId, now)).toMatchObject({ usedCount: 0 });
+      const [turn] = await databaseService.database
+        .select()
+        .from(aiTurns)
+        .where(eq(aiTurns.conversationId, conversation.id));
+      expect(turn).toMatchObject({
+        status: 'failed',
+        failureCode: 'TOTAL_TIMEOUT_BEFORE_PROVIDER',
+      });
+    } finally {
+      assertSpy?.mockRestore();
+      prepareSpy.mockRestore();
+    }
+  });
+
+  it('refunds atomically when the first approved segment misses its SSE write barrier deadline', async () => {
+    const now = new Date();
+    const userId = await createUser();
+    const conversation = await conversationsService.create(userId, now);
+    const rawToken = `synthetic-segment-write-timeout-${randomUUID()}`;
+    await databaseService.database.insert(sessions).values({
+      id: randomUUID(),
+      userId,
+      tokenHash: hashSessionToken(rawToken),
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+    });
+    const controller = app.get(AiController) as unknown as {
+      writeBoundSse: (
+        response: unknown,
+        event: { type: string },
+        sequence: number,
+        execution: { abort: (reason?: unknown) => void },
+        signal: AbortSignal,
+      ) => Promise<void>;
+    };
+    const originalWrite = controller.writeBoundSse.bind(controller);
+    let writeCalls = 0;
+    const writeSpy = jest.spyOn(controller, 'writeBoundSse').mockImplementation(async (...args) => {
+      writeCalls += 1;
+      if (writeCalls === 2) {
+        args[3].abort(new AiExecutionTotalTimeoutError());
+      }
+      await originalWrite(...args);
+    });
+
+    try {
+      const response = await request(app.getHttpServer())
+        .post('/ai/chat/stream')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', `mh_session=${rawToken}; mh_csrf=synthetic-csrf`)
+        .set('x-csrf-token', 'synthetic-csrf')
+        .send({
+          mode: 'persistent',
+          clientRequestId: randomUUID(),
+          conversationId: conversation.id,
+          message: 'synthetic-segment-write-timeout',
+        })
+        .expect(200)
+        .expect('content-type', /text\/event-stream/u);
+
+      expect(response.text).toContain('event: turn.started');
+      expect(response.text).not.toContain('event: message.segment');
+      expect(response.text).not.toContain('event: turn.completed');
+      expect(provider.streamCalls).toBe(1);
+      expect(await quotaService.getUsage(userId, now)).toMatchObject({ usedCount: 0 });
+      const [turn] = await databaseService.database
+        .select()
+        .from(aiTurns)
+        .where(eq(aiTurns.conversationId, conversation.id));
+      expect(turn).toMatchObject({
+        status: 'failed',
+        failureCode: 'TIMEOUT',
+        assistantMessageId: null,
+      });
+    } finally {
+      writeSpy.mockRestore();
+    }
+  });
+
+  it('retains quota when transport accepts an approved segment before backpressure timeout', async () => {
+    const now = new Date();
+    const userId = await createUser();
+    const conversation = await conversationsService.create(userId, now);
+    const rawToken = `synthetic-segment-backpressure-timeout-${randomUUID()}`;
+    await databaseService.database.insert(sessions).values({
+      id: randomUUID(),
+      userId,
+      tokenHash: hashSessionToken(rawToken),
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+    });
+    const controller = app.get(AiController) as unknown as {
+      writeBoundSse: (
+        response: unknown,
+        event: { type: string },
+        sequence: number,
+        execution: { abort: (reason?: unknown) => void },
+        signal: AbortSignal,
+        onFrameAccepted?: () => void,
+      ) => Promise<void>;
+    };
+    const originalWrite = controller.writeBoundSse.bind(controller);
+    let writeCalls = 0;
+    const writeSpy = jest.spyOn(controller, 'writeBoundSse').mockImplementation(async (...args) => {
+      writeCalls += 1;
+      if (writeCalls === 2) {
+        // `response.write()` returning false means Node accepted the frame and is
+        // applying backpressure. Model that synchronous acceptance, then let the
+        // total deadline win before a drain event.
+        args[5]?.();
+        const timeout = new AiExecutionTotalTimeoutError();
+        args[3].abort(timeout);
+        throw timeout;
+      }
+      await originalWrite(...args);
+    });
+
+    try {
+      const response = await request(app.getHttpServer())
+        .post('/ai/chat/stream')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', `mh_session=${rawToken}; mh_csrf=synthetic-csrf`)
+        .set('x-csrf-token', 'synthetic-csrf')
+        .send({
+          mode: 'persistent',
+          clientRequestId: randomUUID(),
+          conversationId: conversation.id,
+          message: 'synthetic-segment-backpressure-timeout',
+        })
+        .expect(200)
+        .expect('content-type', /text\/event-stream/u);
+
+      expect(response.text).toContain('event: turn.started');
+      expect(response.text).not.toContain('event: turn.completed');
+      expect(provider.streamCalls).toBe(1);
+      expect(await quotaService.getUsage(userId, now)).toMatchObject({ usedCount: 1 });
+      const [turn] = await databaseService.database
+        .select()
+        .from(aiTurns)
+        .where(eq(aiTurns.conversationId, conversation.id));
+      expect(turn).toMatchObject({
+        status: 'failed',
+        failureCode: 'TIMEOUT',
+        assistantMessageId: null,
+      });
+    } finally {
+      writeSpy.mockRestore();
+    }
+  });
+
+  it('keeps finishReason=length billing when its full-buffer segment misses the write deadline', async () => {
+    provider.finishReason = 'length';
+    const now = new Date();
+    const userId = await createUser();
+    const conversation = await conversationsService.create(userId, now);
+    const prepared = await orchestration.preparePersistentTurn(
+      { userId, sessionId: randomUUID() },
+      {
+        clientRequestId: randomUUID(),
+        conversationId: conversation.id,
+        message: 'synthetic-length-write-timeout',
+      },
+      new AbortController().signal,
+      now,
+    );
+    if (prepared.kind !== 'ready' || prepared.riskDecision.status !== 'assessed') {
+      throw new Error('Expected a ready assessed turn');
+    }
+    const fullBufferPrepared = {
+      ...prepared,
+      riskDecision: {
+        ...prepared.riskDecision,
+        level: 'HIGH' as const,
+        route: 'ALLOW_CONTROLLED_FULL_BUFFER' as const,
+        bufferingMode: 'full' as const,
+      },
+    };
+    const stream = orchestration.streamPreparedTurn(
+      fullBufferPrepared,
+      new AbortController().signal,
+    );
+    const iterator = stream[Symbol.asyncIterator]();
+
+    await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'turn.started' } });
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: { type: 'message.segment' },
+    });
+    prepared.execution.abort(new AiExecutionTotalTimeoutError());
+    await iterator.return?.();
+
+    expect(provider.streamCalls).toBe(1);
+    expect(await quotaService.getUsage(userId, now)).toMatchObject({ usedCount: 1 });
+    await expect(
+      turnsService.findByClientRequestId(userId, prepared.turn.clientRequestId),
+    ).resolves.toMatchObject({
+      status: 'failed',
+      failureCode: 'TIMEOUT',
+      assistantMessageId: null,
+    });
+  });
+
   it('returns the same bounded timeout for Incognito before SSE headers when its timer is delayed', async () => {
     const now = new Date();
     const userId = await createUser();
@@ -1308,6 +1713,193 @@ describe('Phase 3 AI foundation integration', () => {
         .expect({
           success: false,
           error: { code: 'AI_PROVIDER_TIMEOUT', message: 'AI 服务响应超时，请稍后重试' },
+        });
+
+      expect(provider.streamCalls).toBe(0);
+      expect(await quotaService.getUsage(userId, now)).toMatchObject({ usedCount: 0 });
+    } finally {
+      prepareSpy.mockRestore();
+    }
+  });
+
+  it('rechecks an Incognito deadline immediately before flushing SSE headers', async () => {
+    const now = new Date();
+    const userId = await createUser();
+    const sessionId = randomUUID();
+    const rawToken = `synthetic-incognito-final-header-timeout-${randomUUID()}`;
+    await databaseService.database.insert(sessions).values({
+      id: sessionId,
+      userId,
+      tokenHash: hashSessionToken(rawToken),
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+    });
+    const context = await incognitoContexts.create(
+      {
+        id: sessionId,
+        userId,
+        expiresAt: new Date(now.getTime() + 60_000),
+        revokedAt: null,
+      },
+      now,
+    );
+    const originalEnforce = orchestration.enforcePreparedExecutionDeadline.bind(orchestration);
+    let checks = 0;
+    const enforceSpy = jest
+      .spyOn(orchestration, 'enforcePreparedExecutionDeadline')
+      .mockImplementation((prepared) => {
+        checks += 1;
+        if (checks === 2) {
+          prepared.execution.deadlineAt.setTime(Date.now() - 1);
+        }
+        originalEnforce(prepared);
+      });
+
+    try {
+      await request(app.getHttpServer())
+        .post('/ai/chat/stream')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', `mh_session=${rawToken}; mh_csrf=synthetic-csrf`)
+        .set('x-csrf-token', 'synthetic-csrf')
+        .send({
+          mode: 'incognito',
+          clientRequestId: randomUUID(),
+          contextId: context.id,
+          message: 'synthetic-incognito-final-header-timeout',
+        })
+        .expect(504)
+        .expect({
+          success: false,
+          error: { code: 'AI_PROVIDER_TIMEOUT', message: 'AI 服务响应超时，请稍后重试' },
+        });
+
+      expect(checks).toBe(2);
+      expect(provider.streamCalls).toBe(0);
+      expect(await quotaService.getUsage(userId, now)).toMatchObject({ usedCount: 0 });
+    } finally {
+      enforceSpy.mockRestore();
+    }
+  });
+
+  it('retains Incognito quota when transport accepts a segment before backpressure timeout', async () => {
+    const now = new Date();
+    const userId = await createUser();
+    const sessionId = randomUUID();
+    const rawToken = `synthetic-incognito-backpressure-timeout-${randomUUID()}`;
+    await databaseService.database.insert(sessions).values({
+      id: sessionId,
+      userId,
+      tokenHash: hashSessionToken(rawToken),
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+    });
+    const context = await incognitoContexts.create(
+      {
+        id: sessionId,
+        userId,
+        expiresAt: new Date(now.getTime() + 60_000),
+        revokedAt: null,
+      },
+      now,
+    );
+    const controller = app.get(AiController) as unknown as {
+      writeBoundSse: (
+        response: unknown,
+        event: { type: string },
+        sequence: number,
+        execution: { abort: (reason?: unknown) => void },
+        signal: AbortSignal,
+        onFrameAccepted?: () => void,
+      ) => Promise<void>;
+    };
+    const originalWrite = controller.writeBoundSse.bind(controller);
+    let writeCalls = 0;
+    const writeSpy = jest.spyOn(controller, 'writeBoundSse').mockImplementation(async (...args) => {
+      writeCalls += 1;
+      if (writeCalls === 2) {
+        args[5]?.();
+        const timeout = new AiExecutionTotalTimeoutError();
+        args[3].abort(timeout);
+        throw timeout;
+      }
+      await originalWrite(...args);
+    });
+
+    try {
+      const response = await request(app.getHttpServer())
+        .post('/ai/chat/stream')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', `mh_session=${rawToken}; mh_csrf=synthetic-csrf`)
+        .set('x-csrf-token', 'synthetic-csrf')
+        .send({
+          mode: 'incognito',
+          clientRequestId: randomUUID(),
+          contextId: context.id,
+          message: 'synthetic-incognito-backpressure-timeout',
+        })
+        .expect(200)
+        .expect('content-type', /text\/event-stream/u);
+
+      expect(response.text).toContain('event: turn.started');
+      expect(response.text).not.toContain('event: turn.completed');
+      expect(provider.streamCalls).toBe(1);
+      expect(await quotaService.getUsage(userId, now)).toMatchObject({ usedCount: 1 });
+    } finally {
+      writeSpy.mockRestore();
+    }
+  });
+
+  it('preserves an earlier Incognito context termination when execution timeout follows', async () => {
+    const now = new Date();
+    const userId = await createUser();
+    const sessionId = randomUUID();
+    const rawToken = `synthetic-incognito-context-first-${randomUUID()}`;
+    await databaseService.database.insert(sessions).values({
+      id: sessionId,
+      userId,
+      tokenHash: hashSessionToken(rawToken),
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+    });
+    const context = await incognitoContexts.create(
+      {
+        id: sessionId,
+        userId,
+        expiresAt: new Date(now.getTime() + 60_000),
+        revokedAt: null,
+      },
+      now,
+    );
+    const originalPrepare = orchestration.prepareIncognitoTurn.bind(orchestration);
+    const prepareSpy = jest
+      .spyOn(orchestration, 'prepareIncognitoTurn')
+      .mockImplementationOnce(async (...input) => {
+        const prepared = await originalPrepare(...input);
+        if (prepared.kind !== 'ready') throw new Error('Expected a ready Incognito turn');
+        incognitoStore.end(userId, sessionId, context.id);
+        prepared.execution.abort(new AiExecutionTotalTimeoutError());
+        return prepared;
+      });
+
+    try {
+      await request(app.getHttpServer())
+        .post('/ai/chat/stream')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', `mh_session=${rawToken}; mh_csrf=synthetic-csrf`)
+        .set('x-csrf-token', 'synthetic-csrf')
+        .send({
+          mode: 'incognito',
+          clientRequestId: randomUUID(),
+          contextId: context.id,
+          message: 'synthetic-context-ended-before-deadline',
+        })
+        .expect(409)
+        .expect({
+          success: false,
+          error: {
+            code: 'AI_INCOGNITO_CONTEXT_LOST',
+            message: '无痕对话上下文已失效，请重新开始',
+          },
         });
 
       expect(provider.streamCalls).toBe(0);
@@ -1436,15 +2028,16 @@ describe('Phase 3 AI foundation integration', () => {
   });
 
   it('fails closed before provider access when incognito memory is lost after quota consumption', async () => {
+    const now = new Date();
     const userId = await createUser();
     const sessionId = randomUUID();
     const clientRequestId = randomUUID();
     const context = incognitoStore.create(
       userId,
       sessionId,
-      new Date(BASE_NOW.getTime() + 60_000),
+      new Date(now.getTime() + 60_000),
       [],
-      BASE_NOW,
+      now,
     );
     const quotaIdempotencyKey = deriveIncognitoQuotaIdempotencyKey(
       userId,
@@ -1452,7 +2045,7 @@ describe('Phase 3 AI foundation integration', () => {
       clientRequestId,
     );
 
-    await quotaService.consumeQuota(userId, quotaIdempotencyKey, BASE_NOW);
+    await quotaService.consumeQuota(userId, quotaIdempotencyKey, now);
     expect(incognitoStore.end(userId, sessionId, context.id)).toBe(true);
 
     const pendingExecution = consentExecutions.registerPending({
@@ -1470,13 +2063,13 @@ describe('Phase 3 AI foundation integration', () => {
         message: 'must-not-reach-provider-after-context-loss',
         signal: new AbortController().signal,
         execution,
-        now: BASE_NOW,
+        now,
       }),
     ).rejects.toMatchObject({ code: 'AI_INCOGNITO_CONTEXT_LOST', statusCode: 409 });
     execution.dispose();
 
     expect(provider.streamCalls).toBe(0);
-    expect(await quotaService.getUsage(userId, BASE_NOW)).toMatchObject({ usedCount: 1 });
+    expect(await quotaService.getUsage(userId, now)).toMatchObject({ usedCount: 1 });
     const [ledgerCount] = await databaseService.database
       .select({ value: count() })
       .from(quotaConsumptions)

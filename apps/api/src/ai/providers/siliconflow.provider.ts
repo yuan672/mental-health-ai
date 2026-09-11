@@ -341,27 +341,30 @@ export class SiliconFlowProvider implements LLMProvider {
     options: LLMCallOptions,
     stream: boolean,
   ): Promise<Response> {
+    // Build the request synchronously before entering the Consent dispatch guard.
+    // The guarded callback is the narrow application dispatch boundary and must
+    // not spend time serializing user-derived content after its final
+    // authorization/deadline check.
+    const url = new URL('chat/completions', this.normalizedBaseUrl());
+    const init: Omit<RequestInit, 'signal'> = {
+      method: 'POST',
+      headers: {
+        Accept: stream ? 'text/event-stream' : 'application/json',
+        Authorization: `Bearer ${this.config.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: this.config.model,
+        messages: request.messages,
+        max_tokens: request.maxOutputTokens,
+        stream,
+        ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
+        ...(request.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {}),
+      }),
+    };
     const guarded = await options.startTransport((signal) => {
       try {
-        return this.fetcher(new URL('chat/completions', this.normalizedBaseUrl()), {
-          method: 'POST',
-          headers: {
-            Accept: stream ? 'text/event-stream' : 'application/json',
-            Authorization: `Bearer ${this.config.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: this.config.model,
-            messages: request.messages,
-            max_tokens: request.maxOutputTokens,
-            stream,
-            ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
-            ...(request.responseFormat === 'json'
-              ? { response_format: { type: 'json_object' } }
-              : {}),
-          }),
-          signal,
-        });
+        return this.fetcher(url, { ...init, signal });
       } catch {
         return Promise.reject(
           new LLMProviderFailure(

@@ -10,8 +10,27 @@ export type DatabaseClient = {
   pool: Pool;
 };
 
-export function createDatabaseClient(connectionString: string): DatabaseClient {
-  const pool = new Pool({ connectionString });
+export type DatabaseClientOptions = Readonly<{
+  connectionTimeoutMillis?: number;
+  queryTimeoutMillis?: number;
+}>;
+
+export function createDatabaseClient(
+  connectionString: string,
+  options: DatabaseClientOptions = {},
+): DatabaseClient {
+  const pool = new Pool({
+    connectionString,
+    ...(options.connectionTimeoutMillis === undefined
+      ? {}
+      : { connectionTimeoutMillis: options.connectionTimeoutMillis }),
+    ...(options.queryTimeoutMillis === undefined
+      ? {}
+      : {
+          query_timeout: options.queryTimeoutMillis,
+          statement_timeout: options.queryTimeoutMillis,
+        }),
+  });
   const database = drizzle(pool, { schema });
 
   return { database, pool };

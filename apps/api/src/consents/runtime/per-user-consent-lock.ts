@@ -42,6 +42,8 @@ export class PerUserConsentLock implements OnModuleDestroy {
   ): Promise<T> {
     const release = await this.acquire(userId, signal, deadlineAt);
     try {
+      if (signal.aborted) throw signal.reason ?? new Error('consent_lock_aborted');
+      if (deadlineAt.getTime() <= Date.now()) throw new AiExecutionTotalTimeoutError();
       return await operation();
     } finally {
       release();

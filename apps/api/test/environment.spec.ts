@@ -89,6 +89,25 @@ describe('identity environment validation', () => {
     ).toThrow();
   });
 
+  it('bounds application database acquisition and query waits', () => {
+    const parsed = parseEnvironment({
+      ...baseEnvironment,
+      APP_ENV: 'test',
+      AGE_VERIFICATION_PROVIDER: 'mock',
+    });
+    expect(parsed.DATABASE_CONNECTION_TIMEOUT_MS).toBe(5_000);
+    expect(parsed.DATABASE_QUERY_TIMEOUT_MS).toBe(30_000);
+
+    expect(() =>
+      parseEnvironment({
+        ...baseEnvironment,
+        APP_ENV: 'test',
+        AGE_VERIFICATION_PROVIDER: 'mock',
+        DATABASE_QUERY_TIMEOUT_MS: '0',
+      }),
+    ).toThrow();
+  });
+
   it('rejects an unsupported quota time zone', () => {
     expect(() =>
       parseEnvironment({

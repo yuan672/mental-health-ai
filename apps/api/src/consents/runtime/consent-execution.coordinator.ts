@@ -92,30 +92,25 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
   async bindRequired(execution: ActiveAiExecution): Promise<ConsentBoundExecution> {
     const pending = this.pending.get(execution.id);
     if (!pending) throw new ConsentRequiredError();
-    return this.userLock.runExclusive(
-      execution.userId,
-      execution.signal,
-      execution.deadlineAt,
-      async () => {
-        this.assertExecutionTime(execution);
-        for (const policy of pending.requiredPolicyKeys) {
-          if (
-            pending.observedEpochs.get(consentPolicyKey(policy)) !==
-            (this.epochs.get(execution.userId)?.get(consentPolicyKey(policy)) ?? 0)
-          ) {
-            throw new ConsentRequiredError();
-          }
+    return this.runExecutionExclusive(execution, execution.signal, async () => {
+      this.assertExecutionTime(execution);
+      for (const policy of pending.requiredPolicyKeys) {
+        if (
+          pending.observedEpochs.get(consentPolicyKey(policy)) !==
+          (this.epochs.get(execution.userId)?.get(consentPolicyKey(policy)) ?? 0)
+        ) {
+          throw new ConsentRequiredError();
         }
-        const dependencies = await this.authorization.loadRequiredDependencies(execution.userId);
-        this.assertDependenciesMatchPolicies(pending.requiredPolicyKeys, dependencies);
-        this.assertNotRevoked(execution.userId, dependencies);
-        this.assertExecutionTime(execution);
-        const bound = this.activeExecutions.bind(execution.id, dependencies);
-        this.pending.delete(execution.id);
-        this.pruneEpochs(execution.userId);
-        return this.withBoundDispose(bound);
-      },
-    );
+      }
+      const dependencies = await this.authorization.loadRequiredDependencies(execution.userId);
+      this.assertDependenciesMatchPolicies(pending.requiredPolicyKeys, dependencies);
+      this.assertNotRevoked(execution.userId, dependencies);
+      this.assertExecutionTime(execution);
+      const bound = this.activeExecutions.bind(execution.id, dependencies);
+      this.pending.delete(execution.id);
+      this.pruneEpochs(execution.userId);
+      return this.withBoundDispose(bound);
+    });
   }
 
   async createIncognitoContext(input: {
@@ -176,65 +171,50 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
     dispatchSignal: AbortSignal,
     startTransport: (signal: AbortSignal) => T,
   ): Promise<{ readonly transport: T }> {
-    return this.userLock.runExclusive(
-      execution.userId,
-      dispatchSignal,
-      execution.deadlineAt,
-      async () => {
-        this.assertExecutionTime(execution);
-        if (dispatchSignal.aborted) throw dispatchSignal.reason;
-        this.pruneRevokedMarkers();
-        this.assertNotRevoked(execution.userId, execution.dependencies);
-        const active = await this.authorization.dependenciesRemainActive(
-          execution.userId,
-          execution.dependencies,
-        );
-        if (!active) throw new ConsentRequiredError();
-        this.assertExecutionTime(execution);
-        if (dispatchSignal.aborted) throw dispatchSignal.reason;
-        const transport = startTransport(dispatchSignal);
-        this.activeExecutions.markDispatched(execution.id, kind);
-        return { transport };
-      },
-    );
+    return this.runExecutionExclusive(execution, dispatchSignal, async () => {
+      this.assertExecutionTime(execution);
+      if (dispatchSignal.aborted) throw dispatchSignal.reason;
+      this.pruneRevokedMarkers();
+      this.assertNotRevoked(execution.userId, execution.dependencies);
+      const active = await this.authorization.dependenciesRemainActive(
+        execution.userId,
+        execution.dependencies,
+      );
+      if (!active) throw new ConsentRequiredError();
+      this.assertExecutionTime(execution);
+      if (dispatchSignal.aborted) throw dispatchSignal.reason;
+      const transport = startTransport(dispatchSignal);
+      this.activeExecutions.markDispatched(execution.id, kind);
+      return { transport };
+    });
   }
 
   async assertStillUsable(execution: ConsentBoundExecution): Promise<void> {
-    await this.userLock.runExclusive(
-      execution.userId,
-      execution.signal,
-      execution.deadlineAt,
-      () => {
-        this.assertExecutionTime(execution);
-        this.pruneRevokedMarkers();
-        this.assertNotRevoked(execution.userId, execution.dependencies);
-      },
-    );
+    await this.runExecutionExclusive(execution, execution.signal, () => {
+      this.assertExecutionTime(execution);
+      this.pruneRevokedMarkers();
+      this.assertNotRevoked(execution.userId, execution.dependencies);
+    });
   }
 
   async runWhileUsable<T>(
     execution: ConsentBoundExecution,
     operation: () => Promise<T>,
   ): Promise<T> {
-    return this.userLock.runExclusive(
-      execution.userId,
-      execution.signal,
-      execution.deadlineAt,
-      async () => {
-        this.assertExecutionTime(execution);
-        this.pruneRevokedMarkers();
-        this.assertNotRevoked(execution.userId, execution.dependencies);
-        const active = await this.authorization.dependenciesRemainActive(
-          execution.userId,
-          execution.dependencies,
-        );
-        if (!active) throw new ConsentRequiredError();
-        this.assertExecutionTime(execution);
-        const result = await operation();
-        this.assertExecutionTime(execution);
-        return result;
-      },
-    );
+    return this.runExecutionExclusive(execution, execution.signal, async () => {
+      this.assertExecutionTime(execution);
+      this.pruneRevokedMarkers();
+      this.assertNotRevoked(execution.userId, execution.dependencies);
+      const active = await this.authorization.dependenciesRemainActive(
+        execution.userId,
+        execution.dependencies,
+      );
+      if (!active) throw new ConsentRequiredError();
+      this.assertExecutionTime(execution);
+      const result = await operation();
+      this.assertExecutionTime(execution);
+      return result;
+    });
   }
 
   async coordinateMutation<T>(
@@ -358,6 +338,26 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
   private assertRequestTime(signal: AbortSignal, deadlineAt: Date): void {
     if (signal.aborted) throw signal.reason;
     if (deadlineAt.getTime() <= Date.now()) throw new AiExecutionTotalTimeoutError();
+  }
+
+  private async runExecutionExclusive<T>(
+    execution: ActiveAiExecution,
+    signal: AbortSignal,
+    operation: () => T | Promise<T>,
+  ): Promise<T> {
+    try {
+      return await this.userLock.runExclusive(
+        execution.userId,
+        signal,
+        execution.deadlineAt,
+        operation,
+      );
+    } catch (error) {
+      if (error instanceof AiExecutionTotalTimeoutError && !execution.signal.aborted) {
+        execution.abort(error);
+      }
+      throw error;
+    }
   }
 
   private assertNotRevoked(userId: string, dependencies: readonly ConsentDependency[]): void {

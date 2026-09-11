@@ -24,6 +24,8 @@ export type QuotaConsumeResult =
 
 export class QuotaLimitReachedError extends Error {}
 
+const QUOTA_REFUND_SETTLEMENT_TIMEOUT_MS = 5_000;
+
 export type QuotaRefundResult =
   { status: 'refunded'; usage: DailyUsageRecord } | { status: 'not_consumed' };
 
@@ -173,9 +175,12 @@ export class QuotaRepository {
   }
 
   async refund(userId: string, idempotencyKey: string, now: Date): Promise<QuotaRefundResult> {
-    return this.databaseService.database.transaction((transaction) =>
-      this.refundWithinTransaction(transaction, userId, idempotencyKey, now),
-    );
+    return this.databaseService.database.transaction(async (transaction) => {
+      const timeout = `${QUOTA_REFUND_SETTLEMENT_TIMEOUT_MS}ms`;
+      await transaction.execute(sql`SELECT set_config('lock_timeout', ${timeout}, true)`);
+      await transaction.execute(sql`SELECT set_config('statement_timeout', ${timeout}, true)`);
+      return this.refundWithinTransaction(transaction, userId, idempotencyKey, now);
+    });
   }
 
   async refundWithinTransaction(

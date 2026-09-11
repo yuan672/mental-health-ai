@@ -137,10 +137,12 @@ describe('pre-stream response lifecycle', () => {
       destroyed: boolean;
       writableEnded: boolean;
       vary: jest.Mock;
+      removeHeader: jest.Mock;
     };
     response.destroyed = false;
     response.writableEnded = false;
     response.vary = jest.fn();
+    response.removeHeader = jest.fn();
     return response;
   }
 
@@ -213,6 +215,68 @@ describe('pre-stream response lifecycle', () => {
     },
   );
 
+  it.each(['persistent', 'incognito'] as const)(
+    'preserves the typed %s termination when bounded cleanup rejects',
+    async (mode) => {
+      const aborted = new AbortController();
+      aborted.abort(new Error('consent_withdrawn'));
+      const execution = {
+        id: 'execution-1',
+        userId: 'user-1',
+        sessionId: 'session-1',
+        signal: aborted.signal,
+        deadlineAt: new Date(Date.now() + 1_000),
+        dependencies: [],
+        abort: jest.fn(),
+        dispose: jest.fn(),
+      };
+      const prepared =
+        mode === 'persistent'
+          ? { kind: 'ready', turn: { id: 'turn-1' }, execution }
+          : {
+              kind: 'ready',
+              generation: { id: 'generation-1', signal: aborted.signal },
+              execution,
+            };
+      const response = responseDouble();
+      const typedTermination = new AIProviderError('typed termination');
+      const orchestration = {
+        preparePersistentTurn: jest.fn().mockResolvedValue(prepared),
+        prepareIncognitoTurn: jest.fn().mockResolvedValue(prepared),
+        cancelPreparedPersistentTurnBeforeProvider: jest
+          .fn()
+          .mockRejectedValue(new Error('cleanup failed')),
+        cancelPreparedIncognitoTurnBeforeProvider: jest
+          .fn()
+          .mockRejectedValue(new Error('cleanup failed')),
+        enforcePreparedExecutionDeadline: jest.fn(),
+        preProviderTerminationError: jest.fn(() => typedTermination),
+      } as unknown as AiOrchestrationService;
+      const controller = new AiController(orchestration, {} as ConsentExecutionCoordinator);
+
+      await expect(
+        controller.streamChat(
+          request,
+          response as unknown as Response,
+          undefined,
+          mode === 'persistent'
+            ? {
+                mode: 'persistent',
+                clientRequestId: '11111111-1111-4111-8111-111111111111',
+                conversationId: '22222222-2222-4222-8222-222222222222',
+                message: 'synthetic',
+              }
+            : {
+                mode: 'incognito',
+                clientRequestId: '11111111-1111-4111-8111-111111111111',
+                contextId: '22222222-2222-4222-8222-222222222222',
+                message: 'synthetic',
+              },
+        ),
+      ).rejects.toBe(typedTermination);
+    },
+  );
+
   it('does not write replay metadata when the response closes during prepare', async () => {
     const response = responseDouble() as ReturnType<typeof responseDouble> & {
       status: jest.Mock;
@@ -223,7 +287,11 @@ describe('pre-stream response lifecycle', () => {
     const orchestration = {
       preparePersistentTurn: jest.fn(async () => {
         response.destroyed = true;
-        return { kind: 'existing', turn: { id: 'turn-1' } };
+        return {
+          kind: 'existing',
+          turn: { id: 'turn-1' },
+          deadlineAt: new Date(Date.now() + 1_000),
+        };
       }),
     } as unknown as AiOrchestrationService;
     const controller = new AiController(orchestration, {} as ConsentExecutionCoordinator);

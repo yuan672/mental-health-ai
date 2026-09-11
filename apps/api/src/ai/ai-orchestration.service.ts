@@ -59,6 +59,7 @@ import type { RiskDecision } from '../safety/safety.types';
 import { TrustedSafetyTemplateRegistry } from '../safety/templates/trusted-safety-template.registry';
 import {
   AiExecutionTotalTimeoutError,
+  type ActiveAiExecution,
   type ConsentBoundExecution,
 } from './runtime/active-ai-execution.registry';
 import { IncognitoGenerationAdmissionService } from './incognito/incognito-generation-admission.service';
@@ -87,6 +88,7 @@ import {
   type IncognitoContextStore,
   type IncognitoGenerationClaim,
   IncognitoContextLimitError,
+  IncognitoContextTerminatedError,
 } from './incognito/incognito-context.store';
 
 export type AuthenticatedAiPrincipal = Readonly<{
@@ -104,8 +106,13 @@ type PreparedKnowledgeGrounding = Readonly<{
   bundles: readonly KnowledgePromptBundle[];
 }>;
 
+type PreparedDeliveryState = {
+  groundedCommitSucceeded: boolean;
+  approvedSegmentWriteAccepted: boolean;
+};
+
 export type PreparedAiTurn =
-  | Readonly<{ kind: 'existing'; turn: AiTurnRecord }>
+  | Readonly<{ kind: 'existing'; turn: AiTurnRecord; deadlineAt: Date }>
   | Readonly<{
       kind: 'ready';
       turn: AiTurnRecord;
@@ -113,7 +120,7 @@ export type PreparedAiTurn =
       riskDecision: RiskDecision;
       execution: AiTurnExecutionDeadline;
       knowledgeRepresentation: KnowledgeReferenceRepresentation;
-      deliveryState: { groundedCommitSucceeded: boolean };
+      deliveryState: PreparedDeliveryState;
       knowledgeGrounding: PreparedKnowledgeGrounding | null;
     }>
   | Readonly<{
@@ -140,7 +147,7 @@ export type PreparedIncognitoTurn =
       quotaIdempotencyKey: string;
       execution: AiTurnExecutionDeadline;
       knowledgeRepresentation: KnowledgeReferenceRepresentation;
-      deliveryState: { groundedCommitSucceeded: boolean };
+      deliveryState: PreparedDeliveryState;
       knowledgeGrounding: PreparedKnowledgeGrounding | null;
     }>
   | Readonly<{
@@ -318,12 +325,22 @@ export class AiOrchestrationService {
         now,
       });
     } catch (error) {
-      if (error instanceof AiExecutionTotalTimeoutError) {
-        pendingExecution.abort(error);
-      }
+      const contextTerminated = error instanceof IncognitoContextTerminatedError;
+      const timedOut = contextTerminated
+        ? false
+        : this.synchronizeExecutionDeadline(pendingExecution, error);
       pendingExecution.dispose();
-      if (error instanceof AiExecutionTotalTimeoutError) {
+      if (contextTerminated) {
+        throw new AIIncognitoContextLostError();
+      }
+      if (error instanceof AIIncognitoContextLostError) {
+        throw error;
+      }
+      if (timedOut) {
         throw new AIProviderTimeoutError();
+      }
+      if (this.isConsentTermination(pendingExecution, error)) {
+        throw new ConsentRequiredError();
       }
       throw error;
     }
@@ -399,7 +416,12 @@ export class AiOrchestrationService {
         now,
       );
       if (!appended) {
-        await this.quota.refundQuota(principal.userId, admission.quotaIdempotencyKey, now);
+        try {
+          await this.quota.refundQuota(principal.userId, admission.quotaIdempotencyKey, now);
+        } catch {
+          // Context loss remains the authoritative client outcome. The idempotent
+          // quota cleanup may be retried by the enclosing bounded cleanup path.
+        }
         throw new AIIncognitoContextLostError();
       }
       await this.consentExecutions.assertStillUsable(execution);
@@ -415,27 +437,46 @@ export class AiOrchestrationService {
         quotaIdempotencyKey: admission.quotaIdempotencyKey,
         execution,
         knowledgeRepresentation,
-        deliveryState: { groundedCommitSucceeded: false },
+        deliveryState: {
+          groundedCommitSucceeded: false,
+          approvedSegmentWriteAccepted: false,
+        },
         knowledgeGrounding: preparedContext.knowledgeGrounding,
       };
     } catch (error) {
-      const timedOut =
-        error instanceof AiExecutionTotalTimeoutError ||
-        execution.signal.reason instanceof AiExecutionTotalTimeoutError;
-      if (error instanceof AiExecutionTotalTimeoutError && !execution.signal.aborted) {
-        execution.abort(error);
+      const contextTerminated =
+        error instanceof IncognitoContextTerminatedError ||
+        admission.generation.signal.reason instanceof IncognitoContextTerminatedError;
+      const timedOut = contextTerminated
+        ? false
+        : this.synchronizeExecutionDeadline(execution, error);
+      let cleanupError: unknown;
+      try {
+        if (admission.kind === 'generation') {
+          await this.quota.refundQuota(principal.userId, admission.quotaIdempotencyKey, now);
+        }
+      } catch (cleanupFailure) {
+        cleanupError = cleanupFailure;
+      } finally {
+        this.releaseIncognitoGeneration(principal, input.contextId, admission.generation.id);
+        execution.dispose();
       }
-      if (admission.kind === 'generation') {
-        await this.quota.refundQuota(principal.userId, admission.quotaIdempotencyKey, now);
+      if (contextTerminated) {
+        throw new AIIncognitoContextLostError();
       }
-      this.releaseIncognitoGeneration(principal, input.contextId, admission.generation.id);
-      execution.dispose();
-      if (error instanceof IncognitoContextLimitError) {
-        throw new ValidationError('无痕对话上下文已达到容量限制，请重新开始');
+      if (error instanceof AIIncognitoContextLostError) {
+        throw error;
       }
       if (timedOut) {
         throw new AIProviderTimeoutError();
       }
+      if (this.isConsentTermination(execution, error)) {
+        throw new ConsentRequiredError();
+      }
+      if (error instanceof IncognitoContextLimitError) {
+        throw new ValidationError('无痕对话上下文已达到容量限制，请重新开始');
+      }
+      if (cleanupError) throw cleanupError;
       throw error;
     }
   }
@@ -469,12 +510,12 @@ export class AiOrchestrationService {
         try {
           this.assertPersistentConversationBinding(existing, input.conversationId);
           await this.conversations.get(principal.userId, existing.conversationId, now);
-          this.expireExecutionAtDeadline(execution);
+          this.synchronizeExecutionDeadline(execution);
           throwIfAborted(execution.signal);
         } finally {
           execution.dispose();
         }
-        return { kind: 'existing', turn: existing };
+        return { kind: 'existing', turn: existing, deadlineAt: execution.deadlineAt };
       }
 
       const conversation = input.conversationId
@@ -492,12 +533,12 @@ export class AiOrchestrationService {
       if (!claimed.created) {
         try {
           this.assertPersistentConversationBinding(claimed.turn, input.conversationId);
-          this.expireExecutionAtDeadline(execution);
+          this.synchronizeExecutionDeadline(execution);
           throwIfAborted(execution.signal);
         } finally {
           execution.dispose();
         }
-        return { kind: 'existing', turn: claimed.turn };
+        return { kind: 'existing', turn: claimed.turn, deadlineAt: execution.deadlineAt };
       }
 
       try {
@@ -539,9 +580,7 @@ export class AiOrchestrationService {
             throwIfAborted(execution.signal);
             return { kind: 'trusted', turn: completed, response: trustedResponse, execution };
           } catch (error) {
-            if (error instanceof AiExecutionTotalTimeoutError && !execution.signal.aborted) {
-              execution.abort(error);
-            }
+            this.synchronizeExecutionDeadline(execution, error);
             if (execution.signal.aborted) {
               throw execution.signal.reason ?? error;
             }
@@ -624,16 +663,14 @@ export class AiOrchestrationService {
           riskDecision,
           execution,
           knowledgeRepresentation,
-          deliveryState: { groundedCommitSucceeded: false },
+          deliveryState: {
+            groundedCommitSucceeded: false,
+            approvedSegmentWriteAccepted: false,
+          },
           knowledgeGrounding: preparedContext.knowledgeGrounding,
         };
       } catch (error) {
-        const timedOut =
-          error instanceof AiExecutionTotalTimeoutError ||
-          execution.signal.reason instanceof AiExecutionTotalTimeoutError;
-        if (error instanceof AiExecutionTotalTimeoutError && !execution.signal.aborted) {
-          execution.abort(error);
-        }
+        const timedOut = this.synchronizeExecutionDeadline(execution, error);
         const cancelled = execution.signal.aborted && !timedOut;
         try {
           // This transaction locks the turn before refunding. It therefore orders cleanup
@@ -655,15 +692,19 @@ export class AiOrchestrationService {
         if (timedOut) {
           throw new AIProviderTimeoutError();
         }
+        if (this.isConsentTermination(execution, error)) {
+          throw new ConsentRequiredError();
+        }
         throw error;
       }
     } catch (error) {
-      if (error instanceof AiExecutionTotalTimeoutError) {
-        pendingExecution.abort(error);
-      }
+      const timedOut = this.synchronizeExecutionDeadline(pendingExecution, error);
       pendingExecution.dispose();
-      if (error instanceof AiExecutionTotalTimeoutError) {
+      if (timedOut) {
         throw new AIProviderTimeoutError();
+      }
+      if (this.isConsentTermination(pendingExecution, error)) {
+        throw new ConsentRequiredError();
       }
       throw error;
     }
@@ -812,15 +853,12 @@ export class AiOrchestrationService {
     error: unknown,
     execution: ConsentBoundExecution,
   ): void {
-    if (error instanceof ConsentRequiredError) {
-      throw error;
+    this.synchronizeExecutionDeadline(execution, error);
+    if (this.isConsentTermination(execution, error)) {
+      throw new ConsentRequiredError();
     }
     if (execution.signal.aborted) {
       throw execution.signal.reason ?? error;
-    }
-    if (error instanceof AiExecutionTotalTimeoutError) {
-      execution.abort(error);
-      throw new AIProviderTimeoutError();
     }
     if (
       error instanceof KnowledgeRetrievalDeadlineExceededError ||
@@ -881,6 +919,8 @@ export class AiOrchestrationService {
     let providerIterator: AsyncIterator<LLMProviderStreamEvent> | null = null;
     let receivedOutputCharacters = 0;
     let lifecycleSettled = false;
+    const hasAcceptedApprovedSegment = (): boolean =>
+      deliveredSegments > 0 || prepared.deliveryState.approvedSegmentWriteAccepted;
 
     try {
       yield {
@@ -981,7 +1021,6 @@ export class AiOrchestrationService {
           usage,
           finishReason: groundedFinishReason,
         });
-        deliveredSegments = 1;
         segmentSequence = 1;
         yield {
           type: 'message.segment',
@@ -993,6 +1032,7 @@ export class AiOrchestrationService {
             deliveryMode: 'commit_with_references',
           },
         } satisfies PersistentAiStreamEventV2;
+        deliveredSegments = 1;
         yield {
           type: 'turn.completed',
           data: {
@@ -1059,7 +1099,6 @@ export class AiOrchestrationService {
             );
             if (approved.length > 0) {
               approvedText += approved;
-              deliveredSegments += 1;
               segmentSequence += 1;
               yield {
                 type: 'message.segment',
@@ -1070,6 +1109,7 @@ export class AiOrchestrationService {
                   text: approved,
                 },
               };
+              deliveredSegments += 1;
             }
           }
           continue;
@@ -1131,7 +1171,6 @@ export class AiOrchestrationService {
             );
             if (approved.length > 0) {
               approvedText += approved;
-              deliveredSegments += 1;
               segmentSequence += 1;
               yield {
                 type: 'message.segment',
@@ -1142,6 +1181,7 @@ export class AiOrchestrationService {
                   text: approved,
                 },
               };
+              deliveredSegments += 1;
             }
           }
           pending = iterator.next();
@@ -1169,7 +1209,6 @@ export class AiOrchestrationService {
         );
         if (approved.length > 0) {
           approvedText += approved;
-          deliveredSegments += 1;
           segmentSequence += 1;
           yield {
             type: 'message.segment',
@@ -1180,6 +1219,7 @@ export class AiOrchestrationService {
               text: approved,
             },
           };
+          deliveredSegments += 1;
         }
       }
 
@@ -1237,7 +1277,7 @@ export class AiOrchestrationService {
         providerIterator = null;
         let sideEffectError: unknown = null;
         try {
-          if (deliveredSegments === 0) {
+          if (!hasAcceptedApprovedSegment()) {
             await this.quota.refundQuota(turn.userId, turn.id);
           }
           await this.audits.append({
@@ -1294,8 +1334,9 @@ export class AiOrchestrationService {
         };
         return;
       }
+      const executionTimedOut = this.synchronizeExecutionDeadline(prepared.execution, error);
       const timedOut =
-        error instanceof AiExecutionTotalTimeoutError ||
+        executionTimedOut ||
         error instanceof ProviderEventTimeout ||
         generationController.signal.reason instanceof ProviderEventTimeout ||
         generationController.signal.reason instanceof AiExecutionTotalTimeoutError ||
@@ -1307,7 +1348,7 @@ export class AiOrchestrationService {
         riskDecision.status === 'assessed' &&
         riskDecision.level === 'HIGH' &&
         !cancelled &&
-        deliveredSegments === 0 &&
+        !hasAcceptedApprovedSegment() &&
         !prepared.execution.signal.aborted
       ) {
         const fallback = this.templates.get('high-generation-fallback');
@@ -1366,21 +1407,40 @@ export class AiOrchestrationService {
         }
       }
 
-      const shouldRefund =
-        deliveredSegments === 0 && completedReason !== 'length' && (!cancelled || !providerInvoked);
-      if (shouldRefund) {
-        await this.quota.refundQuota(turn.userId, turn.id);
+      if (!providerInvoked) {
+        await this.aiTurns.settleBeforeProviderFailure(
+          turn,
+          cancelled ? 'cancelled' : 'failed',
+          cancelled
+            ? 'CANCELLED_BEFORE_PROVIDER'
+            : timedOut
+              ? 'TOTAL_TIMEOUT_BEFORE_PROVIDER'
+              : category.toUpperCase(),
+          new Date(),
+        );
+      } else {
+        const shouldRefund =
+          !hasAcceptedApprovedSegment() && completedReason !== 'length' && !cancelled;
+        if (shouldRefund) {
+          await this.aiTurns.settleBeforeProviderFailure(
+            turn,
+            'failed',
+            category.toUpperCase(),
+            new Date(),
+          );
+        } else {
+          await this.aiTurns.finish(
+            turn,
+            cancelled ? 'cancelled' : 'failed',
+            cancelled
+              ? clientSignal.aborted
+                ? 'CLIENT_CANCELLED'
+                : 'EXECUTION_CANCELLED'
+              : category.toUpperCase(),
+            new Date(),
+          );
+        }
       }
-      await this.aiTurns.finish(
-        turn,
-        cancelled ? 'cancelled' : 'failed',
-        cancelled
-          ? clientSignal.aborted
-            ? 'CLIENT_CANCELLED'
-            : 'EXECUTION_CANCELLED'
-          : category.toUpperCase(),
-        new Date(),
-      );
       lifecycleSettled = true;
 
       if (cancelled) {
@@ -1402,10 +1462,32 @@ export class AiOrchestrationService {
     } finally {
       if (!lifecycleSettled && !prepared.deliveryState.groundedCommitSucceeded) {
         try {
-          if (!providerInvoked) {
-            await this.quota.refundQuota(turn.userId, turn.id);
+          const timedOut = prepared.execution.signal.reason instanceof AiExecutionTotalTimeoutError;
+          if (
+            !providerInvoked ||
+            (timedOut && !hasAcceptedApprovedSegment() && completedReason !== 'length')
+          ) {
+            const aborted = prepared.execution.signal.aborted || clientSignal.aborted;
+            await this.aiTurns.settleBeforeProviderFailure(
+              turn,
+              timedOut ? 'failed' : 'cancelled',
+              providerInvoked
+                ? 'TIMEOUT'
+                : timedOut
+                  ? 'TOTAL_TIMEOUT_BEFORE_PROVIDER'
+                  : aborted
+                    ? 'CANCELLED_BEFORE_PROVIDER'
+                    : 'STREAM_DELIVERY_TERMINATED',
+              new Date(),
+            );
+          } else {
+            await this.aiTurns.finish(
+              turn,
+              timedOut ? 'failed' : 'cancelled',
+              timedOut ? 'TIMEOUT' : 'STREAM_DELIVERY_TERMINATED',
+              new Date(),
+            );
           }
-          await this.aiTurns.finish(turn, 'cancelled', 'STREAM_DELIVERY_TERMINATED', new Date());
         } catch {
           // The stream is already terminating; idempotent cleanup may be reconciled later.
         }
@@ -1455,6 +1537,8 @@ export class AiOrchestrationService {
     let providerIterator: AsyncIterator<LLMProviderStreamEvent> | null = null;
     let receivedOutputCharacters = 0;
     let lifecycleSettled = false;
+    const hasAcceptedApprovedSegment = (): boolean =>
+      deliveredSegments > 0 || prepared.deliveryState.approvedSegmentWriteAccepted;
 
     try {
       yield {
@@ -1555,7 +1639,6 @@ export class AiOrchestrationService {
           usage,
           finishReason: groundedFinishReason,
         });
-        deliveredSegments = 1;
         segmentSequence = 1;
         yield {
           type: 'message.segment',
@@ -1567,6 +1650,7 @@ export class AiOrchestrationService {
             deliveryMode: 'commit_with_references',
           },
         } satisfies IncognitoAiStreamEventV2;
+        deliveredSegments = 1;
         yield {
           type: 'turn.completed',
           data: {
@@ -1637,7 +1721,6 @@ export class AiOrchestrationService {
             throwIfAborted(generation.signal);
             if (approved.length > 0) {
               approvedText += approved;
-              deliveredSegments += 1;
               segmentSequence += 1;
               yield {
                 type: 'message.segment',
@@ -1648,6 +1731,7 @@ export class AiOrchestrationService {
                   text: approved,
                 },
               };
+              deliveredSegments += 1;
             }
           }
           continue;
@@ -1711,7 +1795,6 @@ export class AiOrchestrationService {
             throwIfAborted(generation.signal);
             if (approved.length > 0) {
               approvedText += approved;
-              deliveredSegments += 1;
               segmentSequence += 1;
               yield {
                 type: 'message.segment',
@@ -1722,6 +1805,7 @@ export class AiOrchestrationService {
                   text: approved,
                 },
               };
+              deliveredSegments += 1;
             }
           }
           pending = iterator.next();
@@ -1754,7 +1838,6 @@ export class AiOrchestrationService {
         throwIfAborted(generation.signal);
         if (approved.length > 0) {
           approvedText += approved;
-          deliveredSegments += 1;
           segmentSequence += 1;
           yield {
             type: 'message.segment',
@@ -1765,6 +1848,7 @@ export class AiOrchestrationService {
               text: approved,
             },
           };
+          deliveredSegments += 1;
         }
       }
 
@@ -1818,7 +1902,7 @@ export class AiOrchestrationService {
         providerIterator = null;
         let sideEffectError: unknown = null;
         try {
-          if (deliveredSegments === 0) {
+          if (!hasAcceptedApprovedSegment()) {
             await this.quota.refundQuota(principal.userId, prepared.quotaIdempotencyKey);
           }
           await this.audits.append({
@@ -1870,11 +1954,17 @@ export class AiOrchestrationService {
         return;
       }
 
+      const generationEndedFirst =
+        generation.signal.reason instanceof IncognitoContextTerminatedError;
+      const executionTimedOut = generationEndedFirst
+        ? false
+        : this.synchronizeExecutionDeadline(prepared.execution, error);
       const timedOut =
-        error instanceof AiExecutionTotalTimeoutError ||
-        error instanceof ProviderEventTimeout ||
-        generationController.signal.reason instanceof ProviderEventTimeout ||
-        prepared.execution.signal.reason instanceof AiExecutionTotalTimeoutError;
+        !generationEndedFirst &&
+        (executionTimedOut ||
+          error instanceof ProviderEventTimeout ||
+          generationController.signal.reason instanceof ProviderEventTimeout ||
+          prepared.execution.signal.reason instanceof AiExecutionTotalTimeoutError);
       const cancelled = (clientSignal.aborted || generation.signal.aborted) && !timedOut;
       const category = timedOut ? 'timeout' : failureCategory(error);
 
@@ -1882,7 +1972,7 @@ export class AiOrchestrationService {
         riskDecision.status === 'assessed' &&
         riskDecision.level === 'HIGH' &&
         !cancelled &&
-        deliveredSegments === 0 &&
+        !hasAcceptedApprovedSegment() &&
         !generation.signal.aborted
       ) {
         const fallback = this.templates.get('high-generation-fallback');
@@ -1937,12 +2027,15 @@ export class AiOrchestrationService {
       }
 
       const shouldRefund =
-        deliveredSegments === 0 && completedReason !== 'length' && (!cancelled || !providerInvoked);
+        !hasAcceptedApprovedSegment() &&
+        completedReason !== 'length' &&
+        (!cancelled || !providerInvoked);
       if (shouldRefund) {
         await this.quota.refundQuota(principal.userId, prepared.quotaIdempotencyKey);
       }
       if (cancelled) {
         this.logging.turnCancelled(metadata, 'client_disconnect', Date.now() - generationStartedAt);
+        if (generationEndedFirst) throw new AIIncognitoContextLostError();
         throw new AIProviderError('AI 对话已取消');
       }
       this.logging.turnFailed(metadata, category, Date.now() - generationStartedAt);
@@ -1950,11 +2043,15 @@ export class AiOrchestrationService {
       if (error instanceof AIProviderError) throw error;
       throw new AIProviderError();
     } finally {
-      if (
-        !lifecycleSettled &&
-        !prepared.deliveryState.groundedCommitSucceeded &&
-        !providerInvoked
-      ) {
+      const timedOut =
+        !(generation.signal.reason instanceof IncognitoContextTerminatedError) &&
+        prepared.execution.signal.reason instanceof AiExecutionTotalTimeoutError;
+      const shouldRefundOnTermination =
+        (!lifecycleSettled &&
+          !prepared.deliveryState.groundedCommitSucceeded &&
+          !providerInvoked) ||
+        (timedOut && !hasAcceptedApprovedSegment() && completedReason !== 'length');
+      if (shouldRefundOnTermination) {
         try {
           await this.quota.refundQuota(principal.userId, prepared.quotaIdempotencyKey);
         } catch {
@@ -2021,13 +2118,19 @@ export class AiOrchestrationService {
   enforcePreparedExecutionDeadline(
     prepared: Exclude<PreparedAiTurn, { kind: 'existing' }> | PreparedIncognitoTurn,
   ): void {
-    this.expireExecutionAtDeadline(prepared.execution);
+    this.synchronizeExecutionDeadline(prepared.execution);
   }
 
   preProviderTerminationError(
     prepared: Exclude<PreparedAiTurn, { kind: 'existing' }> | PreparedIncognitoTurn,
   ): AIProviderError | AIProviderTimeoutError | AIIncognitoContextLostError | ConsentRequiredError {
     const executionReason = prepared.execution.signal.reason;
+    if (
+      'generation' in prepared &&
+      prepared.generation.signal.reason instanceof IncognitoContextTerminatedError
+    ) {
+      return new AIIncognitoContextLostError();
+    }
     if (executionReason instanceof AiExecutionTotalTimeoutError) {
       return new AIProviderTimeoutError();
     }
@@ -2043,10 +2146,33 @@ export class AiOrchestrationService {
     return new AIProviderError('AI 对话已取消');
   }
 
-  private expireExecutionAtDeadline(execution: ConsentBoundExecution): void {
-    if (!execution.signal.aborted && execution.deadlineAt.getTime() <= Date.now()) {
-      execution.abort(new AiExecutionTotalTimeoutError());
+  private synchronizeExecutionDeadline(
+    execution: Pick<ActiveAiExecution, 'signal' | 'deadlineAt' | 'abort'>,
+    error?: unknown,
+  ): boolean {
+    if (
+      !execution.signal.aborted &&
+      (error instanceof AiExecutionTotalTimeoutError ||
+        execution.deadlineAt.getTime() <= Date.now())
+    ) {
+      execution.abort(
+        error instanceof AiExecutionTotalTimeoutError ? error : new AiExecutionTotalTimeoutError(),
+      );
     }
+    return (
+      error instanceof AiExecutionTotalTimeoutError ||
+      execution.signal.reason instanceof AiExecutionTotalTimeoutError
+    );
+  }
+
+  private isConsentTermination(
+    execution: Pick<ActiveAiExecution, 'signal'>,
+    error?: unknown,
+  ): boolean {
+    const isWithdrawal = (value: unknown): boolean =>
+      value instanceof ConsentRequiredError ||
+      (value instanceof Error && value.message === 'consent_withdrawn');
+    return isWithdrawal(error) || isWithdrawal(execution.signal.reason);
   }
 
   private releaseIncognitoGeneration(
