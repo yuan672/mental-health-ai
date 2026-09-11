@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { Logger, type ArgumentsHost } from '@nestjs/common';
-import type { Request, Response } from 'express';
+import type { Response } from 'express';
 import type { PinoLogger } from 'nestjs-pino';
 import { AiController } from '../src/ai/ai.controller';
 import type { AiOrchestrationService } from '../src/ai/ai-orchestration.service';
