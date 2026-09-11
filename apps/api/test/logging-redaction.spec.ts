@@ -37,6 +37,9 @@ describe('sensitive logging redaction', () => {
       'reasoning-secret',
       'provider-request-secret',
       'provider-response-secret',
+      'mood-note-secret',
+      'mood-emotion-secret',
+      'mood-trend-secret',
     ];
     logger.info({
       req: {
@@ -62,6 +65,10 @@ describe('sensitive logging redaction', () => {
       reasoning_content: sensitiveValues[11],
       rawProviderRequest: sensitiveValues[12],
       rawProviderResponse: sensitiveValues[13],
+      moodScore: 5,
+      emotion: sensitiveValues[15],
+      note: sensitiveValues[14],
+      dailyTrend: sensitiveValues[16],
     });
 
     for (const sensitiveValue of [...sensitiveValues, 'sensitive body', 'private-context-id']) {

@@ -9,6 +9,8 @@ export const auditResourceTypeSchema = z.enum([
   'conversation_history',
   'risk_event',
   'review_queue_item',
+  'mood_entry',
+  'mood_history',
 ]);
 export const auditActionSchema = z.enum([
   'conversation_deleted',
@@ -22,6 +24,8 @@ export const auditActionSchema = z.enum([
   'safety_output_blocked',
   'safety_assessment_unavailable',
   'trusted_safety_response_created',
+  'mood_entry_deleted',
+  'mood_history_deleted',
 ]);
 
 export type AuditActorType = z.infer<typeof auditActorTypeSchema>;
@@ -61,6 +65,9 @@ const conversationHistoryDeletedMetadataSchema = z
     messageCount: z.number().int().nonnegative(),
   })
   .strict();
+const moodHistoryDeletedMetadataSchema = z
+  .object({ entryCount: z.number().int().positive() })
+  .strict();
 
 export function parseAuditMetadata(
   action: AuditAction,
@@ -80,6 +87,9 @@ export function parseAuditMetadata(
   }
   if (action === 'conversation_history_deleted') {
     return conversationHistoryDeletedMetadataSchema.parse(metadata);
+  }
+  if (action === 'mood_history_deleted') {
+    return moodHistoryDeletedMetadataSchema.parse(metadata);
   }
   return emptyMetadataSchema.parse(metadata);
 }
