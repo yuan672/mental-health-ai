@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="consent-document-key" content="synthetic.privacy-policy" />
+    <meta name="consent-document-revision" content="test-revision-1" />
+    <title>合成测试隐私说明 — 版本 1.0</title>
+    <style>
+      body {
+        margin: 0;
+        color: #17352f;
+        background: #f4f8f6;
+        font:
+          16px/1.7 system-ui,
+          sans-serif;
+      }
+      main {
+        box-sizing: border-box;
+        width: min(760px, 100%);
+        margin: 0 auto;
+        padding: 48px 24px 72px;
+      }
+      .warning {
+        border: 2px solid #9a6a14;
+        border-radius: 12px;
+        background: #fff8df;
+        padding: 16px;
+      }
+      h1,
+      h2 {
+        line-height: 1.25;
+      }
+      code {
+        overflow-wrap: anywhere;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="warning">
+        <strong>仅限 Development/Test。</strong
+        >这是合成测试文档，不是正式隐私政策，也没有获得生产或法律审核。
+      </p>
+      <h1>合成测试隐私说明</h1>
+      <p>政策版本：1.0；文档修订：<code>test-revision-1</code>。</p>
+      <h2>测试数据边界</h2>
+      <p>本文只用于验证 Consent 产品流程。测试数据不得包含真实用户心理聊天或真实身份资料。</p>
+      <h2>合成第三方 AI 处理说明</h2>
+      <p>
+        开发测试可能把合成输入发送到本地模拟模型服务，以验证生成和安全分类链路；这不代表真实第三方供应商的隐私、留存或安全审核已经完成。
+      </p>
+      <h2>撤回说明</h2>
+      <p>
+        测试撤回会阻止依赖该授权的新 AI
+        请求，并尝试终止当前进程中的相关执行；它不能召回已经发送给第三方的数据。
+      </p>
+    </main>
+  </body>
+</html>

@@ -20,7 +20,10 @@ configured provider internally.
 It returns only whether registration is enabled, the minimum age, and the current
 environment-eligible Consent type/version/document identity/display information.
 Development/Test document values are visibly synthetic fixtures; they are not
-production policy evidence. It never returns the configured
+production policy evidence. Their root-relative links resolve to version-controlled
+pages served only by the Vite development/test server. Every Vite build excludes
+those pages, and Staging/Production cannot select or advertise the synthetic
+Registry entries. The endpoint never returns the configured
 provider, internal readiness blockers, credentials, or policy internals. When a
 real registration prerequisite is unavailable, it returns
 `registrationEnabled=false`; `POST /auth/register` then fails closed with
@@ -121,13 +124,13 @@ authenticated user's known consent history:
             "withdrawnAt": null,
             "documentKey": "synthetic.privacy-policy",
             "documentRevision": "test-revision-1",
-            "documentUrl": "https://example.invalid/mental-health-ai/synthetic/privacy/1.0",
+            "documentUrl": "/consent-documents/synthetic.privacy-policy/1.0/test-revision-1.html",
             "displayKey": "consent.privacyPolicy",
             "documentEvidenceStatus": "verified",
             "acceptableDocument": {
               "documentKey": "synthetic.privacy-policy",
               "documentRevision": "test-revision-1",
-              "documentUrl": "https://example.invalid/mental-health-ai/synthetic/privacy/1.0",
+              "documentUrl": "/consent-documents/synthetic.privacy-policy/1.0/test-revision-1.html",
               "displayKey": "consent.privacyPolicy"
             },
             "authorizationStatus": "active",
@@ -147,13 +150,13 @@ authenticated user's known consent history:
             "withdrawnAt": null,
             "documentKey": "synthetic.privacy-policy",
             "documentRevision": "test-revision-1",
-            "documentUrl": "https://example.invalid/mental-health-ai/synthetic/privacy/1.0",
+            "documentUrl": "/consent-documents/synthetic.privacy-policy/1.0/test-revision-1.html",
             "displayKey": "consent.privacyPolicy",
             "documentEvidenceStatus": "verified",
             "acceptableDocument": {
               "documentKey": "synthetic.privacy-policy",
               "documentRevision": "test-revision-1",
-              "documentUrl": "https://example.invalid/mental-health-ai/synthetic/privacy/1.0",
+              "documentUrl": "/consent-documents/synthetic.privacy-policy/1.0/test-revision-1.html",
               "displayKey": "consent.privacyPolicy"
             },
             "authorizationStatus": "active",

@@ -6,6 +6,7 @@ export function ConfirmDialog({
   children,
   confirmLabel,
   busy = false,
+  confirmDisabled = false,
   destructive = false,
   onConfirm,
   onClose,
@@ -15,6 +16,7 @@ export function ConfirmDialog({
   children: ReactNode;
   confirmLabel: string;
   busy?: boolean;
+  confirmDisabled?: boolean;
   destructive?: boolean;
   onConfirm: () => void;
   onClose: () => void;
@@ -93,7 +95,7 @@ export function ConfirmDialog({
           <button
             type="button"
             className={`button${destructive ? ' button-danger' : ''}`}
-            disabled={busy}
+            disabled={busy || confirmDisabled}
             onClick={onConfirm}
           >
             {busy ? '正在处理…' : confirmLabel}

@@ -19,17 +19,21 @@ processed by configured third-party AI generation and safety-classification
 providers when AI chat is enabled and required consent is active.
 
 The privacy view shows server-reported current required consent status and a
-sanitized, paginated decision history. It remains read-only in this batch. The
-backend now implements ADR-016's document-bound accept/withdraw contract,
-same-version re-acceptance, immutable decision receipts, exact operation replay,
-dependency-scoped runtime cancellation, and commit-acknowledgement-loss
-reconciliation. `GET /consents` separates historical displayable evidence from
-the current `acceptableDocument`, and exposes authoritative `consentStates`
-revisions for current and historical withdrawals. These are backend contracts for
-the next delivery; the page does not yet provide user-facing withdrawal,
-re-acceptance, stale-tab, or new-version controls. Synthetic `example.invalid`
-locations are test fixtures, not a completed document-reading experience or
-production policy link. No legacy mutation bypass is exposed.
+sanitized, paginated decision history. The current feature delivery adds explicit
+acceptance, withdrawal, same-version re-acceptance, new-version confirmation, and
+historical/legacy withdrawal controls on top of ADR-016's backend contract.
+`GET /consents` separates historical displayable evidence from the current
+`acceptableDocument`, and exposes authoritative `consentStates` revisions for
+current and historical withdrawals. `POST /consents` uses the strict action union,
+an in-memory operation ID, and the server revision; unknown results are reconciled
+only by exact replay, while stale policy/state conflicts require a fresh explicit
+choice. Development/Test document links resolve to version-controlled synthetic
+pages served only by the Vite development server; their path, document key,
+version, and revision match the server Registry. Every Vite build excludes these
+pages. They are not a completed production document-reading experience or policy
+link, and Staging/Production cannot select or advertise them. No legacy mutation
+bypass is exposed. The UI remains pending review and merge, so overall Phase 5C
+is not yet complete.
 
 Development/Test use visibly synthetic Consent documents. They are not production
 policy content and cannot make Staging/Production registration or third-party AI
@@ -40,9 +44,9 @@ backups, and final Risk Event/Audit retention remain unresolved readiness work.
 Production Safety Lock remains enforced, Production AI Chat remains disabled,
 `productionSafe=false`, and real-model safety evaluation remains not evaluated.
 
-## Consent lifecycle UI implementation plan
+## Consent lifecycle UI implementation
 
-The next bounded Phase 5C delivery turns the authenticated Privacy page into the
+The bounded Phase 5C UI delivery turns the authenticated Privacy page into the
 client for ADR-016 without changing its backend semantics. The page treats
 `currentRequiredConsents` as the admission-policy view, `consentStates` as the
 authoritative revision source for current and historical projections,

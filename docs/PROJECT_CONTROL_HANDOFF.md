@@ -10,9 +10,9 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
 - Phase 3 — AI Foundation: Complete
 - Phase 4 — AI Safety: Engineering scope complete
 - Phase 5 — User Features: In progress; Phase 5A and Phase 5B complete; the
-  bounded Phase 5C Incognito/Privacy engineering scope is complete, while the
-  Consent lifecycle backend engineering scope is implemented in PR #14; overall
-  Phase 5C remains incomplete pending the full Privacy action UI
+  bounded Phase 5C Incognito experience and Consent lifecycle backend are merged,
+  while the Privacy Consent lifecycle action UI is implemented on a feature branch
+  pending review; overall Phase 5C remains incomplete
 - Phase 5B — Chat Product Experience: Product UI engineering complete
 - Phase 6 — Admin and operations features: Not started
 
@@ -40,6 +40,8 @@ safety, or validation for clinical use.
 - [PR #12](https://github.com/yuan672/mental-health-ai/pull/12) — Incognito and read-only Privacy experience
 - [PR #13](https://github.com/yuan672/mental-health-ai/pull/13) — Accepted Consent lifecycle architecture
 - [PR #14](https://github.com/yuan672/mental-health-ai/pull/14) — Consent lifecycle backend
+- [PR #15](https://github.com/yuan672/mental-health-ai/pull/15) — Consent withdrawal race-test
+  finalization
 
 ## Current Feature Status
 
@@ -62,16 +64,17 @@ history. Incognito ordinary text remains outside browser persistent storage and
 ordinary Conversation, Message, and AI Turn tables. Necessary minimal Risk Event
 and Audit records remain possible under ADR-014.
 
-ADR-016 is Accepted as the target Consent lifecycle architecture. It narrowly
+ADR-016 is Accepted as the Consent lifecycle architecture. It narrowly
 supersedes ADR-011's single-lifecycle/no-reaccept constraint and ADR-015's broad
 all-user withdrawal cleanup rule; all other decisions in those ADRs remain
-Accepted. The implementation change set containing this status update provides
-the backend projection/decision ledger, environment-aware document registry,
-operation replay, and single-process dependency-scoped dispatch/cancellation
-coordination. The Privacy withdrawal/reaccept/new-version controls are not yet
-implemented. Consent types, formal legal copy, production document approval,
-retention, account deletion/export, backup deletion, and cross-instance
-cancellation remain unresolved production matters.
+Accepted. The merged backend provides the projection/decision ledger,
+environment-aware document registry, operation replay, and single-process
+dependency-scoped dispatch/cancellation coordination. The current feature branch
+adds the Privacy withdrawal, same-version re-acceptance, new-version and legacy
+confirmation controls, but those controls remain pending review and merge. Consent
+types, formal legal copy, production document approval, retention, account
+deletion/export, backup deletion, and cross-instance cancellation remain
+unresolved production matters.
 
 The backend response contract separates immutable historical evidence from the
 current environment-eligible `acceptableDocument`, filters unavailable or

@@ -598,7 +598,8 @@ p {
   margin-bottom: 16px;
 }
 .privacy-list,
-.consent-history {
+.consent-history,
+.consent-state-list {
   display: grid;
   gap: 10px;
   margin: 0;
@@ -626,6 +627,100 @@ p {
 }
 .privacy-card .button {
   margin-top: 16px;
+}
+.privacy-feedback,
+.inline-success,
+.inline-warning {
+  width: min(780px, 100%);
+  margin: 0 auto 18px;
+  padding: 12px 14px;
+  border-radius: 10px;
+}
+.privacy-feedback {
+  background: #fff0ef;
+  color: #7a2424;
+}
+.privacy-feedback p {
+  margin: 0;
+}
+.inline-success {
+  background: #e4f5eb;
+  color: #15593f;
+}
+.inline-warning {
+  background: #fff6df;
+  color: #6b4b07;
+}
+.privacy-current-list li > div,
+.consent-state-heading > div {
+  display: grid;
+  gap: 4px;
+}
+.privacy-current-list span,
+.consent-state-heading span {
+  color: var(--muted);
+}
+.consent-state-card {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+.consent-state-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+.consent-state-badge {
+  border-radius: 999px;
+  padding: 4px 9px;
+  background: #e4f5eb;
+  color: #15593f;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.consent-state-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 28px;
+  margin: 14px 0;
+}
+.consent-state-details div {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 7px;
+}
+.consent-state-details dt {
+  color: var(--muted);
+}
+.consent-state-details dd {
+  margin: 0;
+  font-weight: 700;
+}
+.consent-document-link {
+  margin-bottom: 0;
+}
+.privacy-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.privacy-actions .button {
+  margin-top: 14px;
+}
+.consent-document-acknowledgement {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 10px;
+  margin-top: 16px;
+}
+.consent-document-acknowledgement input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
 }
 .privacy-disclosure p:last-child {
   margin-bottom: 0;

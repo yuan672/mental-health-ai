@@ -170,7 +170,7 @@ describe('Phase 2A identity and access integration', () => {
             displayKey: 'consent.termsOfService',
             documentKey: 'synthetic.terms-of-service',
             documentRevision: 'test-revision-1',
-            documentUrl: 'https://example.invalid/mental-health-ai/synthetic/terms/1.0',
+            documentUrl: '/consent-documents/synthetic.terms-of-service/1.0/test-revision-1.html',
           },
           {
             type: 'privacy_policy',
@@ -178,7 +178,7 @@ describe('Phase 2A identity and access integration', () => {
             displayKey: 'consent.privacyPolicy',
             documentKey: 'synthetic.privacy-policy',
             documentRevision: 'test-revision-1',
-            documentUrl: 'https://example.invalid/mental-health-ai/synthetic/privacy/1.0',
+            documentUrl: '/consent-documents/synthetic.privacy-policy/1.0/test-revision-1.html',
           },
         ],
       },

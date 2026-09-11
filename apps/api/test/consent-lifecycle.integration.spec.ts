@@ -313,7 +313,7 @@ describe('ADR-016 Consent lifecycle persistence', () => {
         documentKey: 'synthetic.privacy-policy',
         documentRevision: 'test-revision-1',
         displayKey: 'consent.privacyPolicy',
-        documentUrl: 'https://example.invalid/mental-health-ai/synthetic/privacy/1.0',
+        documentUrl: '/consent-documents/synthetic.privacy-policy/1.0/test-revision-1.html',
         approvalStatus: 'test_fixture',
         effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
       },

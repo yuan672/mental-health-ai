@@ -1,5 +1,23 @@
 import { z } from 'zod';
 
+function isSafeDocumentHref(value: string): boolean {
+  if (/^\/consent-documents\/[a-z0-9.-]+\/[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+[.]html$/u.test(value)) {
+    return !value.split('/').some((segment) => segment === '..' || segment === '.');
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.username === '' && url.password === '';
+  } catch {
+    return false;
+  }
+}
+
+export const consentDocumentHrefSchema = z
+  .string()
+  .min(1)
+  .max(2048)
+  .refine(isSafeDocumentHref, 'Consent document link must be same-origin synthetic or HTTPS');
+
 export const sessionResponseSchema = z
   .object({
     success: z.literal(true),
@@ -31,7 +49,7 @@ export const registrationRequirementsResponseSchema = z
               displayKey: z.enum(['consent.termsOfService', 'consent.privacyPolicy']),
               documentKey: z.string().min(1).max(128),
               documentRevision: z.string().min(1).max(64),
-              documentUrl: z.string().url(),
+              documentUrl: consentDocumentHrefSchema,
             })
             .strict(),
         ),
@@ -204,14 +222,14 @@ const consentCurrentItemSchema = z
     withdrawnAt: z.string().datetime({ offset: true }).nullable(),
     documentKey: z.string().min(1).max(128).nullable(),
     documentRevision: z.string().min(1).max(64).nullable(),
-    documentUrl: z.string().url().nullable(),
+    documentUrl: consentDocumentHrefSchema.nullable(),
     displayKey: consentDisplayKeySchema,
     documentEvidenceStatus: consentDocumentEvidenceStatusSchema,
     acceptableDocument: z
       .object({
         documentKey: z.string().min(1).max(128),
         documentRevision: z.string().min(1).max(64),
-        documentUrl: z.string().url(),
+        documentUrl: consentDocumentHrefSchema,
         displayKey: consentDisplayKeySchema,
       })
       .strict()
@@ -231,6 +249,18 @@ export const consentHistoryResponseSchema = z
         consentStates: z.array(consentCurrentItemSchema),
         consents: z.array(consentHistoryItemSchema),
         nextCursor: z.string().nullable(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const consentMutationResponseSchema = z
+  .object({
+    success: z.literal(true),
+    data: z
+      .object({
+        receipt: consentHistoryItemSchema,
+        current: consentCurrentItemSchema,
       })
       .strict(),
   })
