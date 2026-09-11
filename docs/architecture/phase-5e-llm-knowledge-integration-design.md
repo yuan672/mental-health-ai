@@ -1,6 +1,6 @@
 # Phase 5E — LLM + Knowledge Integration Design
 
-- Status: Architecture accepted; Phase 5E Knowledge AI-A backend implementation authorized
+- Status: Architecture accepted; Phase 5E Knowledge AI-A backend Draft implementation in progress
 - Baseline: `develop` at `31681506740129d8690d610da3adaeac1b940ab8`
 - Architecture: Accepted ADR-019
 - Existing content architecture: Accepted ADR-018
@@ -497,13 +497,19 @@ not expose ranking metadata or put references in model-authored plain text.
 
 For a Knowledge-assisted persistent turn, the complete assistant message, ordered
 exact-version references, and completed turn state commit in one transaction before
-the pending answer segment and completion are emitted. If that transaction fails,
-no reference or answer is emitted and the turn cannot claim completion. The earlier
-database commit makes Persistent recovery possible but does not prove the browser
-received either event. For Incognito, only the approved assistant text enters the
-existing context; references travel from the active execution through SSE to React
-memory and are then discarded by the server. Existing cancellation and late-write
-guards still run before every SSE write.
+the pending answer segment and completion are emitted. A confirmed rollback emits
+no reference or answer and the turn cannot claim completion. If commit
+acknowledgement is lost, a bounded lock-compatible read waits for the exact turn's
+transaction outcome and verifies the assistant ID, body, and ordered version IDs.
+An exact committed result continues; a proven non-commit follows the normal safe
+failure path. If that bounded read cannot decide, the server neither refunds nor
+forces a failure state and ends without a definitive terminal event; the v2 client
+uses authoritative Persistent history reconciliation. The earlier database commit
+makes Persistent recovery possible but does not prove the browser received either
+event. For Incognito, only the approved assistant text enters the existing context;
+references travel from the active execution through SSE to React memory and are
+then discarded by the server. Existing cancellation and late-write guards still
+run before every SSE write.
 
 ## 10. Persistence and lifecycle
 
@@ -567,8 +573,19 @@ metadata.
   explicit creation-capable continuation after its Conversation/turn was purged is
   outside that retained-row guarantee.
 - Existing Provider-started cancel/disconnect and `finishReason=length` charging
-  rules remain. Existing before/after-approved-content refund rules apply to
-  grounding and Output Safety failures as described above.
+  rules remain. If the atomic user-message/quota start commits but cancellation,
+  Consent withdrawal, or deadline wins before actual Provider transport dispatch,
+  a cleanup transaction first locks that exact turn, terminates it, and refunds its
+  consumption in the same transaction. The turn lock orders cleanup after an
+  in-flight start transaction even if that start's commit acknowledgement is lost,
+  so the refund cannot incorrectly observe a pre-commit ledger view. Existing
+  before/after-approved-content refund rules apply to grounding and Output Safety
+  failures as described above.
+- If the execution terminates after preparation returns but before SSE headers are
+  opened, the controller performs that same pre-dispatch cleanup. A still-writable
+  response receives the existing typed timeout, Consent-required, Incognito-context,
+  or cancellation error; a disconnected response receives no late write. The API
+  does not silently return while leaving a writable HTTP response open.
 
 The body is reference data, not trusted instructions. This framing plus strict
 output/reference validation reduces one injection path but does not replace the
@@ -604,16 +621,17 @@ references.
 
 ## 13. Error and recovery behavior
 
-| Condition                                           | Provider call                                       | User-visible behavior                                                       | Reference behavior                                                 |
-| --------------------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| No lexical hit                                      | Normal generation                                   | Existing chat behavior                                                      | Empty                                                              |
-| Retrieval database timeout/error                    | Normal generation once, unless request is cancelled | Existing chat behavior; no false grounding claim                            | Empty                                                              |
-| Consent/cancel/deadline during retrieval            | None after termination                              | Existing cancelled/failed behavior                                          | Empty                                                              |
-| Version change visible at final recheck             | Normal no-Knowledge generation once                 | Existing chat behavior                                                      | Empty                                                              |
-| Malformed grounded envelope or invalid reference ID | No content emitted                                  | Typed safe turn failure                                                     | Empty                                                              |
-| Output Safety blocks or is unavailable              | Upstream aborted/closed                             | Existing trusted safe replacement or failure                                | Empty                                                              |
-| Persistent message/reference commit fails           | No answer emitted                                   | Safe turn failure; no fake completion                                       | Empty                                                              |
-| Client disconnect after Provider start              | Abort and existing quota policy                     | No delivery guarantee; Persistent history may already hold a committed pair | No late SSE; a pair whose commit already won remains exact history |
+| Condition                                           | Provider call                                       | User-visible behavior                                                       | Reference behavior                                                     |
+| --------------------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| No lexical hit                                      | Normal generation                                   | Existing chat behavior                                                      | Empty                                                                  |
+| Retrieval database timeout/error                    | Normal generation once, unless request is cancelled | Existing chat behavior; no false grounding claim                            | Empty                                                                  |
+| Consent/cancel/deadline during retrieval            | None after termination                              | Existing cancelled/failed behavior                                          | Empty                                                                  |
+| Version change visible at final recheck             | Normal no-Knowledge generation once                 | Existing chat behavior                                                      | Empty                                                                  |
+| Malformed grounded envelope or invalid reference ID | No content emitted                                  | Typed safe turn failure                                                     | Empty                                                                  |
+| Output Safety blocks or is unavailable              | Upstream aborted/closed                             | Existing trusted safe replacement or failure                                | Empty                                                                  |
+| Persistent commit is proven rolled back             | No answer emitted                                   | Safe turn failure; no fake completion                                       | Empty                                                                  |
+| Persistent commit result remains indeterminate      | No answer emitted                                   | No definitive terminal; reconcile strict v2 history                         | Empty on the wire; an exact committed pair may later appear in history |
+| Client disconnect after Provider start              | Abort and existing quota policy                     | No delivery guarantee; Persistent history may already hold a committed pair | No late SSE; a pair whose commit already won remains exact history     |
 
 The design adds no automatic generation retry and no fallback second Provider call.
 An ordinary no-Knowledge generation after a change visible at the final recheck is
@@ -832,6 +850,18 @@ fixture. CI uses no real Provider key, user psychological data, or live source U
 - after a grounded commit/append wins, an injected serialization or socket failure
   produces no misleading definitive `turn.failed`; Persistent enters history
   reconciliation and Incognito retires the context;
+- a lost commit acknowledgement while the writer still holds the turn row forces
+  the bounded reconciliation read to wait for that transaction; an exact commit is
+  recovered once, while lock timeout/unknown state emits neither refund, forced
+  failure transition, answer, reference, nor definitive `turn.failed`;
+- a lost start-transaction acknowledgement while its writer still holds the turn
+  row makes pre-dispatch cleanup wait at that row; after the writer resolves, turn
+  termination and quota refund commit atomically, and Provider transport remains at
+  zero calls;
+- Persistent total timeout and Incognito Consent withdrawal in the
+  prepare-return-to-SSE window terminate the prepared execution, perform the
+  pre-dispatch refund/release, and close a writable request with the corresponding
+  typed response rather than hanging it;
 - Persistent uncertain delivery recovers only through a strict v2 authoritative
   history read, while Incognito discards and retires the affected context without
   persistence, generation replay, or reuse of the old request ID;
@@ -903,11 +933,12 @@ remains Not Evaluated.
 
 ### Phase 5E Knowledge AI-A — Backend grounding and provenance
 
-One independently reviewable PR would add:
+The current independently reviewable AI-A Draft delivery adds:
 
 - shared strict reference and negotiated protocol schemas;
 - local retrieval policy/service and grounded prompt/response contract;
-- the next forward-only migration and message-reference repository;
+- forward-only Migration `0008_gorgeous_gladiator` and the
+  `assistant_message_knowledge_references` repository;
 - orchestration, Consent/cancel/timeout, persistence, quota, and logging integration;
 - synthetic unit, PostgreSQL, mock-Provider, concurrency, privacy, and migration
   tests; and
@@ -1023,7 +1054,8 @@ Safety, or independent Knowledge-reading behavior.
 
 Project status remains:
 
-- Phase 5E: incomplete; LLM + Knowledge architecture accepted and Knowledge AI-A implementation authorized
+- Phase 5E: incomplete; LLM + Knowledge architecture accepted, Knowledge AI-A is
+  an unmerged backend Draft delivery, and Knowledge AI-B remains pending
 - Production Safety Lock: Enforced
 - Production AI Chat: Disabled
 - `productionSafe=false`
