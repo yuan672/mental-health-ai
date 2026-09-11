@@ -12,6 +12,7 @@ export function KnowledgeListPage() {
   const [articles, setArticles] = useState<KnowledgeArticleSummary[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [hasLoadedFirstPage, setHasLoadedFirstPage] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
@@ -40,6 +41,7 @@ export function KnowledgeListPage() {
           ...response.data.items.filter((article) => !existing.has(article.articleKey)),
         ];
       });
+      if (mode === 'replace') setHasLoadedFirstPage(true);
       setNextCursor(response.data.nextCursor);
     } catch (reason) {
       if (!isAbortError(reason) && mountedRef.current && generation === generationRef.current) {
@@ -89,10 +91,18 @@ export function KnowledgeListPage() {
           </button>
         </div>
       ) : null}
-      {!loading && !error && articles.length === 0 ? (
+      {hasLoadedFirstPage && !error && articles.length === 0 ? (
         <div className="knowledge-empty">
           <h2>当前没有可阅读的内容</h2>
-          <p>已发布并符合当前环境规则的内容会显示在这里。</p>
+          <p>目前还没有可阅读的文章，可以稍后重新加载。</p>
+          <button
+            type="button"
+            className="button button-secondary"
+            disabled={loading}
+            onClick={() => void load(null, 'replace')}
+          >
+            {loading ? '正在重新加载…' : '重新加载'}
+          </button>
         </div>
       ) : null}
       {articles.length > 0 ? (
@@ -114,6 +124,12 @@ export function KnowledgeListPage() {
                   <dt>发布日期</dt>
                   <dd>{formatKnowledgeDate(article.publishedAt)}</dd>
                 </div>
+                {article.reviewStatus === 'source_verified' && article.reviewedAt ? (
+                  <div>
+                    <dt>来源核验日期</dt>
+                    <dd>{formatKnowledgeDate(article.reviewedAt)}</dd>
+                  </div>
+                ) : null}
                 <div>
                   <dt>来源发布者</dt>
                   <dd>{article.sourcePublishers.join('、')}</dd>

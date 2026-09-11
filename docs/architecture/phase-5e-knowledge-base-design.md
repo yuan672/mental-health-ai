@@ -1,16 +1,16 @@
 # Phase 5E — Knowledge Base Design Review
 
-- Status: Accepted design; Phase 5E-1 implementation authorized
+- Status: Accepted design; Phase 5E-1 and Phase 5E-2 engineering complete
 - Baseline: `develop` at `ff84227061aed2c8f081d913767343af3b4d7ed5`
 - Architecture: Accepted ADR-018
-- Implementation status: Phase 5E-1 backend is merged; Phase 5E-2 Web reader is
-  implemented in Draft PR #23 and awaits review
+- Implementation status: Phase 5E-1 backend is delivered by PR #22 and Phase 5E-2
+  Web reader is delivered by PR #23; Phase 5E overall remains incomplete
 - Source reconnaissance date: 2026-09-11
 
-This document defines the accepted Phase 5E boundary. Phase 5E-1 now has an
-independent implementation under Draft PR review; this document itself does not
-publish curated content, implement the Phase 5E-2 Web experience, Phase 6 Knowledge
-Management, or any AI retrieval feature.
+This document defines the accepted Phase 5E boundary. Phase 5E-1 now provides the
+content/read foundation and Phase 5E-2 provides the authenticated Web reading
+experience. Neither delivery publishes curated production content, implements
+Phase 6 Knowledge Management, or adds any AI retrieval feature.
 
 ## 1. Existing capabilities and constraints
 
@@ -25,8 +25,10 @@ Phase 5E can reuse:
 - plain-text React rendering, accessible dialogs/status messages, RTL tests, API
   integration tests, and Chromium P0 coverage.
 
-There is no Knowledge module, article table, source table, read API, Web route,
-content publishing workflow, embedding pipeline, or retrieval integration today.
+At the design baseline there was no Knowledge module, article table, source table,
+read API, Web route, content publishing workflow, embedding pipeline, or retrieval
+integration. Phase 5E-1 and Phase 5E-2 have since delivered the bounded content
+foundation and Web reader; the remaining exclusions still apply.
 `LLMProvider.embed()` remains an unsupported capability and is not needed for the
 independent reading foundation. The HANDOFF's wider `LLM + Knowledge` direction is
 retained and is assigned to a later independent Phase 5E batch with separate design

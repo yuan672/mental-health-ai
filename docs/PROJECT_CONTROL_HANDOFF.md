@@ -9,10 +9,10 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
 - Phase 2 — Core Backend Foundation: Complete
 - Phase 3 — AI Foundation: Complete
 - Phase 4 — AI Safety: Engineering scope complete
-- Phase 5 — User Features: In progress; Phase 5A and Phase 5B are complete, and
-  the bounded Phase 5C Incognito, Consent backend, and Privacy Consent lifecycle
-  UI engineering scope is complete; Phase 5D Mood/Profile engineering is complete;
-  remaining Phase 5 work has not started
+- Phase 5 — User Features: In progress; Phase 5A through Phase 5D are engineering
+  complete, and the bounded Phase 5E-1 content foundation and Phase 5E-2 Web
+  reader are engineering complete; curated production content and the separately
+  authorized AI integration batch remain incomplete
 - Phase 5C — Incognito and Privacy Experience: Engineering complete; production
   policy/content approval and production enablement remain incomplete
 - Phase 5B — Chat Product Experience: Product UI engineering complete
@@ -21,9 +21,9 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   experience delivered by PR #20
 - Phase 5E — Knowledge Base: ADR-018 and the minimum design are accepted;
   Phase 5E-1 content-foundation engineering is complete and delivered by PR #22;
-  the Phase 5E-2 Web reader is implemented in Draft PR #23 and awaits review;
-  curated production content and later AI integration remain separate work, so
-  Phase 5E is not phase-complete
+  Phase 5E-2 Web reader engineering is complete and delivered by PR #23; curated
+  production content and later AI integration remain separate work, so Phase 5E
+  is not phase-complete
 - Phase 6 — Admin and operations features: Not started
 
 ## Current Production State
@@ -61,6 +61,8 @@ safety, or validation for clinical use.
   experience and final state-recovery fixes
 - [PR #22](https://github.com/yuan672/mental-health-ai/pull/22) — Knowledge Base
   content foundation and source-evidence freeze boundary
+- [PR #23](https://github.com/yuan672/mental-health-ai/pull/23) — Knowledge Base Web
+  reader and final accessibility/state recovery fixes
 
 ## Current Feature Status
 
@@ -82,10 +84,11 @@ safety, or validation for clinical use.
   Phase 5E-1 delivers the three-table model,
   forward-only 0007 migration, authenticated read API, exact-version release
   commands, source-evidence freeze boundary, and guarded unverified synthetic
-  fixtures. Draft PR #23 adds the authenticated Phase 5E-2 list/detail reading
+  fixtures. PR #23 delivers the authenticated Phase 5E-2 list/detail reading
   experience, strict response validation, safe bounded-block rendering, exact
-  source display, session cleanup, and synthetic browser coverage; it is not yet
-  merged. No curated production content has been published. The
+  source and source-review-date display, empty-state recovery, session cleanup,
+  and synthetic browser coverage. Phase 5E-2 Web engineering is complete. No
+  curated production content has been published. The
   LLM-plus-Knowledge direction remains a later independent Phase 5E batch requiring
   separate design and authorization. Admin/Reviewer features and production
   enablement remain outside completed scope.
@@ -148,9 +151,9 @@ None.
 
 ## Immediate Next Step
 
-Review Draft [PR #23](https://github.com/yuan672/mental-health-ai/pull/23) for the
-bounded Phase 5E-2 Web reader. Do not merge it without review, publish curated
-content, implement AI retrieval, or start Phase 6 without separate authorization.
+Keep curated content publication and the bounded LLM-plus-Knowledge integration as
+separately reviewed Phase 5E batches. Do not publish curated content, implement AI
+retrieval, or start Phase 6 without separate authorization.
 
 ## Source of Truth
 

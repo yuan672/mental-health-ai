@@ -561,3 +561,89 @@ test('Knowledge reader shows exact synthetic evidence and remains session-bound'
   await expect(page).toHaveURL(/\/login\?returnTo=/u);
   await expect(page.getByText('这段合成正文只用于自动化测试。')).toHaveCount(0);
 });
+
+test('Knowledge reader wraps valid long content at mobile and desktop widths', async ({ page }) => {
+  const longHeading = 'H'.repeat(160);
+  const longParagraph = 'https://synthetic.test/'.padEnd(2_000, 'p');
+  const longListItem = 'L'.repeat(500);
+  const longCallout = 'C'.repeat(2_000);
+  await page.route('**/knowledge/articles/synthetic-long-content', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        data: {
+          article: {
+            articleKey: 'synthetic-long-content',
+            title: '合法长文本换行测试',
+            summary: '仅用于真实浏览器布局测试。',
+            version: 1,
+            contentOrigin: 'synthetic_fixture',
+            reviewStatus: 'unverified',
+            reviewedAt: null,
+            publishedAt: '2026-09-11T08:00:00.000Z',
+            sourcePublishers: ['合成发布者'],
+            contentBlocks: [
+              { type: 'heading', level: 3, text: longHeading },
+              { type: 'paragraph', text: longParagraph },
+              { type: 'list', style: 'unordered', items: [longListItem] },
+              { type: 'callout', tone: 'important', text: longCallout },
+            ],
+            sources: [
+              {
+                publisherName: '合成发布者',
+                sourceTitle: 'S'.repeat(320),
+                sourceUrl: `https://source.synthetic.test/${'u'.repeat(240)}`,
+                sourcePublishedAt: null,
+                sourceVersionLabel: 'V'.repeat(120),
+                sourceLocator: 'P'.repeat(160),
+                retrievedAt: '2026-09-03T10:00:00.000Z',
+              },
+            ],
+          },
+        },
+      }),
+    });
+  });
+  await login(page);
+  await page.goto('/app/knowledge/synthetic-long-content');
+  const heading = page.getByRole('heading', { level: 3, name: longHeading });
+  await expect(heading).toBeVisible();
+  const wrappingTargets = page.locator(
+    '.knowledge-body h3, .knowledge-body > p, .knowledge-body li, .knowledge-callout p, .knowledge-source h3',
+  );
+
+  for (const width of [320, 390, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    ).toBe(true);
+    expect(
+      await page
+        .locator('.knowledge-article')
+        .evaluate(
+          (element) =>
+            element.scrollWidth <= element.clientWidth &&
+            element.getBoundingClientRect().right <= document.documentElement.clientWidth,
+        ),
+    ).toBe(true);
+    expect(
+      await wrappingTargets.evaluateAll((elements) =>
+        elements.every(
+          (element) =>
+            element.scrollWidth <= element.clientWidth &&
+            element.getBoundingClientRect().right <= document.documentElement.clientWidth,
+        ),
+      ),
+    ).toBe(true);
+    if (width === 320 && process.env.UPDATE_KNOWLEDGE_SCREENSHOTS === '1') {
+      await page.screenshot({
+        path: `${knowledgeScreenshotDirectory}knowledge-long-content-320.png`,
+        fullPage: true,
+      });
+    }
+  }
+});

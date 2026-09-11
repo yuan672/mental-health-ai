@@ -94,6 +94,9 @@ export function KnowledgeDetailPage() {
             <h1 id="knowledge-detail-title">{article.title}</h1>
             <p className="knowledge-summary">{article.summary}</p>
             <p className="muted">发布于 {formatKnowledgeDate(article.publishedAt)}</p>
+            {article.reviewStatus === 'source_verified' && article.reviewedAt ? (
+              <p className="muted">来源核验日期 {formatKnowledgeDate(article.reviewedAt)}</p>
+            ) : null}
           </header>
           <KnowledgeEvidenceNote article={article} />
           <div className="knowledge-body">
