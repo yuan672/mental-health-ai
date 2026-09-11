@@ -1,7 +1,8 @@
 # ADR-017: Mood Tracking and Minimal Profile Data Boundaries
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-11
+- Accepted: 2026-09-11
 - Related: ADR-003, ADR-004, ADR-007, ADR-008, ADR-009, ADR-011,
   ADR-015, ADR-016
 
@@ -17,7 +18,7 @@ address, employer, school, diagnosis, or analytics profile. Authentication uses 
 server-side session, and AI admission is separately controlled by current Consent,
 quota, and safety gates. Mood and Profile must preserve those boundaries.
 
-## Proposed decision
+## Decision
 
 ### Mood check-in semantics
 
@@ -133,8 +134,12 @@ A private, owner-scoped read endpoint resolves `clientRequestId` to a currently
 existing row without creating data. The Web uses it—not a repeated POST—to confirm
 an unknown create. If no row exists, the server cannot distinguish never committed
 from later hard-deleted without a durable operation ledger. It therefore reports
-only `absent`; the UI does not reconstruct the old row. Creating after that requires
-a new explicit action and a new `clientRequestId`.
+only `absent`; the UI does not reconstruct the old row. `Absent` is a point-in-time
+observation: the original request may still be uncommitted and may become visible
+later. It is not evidence that the request failed, rolled back, was cancelled, or
+can never commit. Creating after that requires a new explicit action and a new
+`clientRequestId`, but the new ID cannot prevent the old in-flight request from
+committing later.
 
 The guarantee is deliberately bounded to the row's lifetime. After single/delete-
 all hard deletion, a direct POST using the old identifier can create a row again;
@@ -261,12 +266,12 @@ Rejected. Mood storage is an independent authenticated feature. Sending its text
 a third party or classifying it would add a materially different processing purpose
 and user expectation.
 
-## Adoption condition
+## Acceptance scope
 
-The Phase 5D product scope—the five-point scale, bounded emotion list, 500-code-point
-note, multiple entries per day, no backdating, hard deletion, and read-only minimal
-Profile—was approved for design finalization on 2026-09-11. This ADR intentionally
-remains Proposed until the complete engineering contract receives final review.
-Later acceptance would authorize engineering implementation, not production privacy
-wording, account-deletion/backup policy, clinical validation, AI enablement, or
-real-model evaluation.
+The Phase 5D product scope and engineering contract—the five-point scale, bounded
+emotion list, 500-code-point note, multiple entries per day, no backdating, hard
+deletion, row-lifetime creation idempotency, read-only unknown-result confirmation,
+bounded pagination semantics, and read-only minimal Profile—were accepted on
+2026-09-11. Acceptance authorizes the bounded Phase 5D engineering implementation,
+not production privacy wording, account-deletion/backup policy, clinical validation,
+AI enablement, or real-model evaluation.

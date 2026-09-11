@@ -1,9 +1,9 @@
 # Phase 5D — Mood / Profile Design Review
 
-- Status: Design pending review
+- Status: Accepted design; implementation not started
 - Baseline: `develop` at `0655c18b1b230ad5463fb75e54ab9167eb0a930f`
-- Proposed architecture: ADR-017
-- Product scope: Approved for contract finalization on 2026-09-11
+- Architecture: Accepted ADR-017
+- Product and engineering contract: Accepted on 2026-09-11
 - Implementation status: Not started
 
 This document defines the bounded Phase 5D product and engineering proposal. It
@@ -43,7 +43,7 @@ minimal successful adult-verification result.
 | Trend           | Daily count and average over a fixed 7/30-day calendar range           | Latest entry only                   | An average represents multiple check-ins without pretending missing dates are zero. It is labelled as a simple summary of recorded entries.                                                                        |
 | Profile         | Read-only existing account facts; no new columns                       | Add display name/avatar             | Current product has no use case that justifies collecting new personal fields.                                                                                                                                     |
 
-The recommendation changes no Accepted ADR. It is captured in Proposed ADR-017
+The accepted recommendation changes no earlier Accepted ADR. ADR-017 records it
 because retention, non-AI processing, retry semantics, date boundaries, and Profile
 data minimization are durable decisions.
 
@@ -61,8 +61,10 @@ data minimization are durable decisions.
 7. A definitely rejected request keeps the draft for correction.
 8. A network-unknown result keeps the request values and `clientRequestId` in memory
    and calls the read-only creation-status endpoint. If the row exists, the UI uses
-   its current server state. If absent, it does not POST the old request again;
-   creating a record requires a new explicit action and a new ID.
+   its current server state. `Absent` only means no row is visible at that read; the
+   original request may still commit later. The UI does not POST the old request
+   again. Creating a record requires a new explicit action and new ID, with an
+   explicit warning that this cannot stop a late original commit.
 
 The page does not autosave a draft and does not persist it in browser storage.
 
@@ -111,17 +113,17 @@ history, then requires a new explicit confirmation.
 
 ### Interaction states
 
-| State                   | Presentation and allowed action                                                                                                      |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Initial loading         | Skeleton/plain loading text with `aria-busy`; form may wait for session/profile bootstrap but not AI capability.                     |
-| Empty                   | Non-diagnostic invitation to record a current check-in.                                                                              |
-| Submitting              | One active request, controls remain readable, duplicate submit disabled.                                                             |
-| Validation failure      | Field-associated text via `aria-describedby`; focus the first invalid field.                                                         |
-| Definite server failure | Preserve editable draft; allow a new explicit attempt.                                                                               |
-| Create result unknown   | Preserve request ID and values in memory; use read-only confirmation. An absent result requires a new explicit create with a new ID. |
-| Update/delete unknown   | Reload authoritative state; never auto-retry a destructive request or claim which request changed the row.                           |
-| Stale revision          | Refresh and require a new edit/delete decision.                                                                                      |
-| Delete confirmation     | Focus trapped, Escape supported while idle, destructive action named, focus restored.                                                |
+| State                   | Presentation and allowed action                                                                                                                                                                |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Initial loading         | Skeleton/plain loading text with `aria-busy`; form may wait for session/profile bootstrap but not AI capability.                                                                               |
+| Empty                   | Non-diagnostic invitation to record a current check-in.                                                                                                                                        |
+| Submitting              | One active request, controls remain readable, duplicate submit disabled.                                                                                                                       |
+| Validation failure      | Field-associated text via `aria-describedby`; focus the first invalid field.                                                                                                                   |
+| Definite server failure | Preserve editable draft; allow a new explicit attempt.                                                                                                                                         |
+| Create result unknown   | Preserve request ID and values in memory; use read-only confirmation. `Absent` is point-in-time only; a new-ID create requires explicit acknowledgement that the old request may still commit. |
+| Update/delete unknown   | Reload authoritative state; never auto-retry a destructive request or claim which request changed the row.                                                                                     |
+| Stale revision          | Refresh and require a new edit/delete decision.                                                                                                                                                |
+| Delete confirmation     | Focus trapped, Escape supported while idle, destructive action named, focus restored.                                                                                                          |
 
 On mobile, the form and history are single-column, controls have adequate touch
 targets, text wraps, and the action menu/dialog remains keyboard complete. On
@@ -130,7 +132,7 @@ not create a separate dashboard framework.
 
 ## 4. Mood data model
 
-Proposed table `mood_entries`:
+Accepted table design `mood_entries`:
 
 | Column              | Type                  | Rule                                                          |
 | ------------------- | --------------------- | ------------------------------------------------------------- |
@@ -284,9 +286,10 @@ The response is a strict discriminated union:
 `{ status: "present", entry } | { status: "absent" }`. The `entry` is the current
 row and may reflect a later edit. If no owned live row matches, the endpoint returns
 `absent` with no `entry`. It deliberately does not claim whether the original
-request never committed or the row was later hard-deleted. The endpoint never
-creates or restores data. Cross-user keys are isolated and indistinguishable from
-absent.
+request never committed, has not committed yet, was rolled back/cancelled, or the
+row was later hard-deleted. The original request may still become visible after an
+`absent` response. The endpoint never creates or restores data. Cross-user keys are
+isolated and indistinguishable from absent.
 
 ### History response
 
@@ -396,8 +399,10 @@ load account PII into every route.
 The read-only creation-status route is the supported unknown-result path. A
 `present` result confirms only that a live row currently owns the key. An `absent`
 result cannot distinguish never-created from hard-deleted, so the UI offers no
-“retry old request” mutation. A user who still wants to record the draft performs a
-new explicit create with a new ID.
+“retry old request” mutation. It also cannot exclude an original request that is
+still uncommitted. A user who still wants to record the draft performs a new
+explicit create with a new ID after acknowledging that the old request could still
+commit and produce a second row.
 
 ### Update/update race
 
@@ -449,18 +454,19 @@ event-sourcing or permanent idempotency table is not justified.
 
 ### Required timing outcomes
 
-| Scenario                                                                             | Required result                                                                                                                                              |
-| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Two concurrent creates use the same user/key                                         | One row. One request inserts; the other resolves the same current row after the unique conflict.                                                             |
-| A successful row is edited, then the original create POST is repeated                | No new write; the new payload is ignored; return the edited current row as `existing`, not as an immutable receipt.                                          |
-| A create result is unknown, another tab deletes the row, then the first tab confirms | Read-only confirmation returns `absent`; it neither recreates the row nor claims the original POST failed.                                                   |
-| Delete-all commits before a late create becomes visible                              | The late create may survive and is absent from `entryCount`; refresh displays it as a later database action.                                                 |
-| Create commits before delete-all's delete statement                                  | Delete-all removes it and includes it in `entryCount`; later read-only confirmation returns `absent`.                                                        |
-| An old create POST is manually repeated after hard deletion                          | With no durable tombstone it can create again; the supported Web flow prevents this by requiring a new explicit action/new key after an absent confirmation. |
-| Delete-all result is unknown                                                         | Reload only; do not retry automatically. A new confirmation is required before another delete-all.                                                           |
-| Range pagination crosses Asia/Shanghai midnight                                      | Cursor retains the original calendar bounds and creation ceiling; a fresh first page starts the new window.                                                  |
-| An entry is edited/deleted between page requests                                     | Later responses may show the change; no cross-page snapshot is promised; refresh page one and trend.                                                         |
-| A row has an eligible earlier `createdAt` but commits after page one                 | It may affect a later response or be missed by the current keyset position; explicit refresh is the reconciliation boundary.                                 |
+| Scenario                                                                             | Required result                                                                                                                                                |
+| ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Two concurrent creates use the same user/key                                         | One row. One request inserts; the other resolves the same current row after the unique conflict.                                                               |
+| A successful row is edited, then the original create POST is repeated                | No new write; the new payload is ignored; return the edited current row as `existing`, not as an immutable receipt.                                            |
+| A create result is unknown, another tab deletes the row, then the first tab confirms | Read-only confirmation returns `absent`; it neither recreates the row nor claims the original POST failed, rolled back, was cancelled, or cannot later commit. |
+| Read-only confirmation runs while the original create is still uncommitted           | It returns point-in-time `absent`; the original may commit later. A new-ID create requires an explicit duplicate-risk warning.                                 |
+| Delete-all commits before a late create becomes visible                              | The late create may survive and is absent from `entryCount`; refresh displays it as a later database action.                                                   |
+| Create commits before delete-all's delete statement                                  | Delete-all removes it and includes it in `entryCount`; later read-only confirmation returns `absent`.                                                          |
+| An old create POST is manually repeated after hard deletion                          | With no durable tombstone it can create again; the supported Web flow prevents this by requiring a new explicit action/new key after an absent confirmation.   |
+| Delete-all result is unknown                                                         | Reload only; do not retry automatically. A new confirmation is required before another delete-all.                                                             |
+| Range pagination crosses Asia/Shanghai midnight                                      | Cursor retains the original calendar bounds and creation ceiling; a fresh first page starts the new window.                                                    |
+| An entry is edited/deleted between page requests                                     | Later responses may show the change; no cross-page snapshot is promised; refresh page one and trend.                                                           |
+| A row has an eligible earlier `createdAt` but commits after page one                 | It may affect a later response or be missed by the current keyset position; explicit refresh is the reconciliation boundary.                                   |
 
 ## 8. Profile scope
 
@@ -617,9 +623,9 @@ trend → edit one → delete one → refresh → verify remaining history → d
 logout. It uses the existing protected `_test` database/seed and no real user or
 model data. Component tests retain the detailed failure/concurrency UI cases.
 
-## 14. Implementation approval boundary
+## 14. Accepted implementation boundary
 
-The following product scope was approved for contract finalization on 2026-09-11:
+The following product and engineering scope was accepted on 2026-09-11:
 
 1. 1–5 score, the optional bounded emotion vocabulary, and a 500-code-point note;
 2. multiple entries per day with no backdating in the first implementation;
@@ -627,10 +633,9 @@ The following product scope was approved for contract finalization on 2026-09-11
 4. a read-only Profile made solely from existing identity data, with no new profile
    attributes or account-credential mutation.
 
-ADR-017 remains Proposed and the PR remains Draft until this finalized engineering
-contract is reviewed. There is no discovered implementation-blocking ambiguity in
-the contract. Accepting the ADR would authorize implementation, not any production
-policy or AI enablement.
+ADR-017 is Accepted. There is no discovered implementation-blocking ambiguity in
+the contract. Acceptance authorizes the bounded Phase 5D implementation, not any
+production policy or AI enablement.
 
 ## 15. Production-only unresolved matters
 
