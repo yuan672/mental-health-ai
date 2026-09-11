@@ -361,6 +361,12 @@ describe('Phase 3 AI foundation integration', () => {
     expect(postGate.approved).toEqual(['已批准的第一句。', '这是第二句。']);
     expect(provider.streamCalls).toBe(1);
     expect(await quotaService.getUsage(userId, BASE_NOW)).toMatchObject({ usedCount: 1 });
+    expect(
+      await databaseService.database
+        .select()
+        .from(quotaConsumptions)
+        .where(eq(quotaConsumptions.userId, userId)),
+    ).toHaveLength(1);
 
     const persisted = await messagesService.readMessages(userId, conversation.id, BASE_NOW);
     expect(
@@ -428,6 +434,83 @@ describe('Phase 3 AI foundation integration', () => {
     expect(JSON.stringify(persisted)).not.toContain('different-sensitive-text');
   });
 
+  it('rejects replay metadata when the supplied original conversation does not match', async () => {
+    const userId = await createUser();
+    const original = await conversationsService.create(userId, BASE_NOW);
+    const unrelated = await conversationsService.create(userId, BASE_NOW);
+    const clientRequestId = randomUUID();
+    const principal = { userId, sessionId: randomUUID() };
+    const first = await orchestration.preparePersistentTurn(
+      principal,
+      { clientRequestId, conversationId: original.id, message: 'synthetic-original' },
+      new AbortController().signal,
+      BASE_NOW,
+    );
+    await collect(first);
+
+    await expect(
+      orchestration.preparePersistentTurn(
+        principal,
+        { clientRequestId, conversationId: unrelated.id, message: 'synthetic-recovery' },
+        new AbortController().signal,
+        BASE_NOW,
+      ),
+    ).rejects.toMatchObject({ code: 'CONFLICT', statusCode: 409 });
+    expect(provider.streamCalls).toBe(1);
+    expect(await quotaService.getUsage(userId, BASE_NOW)).toMatchObject({ usedCount: 1 });
+    expect(await messagesService.readMessages(userId, unrelated.id, BASE_NOW)).toHaveLength(0);
+  });
+
+  it('never recreates a purged new-chat conversation when recovery binds its original id', async () => {
+    const userId = await createUser();
+    const clientRequestId = randomUUID();
+    const principal = { userId, sessionId: randomUUID() };
+    const first = await orchestration.preparePersistentTurn(
+      principal,
+      { clientRequestId, message: 'synthetic-new-chat' },
+      new AbortController().signal,
+      BASE_NOW,
+    );
+    if (first.kind !== 'ready') throw new Error('Expected a ready turn');
+    const originalConversationId = first.turn.conversationId;
+    await collect(first);
+    await conversationsService.delete(userId, originalConversationId, BASE_NOW);
+    expect(await conversationsService.purgeExpired(BASE_NOW, 10)).toBe(1);
+
+    await expect(
+      orchestration.preparePersistentTurn(
+        principal,
+        {
+          clientRequestId,
+          conversationId: originalConversationId,
+          message: 'synthetic-bound-recovery',
+        },
+        new AbortController().signal,
+        BASE_NOW,
+      ),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND', statusCode: 404 });
+
+    expect(provider.streamCalls).toBe(1);
+    expect(await quotaService.getUsage(userId, BASE_NOW)).toMatchObject({ usedCount: 1 });
+    const retainedQuotaLedger = await databaseService.database
+      .select()
+      .from(quotaConsumptions)
+      .where(eq(quotaConsumptions.userId, userId));
+    expect(retainedQuotaLedger).toHaveLength(1);
+    expect(
+      await databaseService.database
+        .select()
+        .from(conversations)
+        .where(eq(conversations.userId, userId)),
+    ).toHaveLength(0);
+    expect(
+      await databaseService.database
+        .select()
+        .from(aiTurns)
+        .where(eq(aiTurns.userId, userId)),
+    ).toHaveLength(0);
+  });
+
   it('serializes concurrent claims with the same clientRequestId into one turn', async () => {
     const userId = await createUser();
     const conversation = await conversationsService.create(userId, BASE_NOW);
@@ -453,6 +536,36 @@ describe('Phase 3 AI foundation integration', () => {
       .from(aiTurns)
       .where(and(eq(aiTurns.userId, userId), eq(aiTurns.clientRequestId, clientRequestId)));
     expect(countResult?.value).toBe(1);
+  });
+
+  it('does not redirect concurrent duplicate claims to a different conversation', async () => {
+    const userId = await createUser();
+    const firstConversation = await conversationsService.create(userId, BASE_NOW);
+    const secondConversation = await conversationsService.create(userId, BASE_NOW);
+    const clientRequestId = randomUUID();
+    const common = {
+      userId,
+      clientRequestId,
+      promptKey: 'supportive-chat',
+      promptVersion: 'test',
+      now: BASE_NOW,
+    };
+
+    const attempts = await Promise.allSettled([
+      turnsService.claim({ ...common, conversationId: firstConversation.id }),
+      turnsService.claim({ ...common, conversationId: secondConversation.id }),
+    ]);
+    expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(1);
+    expect(attempts.filter((attempt) => attempt.status === 'rejected')).toHaveLength(1);
+    const rejected = attempts.find((attempt) => attempt.status === 'rejected');
+    expect(rejected).toMatchObject({ reason: { code: 'CONFLICT', statusCode: 409 } });
+
+    const rows = await databaseService.database
+      .select()
+      .from(aiTurns)
+      .where(and(eq(aiTurns.userId, userId), eq(aiTurns.clientRequestId, clientRequestId)));
+    expect(rows).toHaveLength(1);
+    expect([firstConversation.id, secondConversation.id]).toContain(rows[0]?.conversationId);
   });
 
   it('enforces one active generation per conversation with a database constraint', async () => {

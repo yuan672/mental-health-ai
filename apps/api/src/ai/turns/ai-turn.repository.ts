@@ -15,6 +15,7 @@ import {
 } from '@mental-health/database';
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service';
+import { KnowledgeMessageReferenceRepository } from '../../knowledge/knowledge-message-reference.repository';
 import { QuotaLimitReachedError, QuotaRepository } from '../../quota/quota.repository';
 import { AuditLogRepository } from '../../safety/audit/audit-log.repository';
 import { RiskEventRepository } from '../../safety/persistence/risk-event.repository';
@@ -58,6 +59,7 @@ export class AiTurnRepository {
   constructor(
     private readonly audits: AuditLogRepository,
     private readonly databaseService: DatabaseService,
+    private readonly knowledgeReferences: KnowledgeMessageReferenceRepository,
     private readonly quotaRepository: QuotaRepository,
     private readonly riskEvents: RiskEventRepository,
   ) {}
@@ -430,6 +432,70 @@ export class AiTurnRepository {
         sequenceNumber,
         content: input.assistantContent,
         createdAt: input.now,
+      });
+
+      const [completed] = await transaction
+        .update(aiTurns)
+        .set({
+          status: 'completed',
+          assistantMessageId: input.assistantMessageId,
+          completedAt: input.now,
+          failureCode: null,
+        })
+        .where(eq(aiTurns.id, input.turnId))
+        .returning();
+      return completed ?? null;
+    });
+  }
+
+  async completeGrounded(input: {
+    turnId: string;
+    userId: string;
+    conversationId: string;
+    assistantMessageId: string;
+    assistantContent: string;
+    articleVersionIds: readonly string[];
+    now: Date;
+  }): Promise<AiTurnRecord | null> {
+    return this.databaseService.database.transaction(async (transaction) => {
+      const [conversation] = await transaction
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(activeOwnedConversation(input.userId, input.conversationId, input.now))
+        .limit(1)
+        .for('update');
+      if (!conversation) {
+        return null;
+      }
+
+      const [turn] = await transaction
+        .select()
+        .from(aiTurns)
+        .where(
+          and(
+            eq(aiTurns.id, input.turnId),
+            eq(aiTurns.userId, input.userId),
+            eq(aiTurns.status, 'streaming'),
+          ),
+        )
+        .limit(1)
+        .for('update');
+      if (!turn) {
+        return null;
+      }
+
+      const sequenceNumber = await this.nextMessageSequence(transaction, input.conversationId);
+      await transaction.insert(messages).values({
+        id: input.assistantMessageId,
+        conversationId: input.conversationId,
+        role: 'assistant',
+        sequenceNumber,
+        content: input.assistantContent,
+        createdAt: input.now,
+      });
+      await this.knowledgeReferences.persistWithinTransaction(transaction, {
+        assistantMessageId: input.assistantMessageId,
+        articleVersionIds: input.articleVersionIds,
       });
 
       const [completed] = await transaction

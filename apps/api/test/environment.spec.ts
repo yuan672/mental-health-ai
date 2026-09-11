@@ -134,4 +134,45 @@ describe('identity environment validation', () => {
       }),
     ).toThrow('First-token timeout cannot exceed total timeout');
   });
+
+  it('keeps Knowledge augmentation disabled by default and bounds its local query', () => {
+    const parsed = parseEnvironment({
+      ...baseEnvironment,
+      APP_ENV: 'test',
+      AGE_VERIFICATION_PROVIDER: 'mock',
+    });
+
+    expect(parsed.AI_KNOWLEDGE_ENABLED).toBe(false);
+    expect(parsed.AI_KNOWLEDGE_SYNTHETIC_FIXTURES_ENABLED).toBe(false);
+    expect(parsed.AI_KNOWLEDGE_CONTEXT_TOKEN_BUDGET).toBeGreaterThanOrEqual(800);
+    expect(parsed.AI_KNOWLEDGE_CONTEXT_TOKEN_BUDGET).toBeLessThanOrEqual(1_200);
+  });
+
+  it.each(['staging', 'production'] as const)(
+    'rejects synthetic Knowledge retrieval in %s',
+    (appEnvironment) => {
+      expect(() =>
+        parseEnvironment({
+          ...baseEnvironment,
+          APP_ENV: appEnvironment,
+          AGE_VERIFICATION_PROVIDER: 'unconfigured',
+          AI_KNOWLEDGE_SYNTHETIC_FIXTURES_ENABLED: 'true',
+        }),
+      ).toThrow('Synthetic Knowledge retrieval is restricted to development and test');
+    },
+  );
+
+  it('rejects a Knowledge retrieval timeout beyond the total turn deadline', () => {
+    expect(() =>
+      parseEnvironment({
+        ...baseEnvironment,
+        APP_ENV: 'test',
+        AGE_VERIFICATION_PROVIDER: 'mock',
+        AI_KNOWLEDGE_RETRIEVAL_TIMEOUT_MS: '2001',
+        LLM_TOTAL_TIMEOUT_MS: '2000',
+        LLM_FIRST_TOKEN_TIMEOUT_MS: '1000',
+        LLM_STREAM_IDLE_TIMEOUT_MS: '1000',
+      }),
+    ).toThrow('Knowledge retrieval timeout cannot exceed total timeout');
+  });
 });

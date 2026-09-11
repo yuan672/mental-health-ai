@@ -68,6 +68,20 @@ export const LOG_REDACT_PATHS = [
   '*.rawProviderRequest',
   'rawProviderResponse',
   '*.rawProviderResponse',
+  'query',
+  '*.query',
+  'normalizedQuery',
+  '*.normalizedQuery',
+  'knowledgeBody',
+  '*.knowledgeBody',
+  'knowledgeSnippet',
+  '*.knowledgeSnippet',
+  'knowledgeReferences',
+  '*.knowledgeReferences',
+  'citationPayload',
+  '*.citationPayload',
+  'sourceUrl',
+  '*.sourceUrl',
 ] as const;
 
 @Module({

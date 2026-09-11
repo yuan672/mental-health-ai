@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import {
   AITurnInProgressError,
+  ConflictError,
   DatabaseError,
   NotFoundError,
   QuotaExceededError,
@@ -61,12 +62,18 @@ export class AiTurnService {
       if (!claimed) {
         throw new NotFoundError('对话不存在');
       }
+      if (!claimed.created && claimed.turn.conversationId !== input.conversationId) {
+        throw new ConflictError('客户端请求与原对话不一致');
+      }
       return claimed;
     } catch (error) {
       if (error instanceof ActiveAiTurnError) {
         throw new AITurnInProgressError();
       }
       if (error instanceof NotFoundError) {
+        throw error;
+      }
+      if (error instanceof ConflictError) {
         throw error;
       }
       throw new DatabaseError();
@@ -172,6 +179,41 @@ export class AiTurnService {
         conversationId: turn.conversationId,
         assistantMessageId,
         assistantContent,
+        now,
+      });
+      if (!completed?.assistantMessageId) {
+        throw new NotFoundError('AI 对话请求不存在');
+      }
+      this.logging.messageAppended(
+        turn.userId,
+        turn.conversationId,
+        assistantMessageId,
+        'assistant',
+      );
+      return completed as CompletedAiTurn;
+    } catch (error) {
+      if (error instanceof NotFoundError) {
+        throw error;
+      }
+      throw new DatabaseError();
+    }
+  }
+
+  async completeGrounded(
+    turn: AiTurnRecord,
+    assistantContent: string,
+    articleVersionIds: readonly string[],
+    now: Date,
+  ): Promise<CompletedAiTurn> {
+    const assistantMessageId = randomUUID();
+    try {
+      const completed = await this.repository.completeGrounded({
+        turnId: turn.id,
+        userId: turn.userId,
+        conversationId: turn.conversationId,
+        assistantMessageId,
+        assistantContent,
+        articleVersionIds,
         now,
       });
       if (!completed?.assistantMessageId) {

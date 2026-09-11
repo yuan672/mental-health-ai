@@ -10,6 +10,7 @@ import {
   AIProviderError,
   AIProviderTimeoutError,
   AITurnInProgressError,
+  ConflictError,
   InternalServerError,
   QuotaExceededError,
   AIIncognitoContextLostError,
@@ -381,8 +382,12 @@ export class AiOrchestrationService {
         input.clientRequestId,
       );
       if (existing) {
-        await this.conversations.get(principal.userId, existing.conversationId, now);
-        execution.dispose();
+        try {
+          this.assertPersistentConversationBinding(existing, input.conversationId);
+          await this.conversations.get(principal.userId, existing.conversationId, now);
+        } finally {
+          execution.dispose();
+        }
         return { kind: 'existing', turn: existing };
       }
 
@@ -399,7 +404,11 @@ export class AiOrchestrationService {
         now,
       });
       if (!claimed.created) {
-        execution.dispose();
+        try {
+          this.assertPersistentConversationBinding(claimed.turn, input.conversationId);
+        } finally {
+          execution.dispose();
+        }
         return { kind: 'existing', turn: claimed.turn };
       }
 
@@ -1503,5 +1512,14 @@ export class AiOrchestrationService {
       return 'AI_TURN_IN_PROGRESS';
     }
     return 'PREPARATION_FAILED';
+  }
+
+  private assertPersistentConversationBinding(
+    turn: AiTurnRecord,
+    conversationId: string | undefined,
+  ): void {
+    if (conversationId !== undefined && turn.conversationId !== conversationId) {
+      throw new ConflictError('客户端请求与原对话不一致');
+    }
   }
 }

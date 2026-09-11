@@ -21,6 +21,14 @@ export class PromptService {
     return this.registry.get('high-risk-support');
   }
 
+  getGroundedSupportiveChatPrompt(): PromptDefinition {
+    return this.registry.get('grounded-supportive-chat');
+  }
+
+  getGroundedSupportiveChatSafetyPrompt(): PromptDefinition {
+    return this.registry.get('grounded-supportive-chat-safety');
+  }
+
   getRiskClassificationPrompt(): PromptDefinition {
     return this.registry.get('risk-classification');
   }
