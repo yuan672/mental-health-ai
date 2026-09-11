@@ -24,7 +24,7 @@ Accepted decisions:
 
 Proposed decisions:
 
-- None
+- ADR-020 Admin Identity and Least-Privilege Backend Boundaries
 
 New decisions should use the next sequential ADR number. Existing accepted ADRs should not be silently rewritten; supersede them with a new ADR when the decision materially changes.
 
