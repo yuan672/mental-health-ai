@@ -8,7 +8,6 @@ import type {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiClientError } from '../api/client';
 import { getConsentHistory, mutateConsent } from '../api/consents';
-import { useChatWorkspace } from '../features/chat/chat-workspace';
 import { ConfirmDialog } from '../shared/confirm-dialog';
 
 const consentNames: Record<ConsentType, string> = {
@@ -72,7 +71,6 @@ function documentEvidenceText(consent: ConsentCurrentItem) {
 }
 
 export function PrivacyPage() {
-  const workspace = useChatWorkspace();
   const [current, setCurrent] = useState<ConsentCurrentItem[]>([]);
   const [consentStates, setConsentStates] = useState<ConsentCurrentItem[]>([]);
   const [history, setHistory] = useState<ConsentHistoryItem[]>([]);
@@ -86,6 +84,7 @@ export function PrivacyPage() {
   const [mutationBusy, setMutationBusy] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [unknownMutation, setUnknownMutation] = useState<PendingUnknownMutation | null>(null);
+  const [stateAuthoritative, setStateAuthoritative] = useState(false);
   const mountedRef = useRef(false);
   const loadControllerRef = useRef<AbortController | null>(null);
   const loadGenerationRef = useRef(0);
@@ -100,7 +99,10 @@ export function PrivacyPage() {
       loadControllerRef.current?.abort();
       loadControllerRef.current = controller;
       if (mode === 'more') setLoadingMore(true);
-      else setLoading(true);
+      else {
+        setLoading(true);
+        setStateAuthoritative(false);
+      }
       setError(null);
       try {
         const response = await getConsentHistory(cursor, controller.signal);
@@ -116,6 +118,8 @@ export function PrivacyPage() {
           mode === 'more' ? [...items, ...response.data.consents] : response.data.consents,
         );
         setNextCursor(response.data.nextCursor);
+        if (mode !== 'more') setStateAuthoritative(true);
+        return true;
       } catch (reason) {
         if (
           !isAbortError(reason) &&
@@ -124,6 +128,7 @@ export function PrivacyPage() {
         ) {
           setError(reason instanceof Error ? reason.message : '无法加载隐私设置');
         }
+        return false;
       } finally {
         if (mountedRef.current && generation === loadGenerationRef.current) {
           if (mode === 'more') setLoadingMore(false);
@@ -149,12 +154,11 @@ export function PrivacyPage() {
   }, [loadPage]);
 
   const openDialog = (action: ConsentMutationAction, consent: ConsentCurrentItem) => {
-    if (mutationInFlightRef.current) return;
+    if (mutationInFlightRef.current || unknownMutation || !stateAuthoritative) return;
     setDialog({ action, consent });
     setDocumentAcknowledged(false);
     setMutationError(null);
     setNotice(null);
-    setUnknownMutation(null);
   };
 
   const performMutation = useCallback(
@@ -170,13 +174,6 @@ export function PrivacyPage() {
       setNotice(null);
       try {
         const response = await mutateConsent(request, controller.signal);
-        if (
-          !mountedRef.current ||
-          controller.signal.aborted ||
-          generation !== mutationGenerationRef.current
-        )
-          return;
-        if (request.action === 'withdraw' && workspace.active) await workspace.cancel();
         if (
           !mountedRef.current ||
           controller.signal.aborted ||
@@ -212,20 +209,32 @@ export function PrivacyPage() {
           setDialog(null);
           setDocumentAcknowledged(false);
           setUnknownMutation(null);
-          setNotice('同意状态或政策文档已变化。已刷新最新状态，请重新作出明确选择。');
-          await loadPage(null, 'refresh');
+          setNotice(null);
+          const refreshed = await loadPage(null, 'refresh');
+          if (
+            !mountedRef.current ||
+            controller.signal.aborted ||
+            generation !== mutationGenerationRef.current
+          )
+            return;
+          if (refreshed) {
+            setNotice('同意状态或政策文档已变化。已刷新最新状态，请重新作出明确选择。');
+          } else {
+            setMutationError(
+              '同意状态或政策文档已变化，但最新状态加载失败。刷新成功前不能提交新的操作。',
+            );
+          }
           return;
         }
         const resultUnknown =
           !(reason instanceof ApiClientError) ||
           reason.code === 'CONSENT_RESULT_UNKNOWN' ||
           reason.code === 'INVALID_API_RESPONSE' ||
-          reason.status >= 500;
+          (reason.code !== 'CONSENT_UNAVAILABLE' && reason.status >= 500);
         if (resultUnknown) {
-          if (request.action === 'withdraw' && workspace.active) await workspace.cancel();
-          if (!mountedRef.current || generation !== mutationGenerationRef.current) return;
           setDialog(null);
           setDocumentAcknowledged(false);
+          setStateAuthoritative(false);
           setUnknownMutation({ request, label });
           setMutationError(
             '服务器是否已记录本次操作暂时无法确认。你可以使用同一操作重新核对，或放弃重试并刷新当前状态。',
@@ -244,7 +253,7 @@ export function PrivacyPage() {
         if (mutationControllerRef.current === controller) mutationControllerRef.current = null;
       }
     },
-    [loadPage, workspace],
+    [loadPage],
   );
 
   const confirmAction = () => {
@@ -287,12 +296,22 @@ export function PrivacyPage() {
     );
   };
 
-  const abandonUnknownAndRefresh = () => {
+  const abandonUnknownAndRefresh = async () => {
     if (mutationInFlightRef.current) return;
-    setUnknownMutation(null);
+    mutationInFlightRef.current = true;
+    setMutationBusy(true);
     setMutationError(null);
-    setNotice('已放弃核对原操作。正在读取服务器当前状态。');
-    void loadPage(null, 'refresh');
+    setNotice(null);
+    const refreshed = await loadPage(null, 'refresh');
+    if (!mountedRef.current) return;
+    setUnknownMutation(null);
+    if (refreshed) {
+      setNotice('已放弃核对原操作，并读取服务器当前状态。');
+    } else {
+      setMutationError('已放弃核对原操作，但最新状态加载失败。刷新成功前不能提交新的操作。');
+    }
+    mutationInFlightRef.current = false;
+    setMutationBusy(false);
   };
 
   return (
@@ -337,7 +356,7 @@ export function PrivacyPage() {
                 type="button"
                 className="button button-secondary"
                 disabled={mutationBusy}
-                onClick={abandonUnknownAndRefresh}
+                onClick={() => void abandonUnknownAndRefresh()}
               >
                 放弃重试并刷新状态
               </button>
@@ -346,6 +365,11 @@ export function PrivacyPage() {
         </div>
       ) : null}
       {loading ? <p aria-busy="true">正在加载同意状态…</p> : null}
+      {!loading && !stateAuthoritative ? (
+        <p className="inline-warning" role="status">
+          当前显示的是上次已知状态。服务器最新状态加载成功前，不能提交新的同意操作。
+        </p>
+      ) : null}
 
       {!loading ? (
         <>
@@ -423,7 +447,7 @@ export function PrivacyPage() {
                           type="button"
                           className="button"
                           aria-label={`${consent.status === 'withdrawn' || consent.authorizationStatus === 'confirmation_required' ? '重新接受' : '接受'}${consentNames[consent.consentType]}版本 ${consent.consentVersion}`}
-                          disabled={mutationBusy}
+                          disabled={mutationBusy || !stateAuthoritative || unknownMutation !== null}
                           onClick={() => openDialog('accept', consent)}
                         >
                           {consent.status === 'withdrawn' ||
@@ -437,7 +461,7 @@ export function PrivacyPage() {
                           type="button"
                           className="button button-danger"
                           aria-label={`撤回${consentNames[consent.consentType]}版本 ${consent.consentVersion}`}
-                          disabled={mutationBusy}
+                          disabled={mutationBusy || !stateAuthoritative || unknownMutation !== null}
                           onClick={() => openDialog('withdraw', consent)}
                         >
                           撤回

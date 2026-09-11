@@ -9,10 +9,11 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
 - Phase 2 — Core Backend Foundation: Complete
 - Phase 3 — AI Foundation: Complete
 - Phase 4 — AI Safety: Engineering scope complete
-- Phase 5 — User Features: In progress; Phase 5A and Phase 5B complete; the
-  bounded Phase 5C Incognito experience and Consent lifecycle backend are merged,
-  while the Privacy Consent lifecycle action UI is implemented on a feature branch
-  pending review; overall Phase 5C remains incomplete
+- Phase 5 — User Features: In progress; Phase 5A and Phase 5B are complete, and
+  the bounded Phase 5C Incognito, Consent backend, and Privacy Consent lifecycle
+  UI engineering scope is complete; remaining Phase 5 work has not started
+- Phase 5C — Incognito and Privacy Experience: Engineering complete; production
+  policy/content approval and production enablement remain incomplete
 - Phase 5B — Chat Product Experience: Product UI engineering complete
 - Phase 6 — Admin and operations features: Not started
 
@@ -42,6 +43,7 @@ safety, or validation for clinical use.
 - [PR #14](https://github.com/yuan672/mental-health-ai/pull/14) — Consent lifecycle backend
 - [PR #15](https://github.com/yuan672/mental-health-ai/pull/15) — Consent withdrawal race-test
   finalization
+- [PR #16](https://github.com/yuan672/mental-health-ai/pull/16) — Privacy Consent lifecycle UI
 
 ## Current Feature Status
 
@@ -69,10 +71,13 @@ supersedes ADR-011's single-lifecycle/no-reaccept constraint and ADR-015's broad
 all-user withdrawal cleanup rule; all other decisions in those ADRs remain
 Accepted. The merged backend provides the projection/decision ledger,
 environment-aware document registry, operation replay, and single-process
-dependency-scoped dispatch/cancellation coordination. The current feature branch
-adds the Privacy withdrawal, same-version re-acceptance, new-version and legacy
-confirmation controls, but those controls remain pending review and merge. Consent
-types, formal legal copy, production document approval, retention, account
+dependency-scoped dispatch/cancellation coordination. PR #16 adds the Privacy
+withdrawal, same-version re-acceptance, new-version and legacy confirmation
+controls. Client-side handling preserves unknown-result requests for exact replay,
+requires an authoritative refresh before replacement operations, and leaves
+dependency-scoped execution cancellation to the server rather than cancelling any
+active workspace on every withdrawal response. Consent types, formal legal copy,
+production document approval, retention, account
 deletion/export, backup deletion, and cross-instance cancellation remain
 unresolved production matters.
 
@@ -111,9 +116,8 @@ None.
 
 ## Immediate Next Step
 
-After the Consent lifecycle backend implementation passes final review and is
-merged, deliver the user-facing Privacy withdrawal/reactivation/new-version flow.
-Do not begin Phase 5D/5E or Phase 6 work from this status file alone.
+Await explicit approval for the next bounded Phase 5 design activity. Do not begin
+Phase 5D/5E or Phase 6 work from this status file alone.
 
 ## Source of Truth
 

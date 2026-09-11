@@ -39,8 +39,8 @@ const environmentSchema = z
       })
       .default(604_800),
     AGE_VERIFICATION_PROVIDER: z.enum(['mock', 'unconfigured']).default('mock'),
-    REQUIRED_TERMS_VERSION: z.string().min(1).max(64).default('1.0'),
-    REQUIRED_PRIVACY_VERSION: z.string().min(1).max(64).default('1.0'),
+    REQUIRED_TERMS_VERSION: z.string().min(1).max(64).default('1.1'),
+    REQUIRED_PRIVACY_VERSION: z.string().min(1).max(64).default('1.1'),
     FREE_DAILY_AI_LIMIT: z.coerce.number().int().positive(),
     QUOTA_TIME_ZONE: z.string().min(1).refine(isSupportedTimeZone, {
       message: 'QUOTA_TIME_ZONE must be a supported IANA time zone',

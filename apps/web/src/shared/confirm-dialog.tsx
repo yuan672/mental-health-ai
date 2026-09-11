@@ -24,10 +24,30 @@ export function ConfirmDialog({
   const dialogRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const busyRef = useRef(busy);
+  const onCloseRef = useRef(onClose);
 
   useEffect(() => {
     busyRef.current = busy;
   }, [busy]);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    const activeElement = document.activeElement;
+    if (
+      open &&
+      busy &&
+      dialog &&
+      (!(activeElement instanceof HTMLElement) ||
+        !dialog.contains(activeElement) ||
+        (activeElement instanceof HTMLButtonElement && activeElement.disabled))
+    ) {
+      dialog.focus();
+    }
+  }, [busy, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -37,7 +57,7 @@ export function ConfirmDialog({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !busyRef.current) {
         event.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== 'Tab' || !dialog) return;
@@ -48,7 +68,11 @@ export function ConfirmDialog({
       );
       const first = focusable[0];
       const last = focusable.at(-1);
-      if (!first || !last) return;
+      if (!first || !last) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
       if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last.focus();
@@ -65,7 +89,7 @@ export function ConfirmDialog({
       document.body.classList.remove('modal-open');
       previouslyFocused?.focus();
     };
-  }, [onClose, open]);
+  }, [open]);
 
   if (!open) return null;
   return (
@@ -79,6 +103,7 @@ export function ConfirmDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="dialog-title"
+        tabIndex={-1}
       >
         <h2 id="dialog-title">{title}</h2>
         <div className="dialog-copy">{children}</div>

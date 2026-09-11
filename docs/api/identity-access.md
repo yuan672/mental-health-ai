@@ -43,14 +43,14 @@ server-required current consent versions:
       "consents": [
         {
           "consentType": "terms_of_service",
-          "consentVersion": "1.0",
+          "consentVersion": "1.1",
           "documentKey": "server-advertised immutable document key",
           "documentRevision": "server-advertised immutable revision",
           "accepted": true
         },
         {
           "consentType": "privacy_policy",
-          "consentVersion": "1.0",
+          "consentVersion": "1.1",
           "documentKey": "server-advertised immutable document key",
           "documentRevision": "server-advertised immutable revision",
           "accepted": true
@@ -115,7 +115,7 @@ authenticated user's known consent history:
         "currentRequiredConsents": [
           {
             "consentType": "privacy_policy",
-            "consentVersion": "1.0",
+            "consentVersion": "1.1",
             "isCurrentRequired": true,
             "status": "accepted",
             "stateRevision": 1,
@@ -123,14 +123,14 @@ authenticated user's known consent history:
             "acceptedAt": "2026-09-10T00:00:00.000Z",
             "withdrawnAt": null,
             "documentKey": "synthetic.privacy-policy",
-            "documentRevision": "test-revision-1",
-            "documentUrl": "/consent-documents/synthetic.privacy-policy/1.0/test-revision-1.html",
+            "documentRevision": "test-revision-2",
+            "documentUrl": "/consent-documents/synthetic.privacy-policy/1.1/test-revision-2.html",
             "displayKey": "consent.privacyPolicy",
             "documentEvidenceStatus": "verified",
             "acceptableDocument": {
               "documentKey": "synthetic.privacy-policy",
-              "documentRevision": "test-revision-1",
-              "documentUrl": "/consent-documents/synthetic.privacy-policy/1.0/test-revision-1.html",
+              "documentRevision": "test-revision-2",
+              "documentUrl": "/consent-documents/synthetic.privacy-policy/1.1/test-revision-2.html",
               "displayKey": "consent.privacyPolicy"
             },
             "authorizationStatus": "active",
@@ -141,7 +141,7 @@ authenticated user's known consent history:
         "consentStates": [
           {
             "consentType": "privacy_policy",
-            "consentVersion": "1.0",
+            "consentVersion": "1.1",
             "isCurrentRequired": true,
             "status": "accepted",
             "stateRevision": 1,
@@ -149,14 +149,14 @@ authenticated user's known consent history:
             "acceptedAt": "2026-09-10T00:00:00.000Z",
             "withdrawnAt": null,
             "documentKey": "synthetic.privacy-policy",
-            "documentRevision": "test-revision-1",
-            "documentUrl": "/consent-documents/synthetic.privacy-policy/1.0/test-revision-1.html",
+            "documentRevision": "test-revision-2",
+            "documentUrl": "/consent-documents/synthetic.privacy-policy/1.1/test-revision-2.html",
             "displayKey": "consent.privacyPolicy",
             "documentEvidenceStatus": "verified",
             "acceptableDocument": {
               "documentKey": "synthetic.privacy-policy",
-              "documentRevision": "test-revision-1",
-              "documentUrl": "/consent-documents/synthetic.privacy-policy/1.0/test-revision-1.html",
+              "documentRevision": "test-revision-2",
+              "documentUrl": "/consent-documents/synthetic.privacy-policy/1.1/test-revision-2.html",
               "displayKey": "consent.privacyPolicy"
             },
             "authorizationStatus": "active",
@@ -170,9 +170,9 @@ authenticated user's known consent history:
             "action": "accept",
             "outcome": "applied",
             "consentType": "privacy_policy",
-            "consentVersion": "1.0",
+            "consentVersion": "1.1",
             "documentKey": "synthetic.privacy-policy",
-            "documentRevision": "test-revision-1",
+            "documentRevision": "test-revision-2",
             "documentEvidenceStatus": "verified",
             "priorRevision": 0,
             "resultingRevision": 1,
@@ -206,6 +206,15 @@ display there. Synthetic identities and URLs are never exposed in
 Staging/Production. Filtering does not modify database evidence or replay
 semantics, and unavailable historical evidence does not prevent an owned
 withdrawal.
+
+The first repository-hosted Development/Test document body is published as the
+new synthetic policy version `1.1/test-revision-2`. The previously registered
+`1.0/test-revision-1` fixture pointed to an unreachable placeholder and had no
+published repository body. Existing decision rows retain that identity unchanged
+and are exposed as historical `unavailable` evidence; they are never relabelled
+as evidence for version 1.1. Explicitly accepting the server-advertised version
+1.1 creates a separate projection and is required before admission becomes
+eligible. This is test-fixture release history, not production policy approval.
 
 An accepted current projection without displayable evidence is exposed as
 `confirmation_required` and does not authorize third-party AI dispatch. History

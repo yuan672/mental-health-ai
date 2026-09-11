@@ -168,7 +168,7 @@ describe('Privacy Consent lifecycle UI', () => {
     expect(localStorageWrite).not.toHaveBeenCalled();
   });
 
-  it('ends an active workspace only after a withdrawal is committed or becomes uncertain', async () => {
+  it('does not issue an unscoped client cancellation after a current withdrawal', async () => {
     const active = currentConsent({
       status: 'accepted',
       stateRevision: 1,
@@ -178,9 +178,6 @@ describe('Privacy Consent lifecycle UI', () => {
     });
     const withdrawn = currentConsent({ stateRevision: 2 });
     mocks.active = true;
-    mocks.cancel.mockImplementation(async () => {
-      mocks.active = false;
-    });
     mocks.getConsentHistory
       .mockResolvedValueOnce(response([active]))
       .mockResolvedValue(response([withdrawn]));
@@ -192,10 +189,8 @@ describe('Privacy Consent lifecycle UI', () => {
     await userEvent.click(await screen.findByRole('button', { name: '撤回服务条款版本 terms-v1' }));
     await userEvent.click(screen.getByRole('button', { name: '确认撤回' }));
 
-    await waitFor(() => expect(mocks.cancel).toHaveBeenCalledTimes(1));
-    expect(mocks.mutateConsent.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.cancel.mock.invocationCallOrder[0] ?? 0,
-    );
+    expect(await screen.findByText(/撤回服务条款版本 terms-v1已记录/u)).toBeInTheDocument();
+    expect(mocks.cancel).not.toHaveBeenCalled();
   });
 
   it('withdraws an owned legacy historical state without requiring document evidence and paginates history', async () => {
@@ -278,6 +273,220 @@ describe('Privacy Consent lifecycle UI', () => {
     });
     expect(request).not.toHaveProperty('documentKey');
     expect(request).not.toHaveProperty('documentRevision');
+  });
+
+  it('does not cancel current work for a historical withdrawal or a late withdrawal response', async () => {
+    const currentRequired = currentConsent({
+      status: 'accepted',
+      stateRevision: 4,
+      withdrawnAt: null,
+      authorizationStatus: 'active',
+      withdrawalEnabled: true,
+    });
+    const historical = currentConsent({
+      consentVersion: 'terms-v0',
+      isCurrentRequired: false,
+      status: 'accepted',
+      stateRevision: 2,
+      authorizationStatus: 'inactive',
+      acceptableDocument: null,
+      acceptanceEnabled: false,
+      withdrawalEnabled: true,
+    });
+    const pending = deferred<ConsentMutationResponse>();
+    mocks.getConsentHistory
+      .mockResolvedValueOnce(response([currentRequired, historical]))
+      .mockResolvedValue(
+        response([currentRequired, { ...historical, status: 'withdrawn', stateRevision: 3 }]),
+      );
+    mocks.mutateConsent.mockReturnValue(pending.promise);
+
+    render(<PrivacyPage />);
+    await userEvent.click(await screen.findByRole('button', { name: '撤回服务条款版本 terms-v0' }));
+    await userEvent.click(screen.getByRole('button', { name: '确认撤回' }));
+    mocks.active = true;
+    pending.resolve(
+      mutationResponse(mocks.mutateConsent.mock.calls[0]?.[0] as ConsentMutationRequest, {
+        ...historical,
+        status: 'withdrawn',
+        stateRevision: 3,
+      }),
+    );
+
+    expect(await screen.findByText(/撤回服务条款版本 terms-v0已记录/u)).toBeInTheDocument();
+    expect(mocks.cancel).not.toHaveBeenCalled();
+  });
+
+  it('does not let an old withdrawal replay cancel work authorized by a later acceptance', async () => {
+    const previouslyAccepted = currentConsent({
+      status: 'accepted',
+      stateRevision: 1,
+      withdrawnAt: null,
+      authorizationStatus: 'active',
+      withdrawalEnabled: true,
+    });
+    const laterAcceptance = currentConsent({
+      status: 'accepted',
+      stateRevision: 3,
+      withdrawnAt: null,
+      authorizationStatus: 'active',
+      withdrawalEnabled: true,
+    });
+    mocks.getConsentHistory
+      .mockResolvedValueOnce(response([previouslyAccepted]))
+      .mockResolvedValue(response([laterAcceptance]));
+    mocks.mutateConsent
+      .mockRejectedValueOnce(new TypeError('synthetic acknowledgement loss'))
+      .mockImplementationOnce(async (request: ConsentMutationRequest) => ({
+        success: true,
+        data: {
+          receipt: {
+            ...mutationResponse(request, { ...previouslyAccepted, status: 'withdrawn' }).data
+              .receipt,
+            resultingRevision: 2,
+          },
+          current: laterAcceptance,
+        },
+      }));
+    mocks.active = true;
+
+    render(<PrivacyPage />);
+    await userEvent.click(await screen.findByRole('button', { name: '撤回服务条款版本 terms-v1' }));
+    await userEvent.click(screen.getByRole('button', { name: '确认撤回' }));
+    await userEvent.click(await screen.findByRole('button', { name: '核对同一操作结果' }));
+
+    expect(await screen.findByText(/撤回服务条款版本 terms-v1已记录/u)).toBeInTheDocument();
+    expect(mocks.cancel).not.toHaveBeenCalled();
+    expect(await screen.findByText('状态修订')).toBeInTheDocument();
+  });
+
+  it('keeps an unknown request and blocks replacement operations until explicit abandon refreshes', async () => {
+    const active = currentConsent({
+      status: 'accepted',
+      stateRevision: 1,
+      withdrawnAt: null,
+      authorizationStatus: 'active',
+      withdrawalEnabled: true,
+    });
+    mocks.getConsentHistory
+      .mockResolvedValueOnce(response([active]))
+      .mockRejectedValueOnce(new TypeError('synthetic refresh failure'));
+    mocks.mutateConsent.mockRejectedValueOnce(new TypeError('synthetic acknowledgement loss'));
+
+    render(<PrivacyPage />);
+    await userEvent.click(await screen.findByRole('button', { name: '撤回服务条款版本 terms-v1' }));
+    await userEvent.click(screen.getByRole('button', { name: '确认撤回' }));
+    const ordinaryAction = await screen.findByRole('button', {
+      name: '撤回服务条款版本 terms-v1',
+    });
+    expect(ordinaryAction).toBeDisabled();
+    fireEvent.click(ordinaryAction);
+    expect(mocks.mutateConsent).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole('button', { name: '放弃重试并刷新状态' }));
+    expect(await screen.findByText(/已放弃核对原操作，但最新状态加载失败/u)).toBeInTheDocument();
+    expect(screen.getByText(/当前显示的是上次已知状态/u)).toBeInTheDocument();
+    expect(ordinaryAction).toBeDisabled();
+    expect(screen.queryByRole('button', { name: '核对同一操作结果' })).not.toBeInTheDocument();
+  });
+
+  it('drops the in-memory unknown snapshot on page exit and reloads authoritative state on re-entry', async () => {
+    const active = currentConsent({
+      status: 'accepted',
+      stateRevision: 1,
+      withdrawnAt: null,
+      authorizationStatus: 'active',
+      withdrawalEnabled: true,
+    });
+    const withdrawn = currentConsent({ stateRevision: 2 });
+    mocks.getConsentHistory
+      .mockResolvedValueOnce(response([active]))
+      .mockResolvedValueOnce(response([withdrawn]));
+    mocks.mutateConsent.mockRejectedValueOnce(new TypeError('synthetic acknowledgement loss'));
+
+    const first = render(<PrivacyPage />);
+    await userEvent.click(await screen.findByRole('button', { name: '撤回服务条款版本 terms-v1' }));
+    await userEvent.click(screen.getByRole('button', { name: '确认撤回' }));
+    expect(await screen.findByRole('button', { name: '核对同一操作结果' })).toBeInTheDocument();
+    first.unmount();
+
+    render(<PrivacyPage />);
+    expect(
+      await screen.findByRole('button', { name: '重新接受服务条款版本 terms-v1' }),
+    ).toBeEnabled();
+    expect(screen.queryByRole('button', { name: '核对同一操作结果' })).not.toBeInTheDocument();
+    expect(mocks.mutateConsent).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not claim a 409 refresh succeeded when authoritative reload fails', async () => {
+    const active = currentConsent({
+      status: 'accepted',
+      stateRevision: 1,
+      withdrawnAt: null,
+      authorizationStatus: 'active',
+      withdrawalEnabled: true,
+    });
+    mocks.getConsentHistory
+      .mockResolvedValueOnce(response([active]))
+      .mockRejectedValueOnce(new TypeError('synthetic refresh failure'));
+    mocks.mutateConsent.mockRejectedValueOnce(
+      new ApiClientError('CONSENT_STATE_CHANGED', '同意状态已经变化', 409),
+    );
+
+    render(<PrivacyPage />);
+    await userEvent.click(await screen.findByRole('button', { name: '撤回服务条款版本 terms-v1' }));
+    await userEvent.click(screen.getByRole('button', { name: '确认撤回' }));
+
+    expect(
+      await screen.findByText(/同意状态或政策文档已变化，但最新状态加载失败/u),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/已刷新最新状态/u)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '撤回服务条款版本 terms-v1' })).toBeDisabled();
+  });
+
+  it('treats CONSENT_UNAVAILABLE as a definite pre-coordination failure', async () => {
+    const active = currentConsent({
+      status: 'accepted',
+      stateRevision: 1,
+      withdrawnAt: null,
+      authorizationStatus: 'active',
+      withdrawalEnabled: true,
+    });
+    mocks.getConsentHistory.mockResolvedValue(response([active]));
+    mocks.mutateConsent.mockRejectedValueOnce(
+      new ApiClientError('CONSENT_UNAVAILABLE', '同意服务暂时不可用', 503),
+    );
+
+    render(<PrivacyPage />);
+    await userEvent.click(await screen.findByRole('button', { name: '撤回服务条款版本 terms-v1' }));
+    await userEvent.click(screen.getByRole('button', { name: '确认撤回' }));
+
+    expect(await screen.findByText('同意服务暂时不可用')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '核对同一操作结果' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '撤回服务条款版本 terms-v1' })).toBeEnabled();
+  });
+
+  it('ignores an old load after leaving and restores authoritative state on re-entry', async () => {
+    const oldLoad = deferred<ConsentHistoryResponse>();
+    const oldState = currentConsent({ consentVersion: 'old-version' });
+    const currentState = currentConsent({ consentVersion: 'current-version' });
+    mocks.getConsentHistory
+      .mockReturnValueOnce(oldLoad.promise)
+      .mockResolvedValueOnce(response([currentState]));
+
+    const first = render(<PrivacyPage />);
+    first.unmount();
+    render(<PrivacyPage />);
+    expect(
+      await screen.findByRole('button', { name: '重新接受服务条款版本 current-version' }),
+    ).toBeEnabled();
+    oldLoad.resolve(response([oldState]));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: '重新接受服务条款版本 old-version' }),
+      ).not.toBeInTheDocument(),
+    );
   });
 
   it('retries an unknown result with the exact request and reloads a 409 before requiring a new action', async () => {

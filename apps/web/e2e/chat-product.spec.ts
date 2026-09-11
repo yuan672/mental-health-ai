@@ -229,7 +229,7 @@ test('Privacy opens a versioned synthetic document and exact-replays an unknown 
   await expect(documentPage.getByRole('heading', { name: '合成测试服务条款' })).toBeVisible();
   await expect(documentPage.getByText(/仅限 Development\/Test/u)).toBeVisible();
   expect(documentPage.url()).toContain(
-    '/consent-documents/synthetic.terms-of-service/1.0/test-revision-1.html',
+    '/consent-documents/synthetic.terms-of-service/1.1/test-revision-2.html',
   );
   await documentPage.close();
 
@@ -258,19 +258,19 @@ test('Privacy opens a versioned synthetic document and exact-replays an unknown 
     await route.continue();
   });
 
-  await page.getByRole('button', { name: '撤回服务条款版本 1.0' }).click();
+  await page.getByRole('button', { name: '撤回服务条款版本 1.1' }).click();
   await page.getByRole('dialog').getByRole('button', { name: '确认撤回' }).click();
   await expect(page.getByText(/服务器是否已记录本次操作暂时无法确认/u)).toBeVisible();
   await page.getByRole('button', { name: '核对同一操作结果' }).click();
-  await expect(page.getByText('撤回服务条款版本 1.0已记录。')).toBeVisible();
+  await expect(page.getByText('撤回服务条款版本 1.1已记录。')).toBeVisible();
   expect(submittedBodies).toHaveLength(2);
   expect(submittedBodies[1]).toEqual(submittedBodies[0]);
 
-  await page.getByRole('button', { name: '重新接受服务条款版本 1.0' }).click();
+  await page.getByRole('button', { name: '重新接受服务条款版本 1.1' }).click();
   const acceptDialog = page.getByRole('dialog');
   await acceptDialog.getByRole('checkbox').check();
   await acceptDialog.getByRole('button', { name: '确认接受' }).click();
-  await expect(page.getByText('接受服务条款版本 1.0已记录。')).toBeVisible();
+  await expect(page.getByText('接受服务条款版本 1.1已记录。')).toBeVisible();
   await expect(page.getByText('已接受').first()).toBeVisible();
 });
 
@@ -284,20 +284,20 @@ test('two Privacy tabs resolve a stale revision without automatic acceptance', a
   await stalePage.goto('/app/privacy');
   await expect(stalePage.getByRole('heading', { name: '管理同意与了解数据边界' })).toBeVisible();
 
-  await page.getByRole('button', { name: '撤回隐私政策版本 1.0' }).click();
+  await page.getByRole('button', { name: '撤回隐私政策版本 1.1' }).click();
   await page.getByRole('dialog').getByRole('button', { name: '确认撤回' }).click();
-  await expect(page.getByText('撤回隐私政策版本 1.0已记录。')).toBeVisible();
+  await expect(page.getByText('撤回隐私政策版本 1.1已记录。')).toBeVisible();
 
-  await stalePage.getByRole('button', { name: '撤回隐私政策版本 1.0' }).click();
+  await stalePage.getByRole('button', { name: '撤回隐私政策版本 1.1' }).click();
   await stalePage.getByRole('dialog').getByRole('button', { name: '确认撤回' }).click();
   await expect(stalePage.getByText(/同意状态或政策文档已变化。已刷新最新状态/u)).toBeVisible();
-  await expect(stalePage.getByRole('button', { name: '重新接受隐私政策版本 1.0' })).toBeVisible();
+  await expect(stalePage.getByRole('button', { name: '重新接受隐私政策版本 1.1' })).toBeVisible();
 
-  await stalePage.getByRole('button', { name: '重新接受隐私政策版本 1.0' }).click();
+  await stalePage.getByRole('button', { name: '重新接受隐私政策版本 1.1' }).click();
   const acceptDialog = stalePage.getByRole('dialog');
   await acceptDialog.getByRole('checkbox').check();
   await acceptDialog.getByRole('button', { name: '确认接受' }).click();
-  await expect(stalePage.getByText('接受隐私政策版本 1.0已记录。')).toBeVisible();
+  await expect(stalePage.getByText('接受隐私政策版本 1.1已记录。')).toBeVisible();
   await page.reload();
   await expect(page.getByText('已接受').first()).toBeVisible();
   await stalePage.close();

@@ -39,8 +39,8 @@ jobs:
       TEST_DATABASE_URL: postgresql://ci:ci-local-only@localhost:5432/mental_health_test
       SESSION_TTL_SECONDS: 604800
       AGE_VERIFICATION_PROVIDER: mock
-      REQUIRED_TERMS_VERSION: '1.0'
-      REQUIRED_PRIVACY_VERSION: '1.0'
+      REQUIRED_TERMS_VERSION: '1.1'
+      REQUIRED_PRIVACY_VERSION: '1.1'
       FREE_DAILY_AI_LIMIT: 20
       QUOTA_TIME_ZONE: Asia/Shanghai
       LOG_LEVEL: silent

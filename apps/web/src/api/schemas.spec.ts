@@ -5,7 +5,7 @@ describe('Consent document href validation', () => {
   it('accepts versioned same-origin synthetic paths and HTTPS documents', () => {
     expect(
       consentDocumentHrefSchema.parse(
-        '/consent-documents/synthetic.privacy-policy/1.0/test-revision-1.html',
+        '/consent-documents/synthetic.privacy-policy/1.1/test-revision-2.html',
       ),
     ).toContain('synthetic.privacy-policy');
     expect(consentDocumentHrefSchema.parse('https://policy.example.test/privacy/1.0')).toContain(

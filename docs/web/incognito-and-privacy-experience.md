@@ -32,8 +32,9 @@ pages served only by the Vite development server; their path, document key,
 version, and revision match the server Registry. Every Vite build excludes these
 pages. They are not a completed production document-reading experience or policy
 link, and Staging/Production cannot select or advertise them. No legacy mutation
-bypass is exposed. The UI remains pending review and merge, so overall Phase 5C
-is not yet complete.
+bypass is exposed. With the Privacy action UI integrated, the bounded Phase 5C
+engineering scope is complete; production content/policy approval remains a
+separate prerequisite.
 
 Development/Test use visibly synthetic Consent documents. They are not production
 policy content and cannot make Staging/Production registration or third-party AI
@@ -62,14 +63,25 @@ logout, and newer operations invalidate older responses. No Consent interaction
 state is written to `localStorage`, `sessionStorage`, or IndexedDB.
 
 Development/Test document links point to version-controlled, visibly synthetic
-read-only pages whose key and revision match the server registry. They are test
-fixtures, not approved production policy. Staging/Production acceptance remains
-unavailable until the server exposes a `production_reviewed` document.
+read-only pages whose key and revision match the server registry. The earlier
+`1.0/test-revision-1` identity had only an unreachable placeholder URL and no
+repository-published body. The first readable body is therefore published under
+the new synthetic policy version `1.1/test-revision-2`; existing ledger evidence
+is not rewritten, and an older `1.0/test-revision-1` decision is displayed as
+historical unavailable evidence rather than being misrepresented as evidence for
+the new body. A user must explicitly accept version 1.1 before admission becomes
+eligible. These pages are test fixtures, not
+approved production policy. Staging/Production acceptance remains unavailable
+until the server exposes a `production_reviewed` document.
 
 Verification covers current acceptance, withdrawal, same-version re-acceptance,
 new-version and legacy confirmation states, historical withdrawal, unavailable
-documents, exact unknown-result retry, stale multi-tab responses, late-response
-rejection, accessible confirmation focus, and active Persistent/Incognito cleanup.
+documents, exact unknown-result retry, authoritative refresh before replacement
+operations, stale multi-tab responses, late-response rejection, accessible
+confirmation focus, and active Persistent/Incognito cleanup. Client code does not
+cancel a workspace merely because a withdrawal response arrives; dependency-
+scoped cancellation remains the server coordination boundary, so historical or
+replayed withdrawals cannot cancel work authorized by a later acceptance.
 Existing chat, Incognito, session-isolation, privacy, and Chromium P0 regressions
 remain required. This delivery does not add account deletion/export, policy CMS,
 new Consent types, cross-instance cancellation, or Phase 5D/5E/6 features.
