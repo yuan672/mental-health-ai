@@ -167,6 +167,10 @@ const consentDecisionBase = {
   decisionSource: z.enum(['registration', 'privacy_ui', 'legacy_backfill']),
 };
 
+const consentDocumentEvidenceStatusSchema = z.enum(['verified', 'unavailable', 'unmapped_legacy']);
+
+const consentDisplayKeySchema = z.enum(['consent.termsOfService', 'consent.privacyPolicy']);
+
 const consentHistoryItemSchema = z.discriminatedUnion('action', [
   z
     .object({
@@ -174,6 +178,7 @@ const consentHistoryItemSchema = z.discriminatedUnion('action', [
       action: z.literal('accept'),
       documentKey: z.string().min(1).max(128).nullable(),
       documentRevision: z.string().min(1).max(64).nullable(),
+      documentEvidenceStatus: consentDocumentEvidenceStatusSchema,
     })
     .strict(),
   z
@@ -182,35 +187,48 @@ const consentHistoryItemSchema = z.discriminatedUnion('action', [
       action: z.literal('withdraw'),
       targetDocumentKey: z.string().min(1).max(128).nullable(),
       targetDocumentRevision: z.string().min(1).max(64).nullable(),
+      targetDocumentEvidenceStatus: consentDocumentEvidenceStatusSchema,
     })
     .strict(),
 ]);
+
+const consentCurrentItemSchema = z
+  .object({
+    consentType: z.enum(['terms_of_service', 'privacy_policy']),
+    consentVersion: z.string().min(1).max(64),
+    isCurrentRequired: z.boolean(),
+    status: z.enum(['accepted', 'withdrawn', 'not_accepted']),
+    stateRevision: z.number().int().nonnegative(),
+    effectiveAt: z.string().datetime({ offset: true }).nullable(),
+    acceptedAt: z.string().datetime({ offset: true }).nullable(),
+    withdrawnAt: z.string().datetime({ offset: true }).nullable(),
+    documentKey: z.string().min(1).max(128).nullable(),
+    documentRevision: z.string().min(1).max(64).nullable(),
+    documentUrl: z.string().url().nullable(),
+    displayKey: consentDisplayKeySchema,
+    documentEvidenceStatus: consentDocumentEvidenceStatusSchema,
+    acceptableDocument: z
+      .object({
+        documentKey: z.string().min(1).max(128),
+        documentRevision: z.string().min(1).max(64),
+        documentUrl: z.string().url(),
+        displayKey: consentDisplayKeySchema,
+      })
+      .strict()
+      .nullable(),
+    authorizationStatus: z.enum(['active', 'confirmation_required', 'inactive']),
+    acceptanceEnabled: z.boolean(),
+    withdrawalEnabled: z.boolean(),
+  })
+  .strict();
 
 export const consentHistoryResponseSchema = z
   .object({
     success: z.literal(true),
     data: z
       .object({
-        currentRequiredConsents: z.array(
-          z
-            .object({
-              consentType: z.enum(['terms_of_service', 'privacy_policy']),
-              consentVersion: z.string().min(1).max(64),
-              status: z.enum(['accepted', 'withdrawn', 'not_accepted']),
-              stateRevision: z.number().int().nonnegative(),
-              effectiveAt: z.string().datetime({ offset: true }).nullable(),
-              acceptedAt: z.string().datetime({ offset: true }).nullable(),
-              withdrawnAt: z.string().datetime({ offset: true }).nullable(),
-              documentKey: z.string().min(1).max(128).nullable(),
-              documentRevision: z.string().min(1).max(64).nullable(),
-              documentUrl: z.string().url().nullable(),
-              displayKey: z.enum(['consent.termsOfService', 'consent.privacyPolicy']),
-              authorizationStatus: z.enum(['active', 'confirmation_required', 'inactive']),
-              acceptanceEnabled: z.boolean(),
-              withdrawalEnabled: z.boolean(),
-            })
-            .strict(),
-        ),
+        currentRequiredConsents: z.array(consentCurrentItemSchema),
+        consentStates: z.array(consentCurrentItemSchema),
         consents: z.array(consentHistoryItemSchema),
         nextCursor: z.string().nullable(),
       })

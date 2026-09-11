@@ -4,10 +4,19 @@ export type ConsentAuthorizationStatus = 'active' | 'confirmation_required' | 'i
 export type ConsentMutationAction = 'accept' | 'withdraw';
 export type ConsentDecisionOutcome = 'applied' | 'no_change';
 export type ConsentDecisionSource = 'registration' | 'privacy_ui' | 'legacy_backfill';
+export type ConsentDocumentEvidenceStatus = 'verified' | 'unavailable' | 'unmapped_legacy';
+
+export type ConsentAcceptableDocument = {
+  documentKey: string;
+  documentRevision: string;
+  documentUrl: string;
+  displayKey: 'consent.termsOfService' | 'consent.privacyPolicy';
+};
 
 export type ConsentCurrentItem = {
   consentType: ConsentType;
   consentVersion: string;
+  isCurrentRequired: boolean;
   status: ConsentStatus | 'not_accepted';
   stateRevision: number;
   effectiveAt: string | null;
@@ -17,6 +26,8 @@ export type ConsentCurrentItem = {
   documentRevision: string | null;
   documentUrl: string | null;
   displayKey: 'consent.termsOfService' | 'consent.privacyPolicy';
+  documentEvidenceStatus: ConsentDocumentEvidenceStatus;
+  acceptableDocument: ConsentAcceptableDocument | null;
   authorizationStatus: ConsentAuthorizationStatus;
   acceptanceEnabled: boolean;
   withdrawalEnabled: boolean;
@@ -37,12 +48,14 @@ export type ConsentAcceptanceReceipt = ConsentDecisionReceiptBase & {
   action: 'accept';
   documentKey: string | null;
   documentRevision: string | null;
+  documentEvidenceStatus: ConsentDocumentEvidenceStatus;
 };
 
 export type ConsentWithdrawalReceipt = ConsentDecisionReceiptBase & {
   action: 'withdraw';
   targetDocumentKey: string | null;
   targetDocumentRevision: string | null;
+  targetDocumentEvidenceStatus: ConsentDocumentEvidenceStatus;
 };
 
 export type ConsentDecisionReceipt = ConsentAcceptanceReceipt | ConsentWithdrawalReceipt;
@@ -52,6 +65,7 @@ export type ConsentHistoryResponse = {
   success: true;
   data: {
     currentRequiredConsents: ConsentCurrentItem[];
+    consentStates: ConsentCurrentItem[];
     consents: ConsentHistoryItem[];
     nextCursor: string | null;
   };

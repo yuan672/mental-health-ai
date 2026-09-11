@@ -20,16 +20,21 @@ export class ConsentWithdrawalCoordinator {
       signal: AbortSignal;
       deadlineAt: Date;
       mayWithdraw: boolean;
-      withdrawalTargetDecisionId?: string;
+      operationPreviouslyCommitted: boolean;
+      prepareWithdrawal: () => Promise<WithdrawnConsentDependency | null>;
+      resolveCommitted: () => Promise<T | null>;
+      isDefiniteRollback: (error: unknown) => boolean;
     }>,
     commit: () => Promise<T>,
   ): Promise<T> {
-    return this.executions.coordinateMutation(input, commit, (result) => {
+    return this.executions.coordinateMutation(input, commit, (result, source, existed) => {
       const dependency = this.withdrawnDependency(result.receipt);
       return dependency
         ? {
             dependency,
-            invalidatePending: result.receipt.outcome === 'applied' && !result.replayed,
+            invalidatePending:
+              result.receipt.outcome === 'applied' &&
+              (!result.replayed || (source === 'recovery' && !existed)),
           }
         : null;
     });

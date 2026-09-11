@@ -241,10 +241,17 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
       signal: AbortSignal;
       deadlineAt: Date;
       mayWithdraw: boolean;
-      withdrawalTargetDecisionId?: string;
+      operationPreviouslyCommitted: boolean;
+      prepareWithdrawal: () => Promise<WithdrawnConsentDependency | null>;
+      resolveCommitted: () => Promise<T | null>;
+      isDefiniteRollback: (error: unknown) => boolean;
     },
     commit: () => Promise<T>,
-    withdrawalEffect: (result: T) => Readonly<{
+    withdrawalEffect: (
+      result: T,
+      source: 'commit' | 'recovery',
+      operationPreviouslyCommitted: boolean,
+    ) => Readonly<{
       dependency: WithdrawnConsentDependency;
       invalidatePending: boolean;
     }> | null,
@@ -256,16 +263,47 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
         input.signal,
         input.deadlineAt,
         async () => {
-          if (input.mayWithdraw) {
-            this.ensureRevokedMarkerCapacity(input.withdrawalTargetDecisionId);
+          const withdrawalCandidate = input.mayWithdraw ? await input.prepareWithdrawal() : null;
+          if (withdrawalCandidate) {
+            this.ensureRevokedMarkerCapacity(withdrawalCandidate.acceptanceDecisionId);
           }
           commitStarted = true;
-          const result = await commit();
-          const effect = withdrawalEffect(result);
-          if (effect) {
-            this.publishWithdrawal(input.userId, effect.dependency, effect.invalidatePending);
+          try {
+            const result = await commit();
+            const effect = withdrawalEffect(result, 'commit', input.operationPreviouslyCommitted);
+            if (effect) {
+              this.publishWithdrawal(input.userId, effect.dependency, effect.invalidatePending);
+            }
+            return result;
+          } catch (error) {
+            if (input.isDefiniteRollback(error)) throw error;
+
+            let recovered: T | null;
+            try {
+              recovered = await input.resolveCommitted();
+            } catch {
+              if (withdrawalCandidate) {
+                this.publishWithdrawal(
+                  input.userId,
+                  withdrawalCandidate,
+                  !input.operationPreviouslyCommitted,
+                );
+              }
+              throw error;
+            }
+
+            if (recovered) {
+              const effect = withdrawalEffect(
+                recovered,
+                'recovery',
+                input.operationPreviouslyCommitted,
+              );
+              if (effect) {
+                this.publishWithdrawal(input.userId, effect.dependency, effect.invalidatePending);
+              }
+            }
+            throw error;
           }
-          return result;
         },
       );
     } catch (error) {
@@ -291,7 +329,8 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
     dependency: WithdrawnConsentDependency,
     invalidatePending: boolean,
   ): void {
-    if (invalidatePending) this.incrementEpoch(userId, dependency);
+    const alreadyRevoked = this.revoked.has(dependency.acceptanceDecisionId);
+    if (invalidatePending && !alreadyRevoked) this.incrementEpoch(userId, dependency);
     if (
       this.revoked.has(dependency.acceptanceDecisionId) ||
       this.activeExecutions.hasDependency(dependency.acceptanceDecisionId) ||

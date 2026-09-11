@@ -22,9 +22,14 @@ The privacy view shows server-reported current required consent status and a
 sanitized, paginated decision history. It remains read-only in this batch. The
 backend now implements ADR-016's document-bound accept/withdraw contract,
 same-version re-acceptance, immutable decision receipts, exact operation replay,
-and dependency-scoped runtime cancellation. The full user-facing withdrawal,
-re-acceptance, stale-tab, and new-version interaction flows remain the next
-Phase 5C delivery; no legacy mutation bypass is exposed.
+dependency-scoped runtime cancellation, and commit-acknowledgement-loss
+reconciliation. `GET /consents` separates historical displayable evidence from
+the current `acceptableDocument`, and exposes authoritative `consentStates`
+revisions for current and historical withdrawals. These are backend contracts for
+the next delivery; the page does not yet provide user-facing withdrawal,
+re-acceptance, stale-tab, or new-version controls. Synthetic `example.invalid`
+locations are test fixtures, not a completed document-reading experience or
+production policy link. No legacy mutation bypass is exposed.
 
 Development/Test use visibly synthetic Consent documents. They are not production
 policy content and cannot make Staging/Production registration or third-party AI

@@ -1,7 +1,8 @@
 # Consent Lifecycle Product and Technical Decision Note
 
-- Status: Engineering/product architecture accepted — backend implementation in
-  delivery; Privacy action UI and production policy/legal approvals pending
+- Status: Engineering/product architecture accepted — backend implementation
+  complete in PR #14; Privacy action UI and production policy/legal approvals
+  pending
 - Scope: Phase 5C Consent lifecycle design and backend delivery record
 - Current source of truth: ADR-016 (Accepted), with the documented narrow partial
   supersession of ADR-011 and ADR-015
@@ -70,7 +71,9 @@ provided.
 ### Current public surface
 
 - `GET /consents`: authenticated, private/no-store, sanitized current state and
-  cursor-paginated history.
+  cursor-paginated history. It separately returns current environment-eligible
+  acceptance documents and authoritative current revisions for all owned policy
+  projections.
 - `POST /consents`: authenticated and CSRF-protected accept/withdraw mutation.
 - `/app/privacy`: read-only current/history presentation. It has no user-facing
   accept, withdraw, or restore controls.
@@ -950,6 +953,10 @@ Phase 5D/5E/6 work is implied.
   context deletion, or TTL cleanup and remain within configured bounds.
 - Logout/session expiry/current withdrawal cleanup remains correct.
 - Existing quota/idempotency, safety, late callback, and memory-capacity tests pass.
+- A database-visible withdrawal followed by lost commit acknowledgement publishes
+  the exact revoked dependency before the unknown result is returned, aborts
+  in-flight work, clears matching idle Incognito state, and remains exactly
+  replayable. A confirmed rollback does not publish a false revocation.
 - Single-process coverage is labelled accurately; cross-instance behavior is not
   claimed.
 
@@ -1007,6 +1014,8 @@ implementing and testing the architecture with synthetic fixtures:
 
 These production-only decisions do not prevent engineering validation with
 synthetic fixtures, but they continue to keep production acceptance and AI use
-fail closed. The backend implementation and migration now enforce ADR-016 on this
-delivery branch; Phase 5C remains incomplete until the Privacy action UI is
-implemented and reviewed.
+fail closed. The backend implementation and migration in PR #14 enforce ADR-016,
+including environment-filtered evidence presentation, an explicit current
+acceptable-document contract, authoritative historical projection revisions, and
+single-process acknowledgement-loss reconciliation. Phase 5C remains incomplete
+until the Privacy action UI is implemented and reviewed.

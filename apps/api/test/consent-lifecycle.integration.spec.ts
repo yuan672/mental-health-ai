@@ -19,8 +19,11 @@ import {
   ConsentStateChangedRepositoryError,
 } from '../src/consents/consent-lifecycle.repository';
 import { ConsentPolicyService } from '../src/consents/consent-policy.service';
+import { ConsentsService } from '../src/consents/consents.service';
+import type { ConsentWithdrawalCoordinator } from '../src/consents/consent-withdrawal.coordinator';
 import { DatabaseService } from '../src/database/database.service';
 import { UsersRepository } from '../src/users/users.repository';
+import { insertConsentFixture } from './consent-fixtures';
 
 const PRIVACY_DOCUMENT = {
   documentKey: 'synthetic.privacy-policy',
@@ -74,6 +77,22 @@ describe('ADR-016 Consent lifecycle persistence', () => {
     };
   }
 
+  async function waitUntilResolverIsBlockedBy(blockerProcessId: number): Promise<void> {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const result = await client.pool.query<{ blocked: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1
+           FROM pg_stat_activity activity
+           WHERE $1 = ANY(pg_blocking_pids(activity.pid))
+         ) AS blocked`,
+        [blockerProcessId],
+      );
+      if (result.rows[0]?.blocked) return;
+      await new Promise<void>((resolveImmediate) => setImmediate(resolveImmediate));
+    }
+    throw new Error('Consent resolution did not wait on the mutation owner-row lock');
+  }
+
   it('keeps synthetic documents test-only and fails closed in production', () => {
     const testRegistry = new ConsentDocumentRegistry('test');
     expect(testRegistry.findEligible('privacy_policy', '1.0')).toMatchObject(PRIVACY_DOCUMENT);
@@ -92,6 +111,239 @@ describe('ADR-016 Consent lifecycle persistence', () => {
         PRIVACY_DOCUMENT.documentRevision,
       ),
     ).toBeNull();
+  });
+
+  it('filters unavailable document identity from current, history and replay responses', async () => {
+    const userId = await createUser();
+    const operationId = randomUUID();
+    await lifecycle.mutate(userId, acceptRequest(operationId, 0));
+    const directCoordinator = {
+      mutate: (_input: unknown, commit: () => Promise<unknown>) => commit(),
+    } as unknown as ConsentWithdrawalCoordinator;
+    const service = new ConsentsService(
+      new ConsentPolicyService(new ConsentDocumentRegistry('production')),
+      directCoordinator,
+      lifecycle,
+    );
+
+    const listed = await service.list(userId, { limit: 20 });
+    const current = listed.data.currentRequiredConsents.find(
+      (item) => item.consentType === 'privacy_policy',
+    );
+    expect(current).toMatchObject({
+      status: 'accepted',
+      authorizationStatus: 'confirmation_required',
+      documentKey: null,
+      documentRevision: null,
+      documentUrl: null,
+      documentEvidenceStatus: 'unavailable',
+      acceptableDocument: null,
+      acceptanceEnabled: false,
+    });
+    expect(listed.data.consents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operationId,
+          action: 'accept',
+          documentKey: null,
+          documentRevision: null,
+          documentEvidenceStatus: 'unavailable',
+        }),
+      ]),
+    );
+
+    const replay = await service.mutate(userId, acceptRequest(operationId, 0));
+    expect(replay.data.receipt).toMatchObject({
+      operationId,
+      action: 'accept',
+      documentKey: null,
+      documentRevision: null,
+      documentEvidenceStatus: 'unavailable',
+    });
+    expect(replay.data.current).toMatchObject({
+      documentKey: null,
+      documentRevision: null,
+      documentEvidenceStatus: 'unavailable',
+      acceptableDocument: null,
+    });
+
+    const withdrawalOperationId = randomUUID();
+    const withdrawal = {
+      operationId: withdrawalOperationId,
+      action: 'withdraw' as const,
+      consentType: 'privacy_policy' as const,
+      consentVersion: '1.0',
+      expectedRevision: 1,
+    };
+    const firstWithdrawal = await service.mutate(userId, withdrawal);
+    expect(firstWithdrawal.data.current).toMatchObject({ status: 'withdrawn', stateRevision: 2 });
+    const withdrawalReplay = await service.mutate(userId, withdrawal);
+    expect(withdrawalReplay.data.receipt).toMatchObject({
+      operationId: withdrawalOperationId,
+      action: 'withdraw',
+      targetDocumentKey: null,
+      targetDocumentRevision: null,
+      targetDocumentEvidenceStatus: 'unavailable',
+    });
+    expect(withdrawalReplay.data.current).toMatchObject({
+      status: 'withdrawn',
+      stateRevision: 2,
+      documentKey: null,
+      documentRevision: null,
+      documentEvidenceStatus: 'unavailable',
+      acceptableDocument: null,
+    });
+  });
+
+  it('separates current acceptable documents from historical evidence and projection revisions', async () => {
+    const userId = await createUser();
+    await insertConsentFixture(client.database, {
+      userId,
+      consentType: 'privacy_policy',
+      consentVersion: '1.0',
+      acceptedAt: new Date('2026-09-10T10:00:00.000Z'),
+      documentBound: false,
+    });
+    await insertConsentFixture(client.database, {
+      userId,
+      consentType: 'terms_of_service',
+      consentVersion: '0.9',
+      status: 'withdrawn',
+      acceptedAt: new Date('2026-09-09T10:00:00.000Z'),
+      withdrawnAt: new Date('2026-09-09T11:00:00.000Z'),
+      documentBound: false,
+    });
+    const directCoordinator = {
+      mutate: (_input: unknown, commit: () => Promise<unknown>) => commit(),
+    } as unknown as ConsentWithdrawalCoordinator;
+    const service = new ConsentsService(
+      new ConsentPolicyService(new ConsentDocumentRegistry('test')),
+      directCoordinator,
+      lifecycle,
+    );
+
+    const listed = await service.list(userId, { limit: 20 });
+    const legacyCurrent = listed.data.currentRequiredConsents.find(
+      (item) => item.consentType === 'privacy_policy',
+    );
+    expect(legacyCurrent).toMatchObject({
+      status: 'accepted',
+      stateRevision: 1,
+      authorizationStatus: 'confirmation_required',
+      documentEvidenceStatus: 'unmapped_legacy',
+      documentKey: null,
+      documentRevision: null,
+      acceptableDocument: {
+        documentKey: 'synthetic.privacy-policy',
+        documentRevision: 'test-revision-1',
+      },
+      acceptanceEnabled: true,
+      withdrawalEnabled: true,
+    });
+    expect(listed.data.consentStates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          consentType: 'terms_of_service',
+          consentVersion: '0.9',
+          isCurrentRequired: false,
+          status: 'withdrawn',
+          stateRevision: 2,
+          acceptableDocument: null,
+          acceptanceEnabled: false,
+          withdrawalEnabled: false,
+        }),
+      ]),
+    );
+  });
+
+  it('exposes a missing current projection separately from an accepted historical version', async () => {
+    const userId = await createUser();
+    await insertConsentFixture(client.database, {
+      userId,
+      consentType: 'privacy_policy',
+      consentVersion: '0.9',
+      acceptedAt: new Date('2026-09-08T10:00:00.000Z'),
+      documentBound: false,
+    });
+    const service = new ConsentsService(
+      new ConsentPolicyService(new ConsentDocumentRegistry('test')),
+      {} as ConsentWithdrawalCoordinator,
+      lifecycle,
+    );
+
+    const listed = await service.list(userId, { limit: 20 });
+    expect(listed.data.consentStates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          consentType: 'privacy_policy',
+          consentVersion: '1.0',
+          isCurrentRequired: true,
+          status: 'not_accepted',
+          stateRevision: 0,
+          documentKey: null,
+          documentRevision: null,
+          acceptableDocument: expect.objectContaining({
+            documentKey: 'synthetic.privacy-policy',
+            documentRevision: 'test-revision-1',
+          }),
+          acceptanceEnabled: true,
+          withdrawalEnabled: false,
+        }),
+        expect.objectContaining({
+          consentType: 'privacy_policy',
+          consentVersion: '0.9',
+          isCurrentRequired: false,
+          status: 'accepted',
+          stateRevision: 1,
+          documentEvidenceStatus: 'unmapped_legacy',
+          acceptableDocument: null,
+          acceptanceEnabled: false,
+          withdrawalEnabled: true,
+        }),
+      ]),
+    );
+  });
+
+  it('reports each required policy availability independently when the registry is partial', async () => {
+    const userId = await createUser();
+    const registry = new ConsentDocumentRegistry('test', [
+      {
+        consentType: 'privacy_policy',
+        consentVersion: '1.0',
+        documentKey: 'synthetic.privacy-policy',
+        documentRevision: 'test-revision-1',
+        displayKey: 'consent.privacyPolicy',
+        documentUrl: 'https://example.invalid/mental-health-ai/synthetic/privacy/1.0',
+        approvalStatus: 'test_fixture',
+        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    ]);
+    const service = new ConsentsService(
+      new ConsentPolicyService(registry),
+      {} as ConsentWithdrawalCoordinator,
+      lifecycle,
+    );
+
+    const listed = await service.list(userId, { limit: 20 });
+    expect(listed.data.currentRequiredConsents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          consentType: 'terms_of_service',
+          status: 'not_accepted',
+          acceptableDocument: null,
+          acceptanceEnabled: false,
+        }),
+        expect.objectContaining({
+          consentType: 'privacy_policy',
+          status: 'not_accepted',
+          acceptableDocument: expect.objectContaining({
+            documentKey: 'synthetic.privacy-policy',
+            documentRevision: 'test-revision-1',
+          }),
+          acceptanceEnabled: true,
+        }),
+      ]),
+    );
   });
 
   it('creates registration projections and immutable document-bound decisions atomically', async () => {
@@ -234,6 +486,134 @@ describe('ADR-016 Consent lifecycle persistence', () => {
       .from(consentDecisions)
       .where(eq(consentDecisions.userId, userId));
     expect(decisionCount?.value).toBe(1);
+  });
+
+  it('waits for an in-progress withdrawal commit before resolving a lost acknowledgement', async () => {
+    const userId = await createUser();
+    const accepted = await lifecycle.mutate(userId, acceptRequest(randomUUID(), 0));
+    const operationId = randomUUID();
+    const occurredAt = new Date('2026-09-11T08:00:00.000Z');
+    const input = {
+      operationId,
+      action: 'withdraw' as const,
+      consentType: 'privacy_policy' as const,
+      consentVersion: '1.0',
+      expectedRevision: 1,
+    };
+    const blocker = await client.pool.connect();
+    let transactionOpen = false;
+
+    try {
+      await blocker.query('BEGIN');
+      transactionOpen = true;
+      const blockerPid = (await blocker.query<{ pid: number }>('SELECT pg_backend_pid() AS pid'))
+        .rows[0]?.pid;
+      if (!blockerPid) throw new Error('Unable to identify the blocking PostgreSQL session');
+      await blocker.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
+      await blocker.query(
+        `UPDATE consents
+         SET status = 'withdrawn', withdrawn_at = $2, state_revision = 2, effective_at = $2
+         WHERE id = $1`,
+        [accepted.current.id, occurredAt],
+      );
+      await blocker.query(
+        `INSERT INTO consent_decisions (
+           id, consent_id, user_id, consent_type, consent_version,
+           operation_id, decision, outcome, prior_revision, resulting_revision,
+           occurred_at, document_key, document_revision,
+           target_acceptance_decision_id, decision_source
+         ) VALUES (
+           $1, $2, $3, 'privacy_policy', '1.0',
+           $4, 'withdrawn', 'applied', 1, 2,
+           $5, NULL, NULL, $6, 'privacy_ui'
+         )`,
+        [randomUUID(), accepted.current.id, userId, operationId, occurredAt, accepted.receipt.id],
+      );
+
+      const resolution = lifecycle.resolveCommittedOperation(
+        userId,
+        input,
+        new Date(Date.now() + 5_000),
+      );
+      await waitUntilResolverIsBlockedBy(blockerPid);
+      await blocker.query('COMMIT');
+      transactionOpen = false;
+
+      await expect(resolution).resolves.toMatchObject({
+        replayed: true,
+        receipt: {
+          operationId,
+          decision: 'withdrawn',
+          targetAcceptanceDecisionId: accepted.receipt.id,
+        },
+        current: { status: 'withdrawn', stateRevision: 2 },
+      });
+    } finally {
+      if (transactionOpen) await blocker.query('ROLLBACK');
+      blocker.release();
+    }
+  });
+
+  it('waits for an in-progress rollback before confirming that no operation committed', async () => {
+    const userId = await createUser();
+    const accepted = await lifecycle.mutate(userId, acceptRequest(randomUUID(), 0));
+    const operationId = randomUUID();
+    const occurredAt = new Date('2026-09-11T09:00:00.000Z');
+    const input = {
+      operationId,
+      action: 'withdraw' as const,
+      consentType: 'privacy_policy' as const,
+      consentVersion: '1.0',
+      expectedRevision: 1,
+    };
+    const blocker = await client.pool.connect();
+    let transactionOpen = false;
+
+    try {
+      await blocker.query('BEGIN');
+      transactionOpen = true;
+      const blockerPid = (await blocker.query<{ pid: number }>('SELECT pg_backend_pid() AS pid'))
+        .rows[0]?.pid;
+      if (!blockerPid) throw new Error('Unable to identify the blocking PostgreSQL session');
+      await blocker.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
+      await blocker.query(
+        `UPDATE consents
+         SET status = 'withdrawn', withdrawn_at = $2, state_revision = 2, effective_at = $2
+         WHERE id = $1`,
+        [accepted.current.id, occurredAt],
+      );
+      await blocker.query(
+        `INSERT INTO consent_decisions (
+           id, consent_id, user_id, consent_type, consent_version,
+           operation_id, decision, outcome, prior_revision, resulting_revision,
+           occurred_at, document_key, document_revision,
+           target_acceptance_decision_id, decision_source
+         ) VALUES (
+           $1, $2, $3, 'privacy_policy', '1.0',
+           $4, 'withdrawn', 'applied', 1, 2,
+           $5, NULL, NULL, $6, 'privacy_ui'
+         )`,
+        [randomUUID(), accepted.current.id, userId, operationId, occurredAt, accepted.receipt.id],
+      );
+
+      const resolution = lifecycle.resolveCommittedOperation(
+        userId,
+        input,
+        new Date(Date.now() + 5_000),
+      );
+      await waitUntilResolverIsBlockedBy(blockerPid);
+      await blocker.query('ROLLBACK');
+      transactionOpen = false;
+
+      await expect(resolution).resolves.toBeNull();
+      await expect(lifecycle.findOperation(userId, operationId)).resolves.toBeNull();
+      await expect(
+        lifecycle.findProjection(userId, 'privacy_policy', '1.0'),
+      ).resolves.toMatchObject({ status: 'accepted', stateRevision: 1 });
+    } finally {
+      if (transactionOpen) await blocker.query('ROLLBACK');
+      blocker.release();
+    }
   });
 
   it('replays committed operations after state changes and rejects same-version document replacement', async () => {

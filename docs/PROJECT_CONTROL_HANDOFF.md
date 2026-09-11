@@ -11,8 +11,8 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
 - Phase 4 — AI Safety: Engineering scope complete
 - Phase 5 — User Features: In progress; Phase 5A and Phase 5B complete; the
   bounded Phase 5C Incognito/Privacy engineering scope is complete, while the
-  Consent lifecycle backend is implemented in the current delivery branch;
-  overall Phase 5C remains incomplete pending the full Privacy action UI
+  Consent lifecycle backend engineering scope is implemented in PR #14; overall
+  Phase 5C remains incomplete pending the full Privacy action UI
 - Phase 5B — Chat Product Experience: Product UI engineering complete
 - Phase 6 — Admin and operations features: Not started
 
@@ -37,6 +37,9 @@ safety, or validation for clinical use.
 - [PR #7](https://github.com/yuan672/mental-health-ai/pull/7) — Documentation reconciliation
 - [PR #8](https://github.com/yuan672/mental-health-ai/pull/8) — Conversation Access API
 - [PR #10](https://github.com/yuan672/mental-health-ai/pull/10) — Chat Product Experience
+- [PR #12](https://github.com/yuan672/mental-health-ai/pull/12) — Incognito and read-only Privacy experience
+- [PR #13](https://github.com/yuan672/mental-health-ai/pull/13) — Accepted Consent lifecycle architecture
+- [PR #14](https://github.com/yuan672/mental-health-ai/pull/14) — Consent lifecycle backend
 
 ## Current Feature Status
 
@@ -69,6 +72,16 @@ coordination. The Privacy withdrawal/reaccept/new-version controls are not yet
 implemented. Consent types, formal legal copy, production document approval,
 retention, account deletion/export, backup deletion, and cross-instance
 cancellation remain unresolved production matters.
+
+The backend response contract separates immutable historical evidence from the
+current environment-eligible `acceptableDocument`, filters unavailable or
+synthetic identities from Staging/Production responses, and supplies
+authoritative current revisions for historical as well as required projections.
+Committed withdrawals whose database acknowledgement is lost are reconciled
+inside the same-process coordination boundary; dependent work remains fail closed
+while the client receives an honest unknown-result error and can replay the exact
+operation. These backend guarantees do not implement the remaining Privacy
+controls.
 
 ## Production Readiness Blockers
 

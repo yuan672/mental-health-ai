@@ -113,6 +113,7 @@ authenticated user's known consent history:
           {
             "consentType": "privacy_policy",
             "consentVersion": "1.0",
+            "isCurrentRequired": true,
             "status": "accepted",
             "stateRevision": 1,
             "effectiveAt": "2026-09-10T00:00:00.000Z",
@@ -122,6 +123,39 @@ authenticated user's known consent history:
             "documentRevision": "test-revision-1",
             "documentUrl": "https://example.invalid/mental-health-ai/synthetic/privacy/1.0",
             "displayKey": "consent.privacyPolicy",
+            "documentEvidenceStatus": "verified",
+            "acceptableDocument": {
+              "documentKey": "synthetic.privacy-policy",
+              "documentRevision": "test-revision-1",
+              "documentUrl": "https://example.invalid/mental-health-ai/synthetic/privacy/1.0",
+              "displayKey": "consent.privacyPolicy"
+            },
+            "authorizationStatus": "active",
+            "acceptanceEnabled": true,
+            "withdrawalEnabled": true
+          }
+        ],
+        "consentStates": [
+          {
+            "consentType": "privacy_policy",
+            "consentVersion": "1.0",
+            "isCurrentRequired": true,
+            "status": "accepted",
+            "stateRevision": 1,
+            "effectiveAt": "2026-09-10T00:00:00.000Z",
+            "acceptedAt": "2026-09-10T00:00:00.000Z",
+            "withdrawnAt": null,
+            "documentKey": "synthetic.privacy-policy",
+            "documentRevision": "test-revision-1",
+            "documentUrl": "https://example.invalid/mental-health-ai/synthetic/privacy/1.0",
+            "displayKey": "consent.privacyPolicy",
+            "documentEvidenceStatus": "verified",
+            "acceptableDocument": {
+              "documentKey": "synthetic.privacy-policy",
+              "documentRevision": "test-revision-1",
+              "documentUrl": "https://example.invalid/mental-health-ai/synthetic/privacy/1.0",
+              "displayKey": "consent.privacyPolicy"
+            },
             "authorizationStatus": "active",
             "acceptanceEnabled": true,
             "withdrawalEnabled": true
@@ -136,6 +170,7 @@ authenticated user's known consent history:
             "consentVersion": "1.0",
             "documentKey": "synthetic.privacy-policy",
             "documentRevision": "test-revision-1",
+            "documentEvidenceStatus": "verified",
             "priorRevision": 0,
             "resultingRevision": 1,
             "occurredAt": "2026-09-10T00:00:00.000Z",
@@ -147,12 +182,34 @@ authenticated user's known consent history:
     }
 
 `currentRequiredConsents` is derived from the same environment-aware document
-registry used by registration and AI admission. An accepted legacy projection
-without verified document identity is exposed as `confirmation_required` and
-does not authorize third-party AI dispatch. History entries are immutable
-decision receipts ordered by `(occurredAt, id)` behind a versioned opaque cursor.
-The page limit defaults to 20 and is capped at 50. Responses exclude persistence
-IDs and `userId`, and use `Cache-Control: private, no-store`.
+registry used by registration and AI admission. `acceptableDocument` is the
+server-authoritative current identity that a client may submit in a new
+acceptance. It is deliberately separate from historical acceptance evidence in
+`documentKey` and `documentRevision`; each required policy is evaluated
+independently.
+
+`consentStates` contains the authoritative current projection and
+`stateRevision` for every owned type/version, plus a zero-revision placeholder for
+any current required policy with no projection. It is the source for current and
+historical withdrawal preconditions; clients must not infer the latest revision
+from paginated receipts. `isCurrentRequired` distinguishes admission policies
+from historical projections.
+
+Document evidence is filtered consistently in current state, history, and
+mutation/replay responses. `verified` means the stored identity is displayable in
+the current environment; `unmapped_legacy` means no historical identity was
+recorded; `unavailable` means an identity is absent or not eligible for public
+display there. Synthetic identities and URLs are never exposed in
+Staging/Production. Filtering does not modify database evidence or replay
+semantics, and unavailable historical evidence does not prevent an owned
+withdrawal.
+
+An accepted current projection without displayable evidence is exposed as
+`confirmation_required` and does not authorize third-party AI dispatch. History
+entries are immutable decision receipts ordered by `(occurredAt, id)` behind a
+versioned opaque cursor. The page limit defaults to 20 and is capped at 50.
+Responses exclude persistence IDs and `userId`, and use
+`Cache-Control: private, no-store`.
 
 ADR-016 permits a new explicit acceptance of the same current version after
 withdrawal. Applied transitions increment state revision; state-preserving
@@ -166,4 +223,9 @@ post-commit coordination or acknowledgement could not be confirmed; the client
 must reuse the same `operationId` to resolve the original receipt instead of
 creating a replacement operation. Exact replay is resolved before current policy
 or revision checks, so an already committed operation remains replayable after a
-later policy or state change.
+later policy or state change. Within one API process, the server reconciles a
+visible committed withdrawal before returning the unknown result and publishes
+its exact revoked dependency immediately. If that reconciliation read also fails,
+the in-lock, revision-validated target remains fail closed without being reported
+as proof that the database committed. This does not affect later acceptance
+decisions with different dependency IDs.

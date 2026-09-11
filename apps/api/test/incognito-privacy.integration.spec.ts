@@ -81,6 +81,7 @@ type ProviderMode = 'success' | 'fail-before-segment' | 'wait-for-release';
 class ControlledGenerationProvider implements LLMProvider {
   mode: ProviderMode = 'success';
   streamCalls = 0;
+  streamSignals: AbortSignal[] = [];
   dispatched = deferred();
   private releaseBarrier = deferred();
 
@@ -88,6 +89,7 @@ class ControlledGenerationProvider implements LLMProvider {
     this.releaseBarrier.resolve();
     this.mode = mode;
     this.streamCalls = 0;
+    this.streamSignals = [];
     this.dispatched = deferred();
     this.releaseBarrier = deferred();
   }
@@ -105,8 +107,8 @@ class ControlledGenerationProvider implements LLMProvider {
     options: LLMCallOptions,
   ): AsyncIterable<LLMProviderStreamEvent> {
     void request;
-    void options;
     this.streamCalls += 1;
+    this.streamSignals.push(options.signal);
     const metadata = { provider: 'fake', model: 'phase5c-fake', requestId: 'safe-trace' };
     this.dispatched.resolve();
     yield { type: 'started', metadata };
@@ -432,7 +434,7 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     expect(contexts.get(auth.userId, auth.sessionId, contextId)).toBeNull();
   });
 
-  it('reconciles an uncertain withdrawal with the same operationId and clears the original idle context', async () => {
+  it('keeps an uncertain committed withdrawal fail closed and replays the same operationId', async () => {
     const auth = await createAuth();
     const contextId = await createContext(auth);
     const operationId = randomUUID();
@@ -461,7 +463,7 @@ describe('Phase 5C Incognito and privacy API integration', () => {
         .expect('Cache-Control', 'private, no-store')
         .expect(503);
       expect(uncertain.body.error.code).toBe('CONSENT_RESULT_UNKNOWN');
-      expect(contexts.get(auth.userId, auth.sessionId, contextId)).not.toBeNull();
+      expect(contexts.get(auth.userId, auth.sessionId, contextId)).toBeNull();
 
       const replay = await mutation(auth, '/consents').send(body).expect(200);
       expect(replay.body.data).toMatchObject({
@@ -476,6 +478,104 @@ describe('Phase 5C Incognito and privacy API integration', () => {
       expect(decisionsAfter).toEqual(decisionsBefore.map((row) => ({ value: row.value + 1 })));
     } finally {
       clearSpy.mockRestore();
+    }
+  });
+
+  it('fails closed when a committed withdrawal loses its acknowledgement before runtime publication', async () => {
+    provider.reset('wait-for-release');
+    const auth = await createAuth();
+    const contextId = await createContext(auth);
+    const pendingStream = stream(auth, {
+      mode: 'incognito',
+      contextId,
+      clientRequestId: randomUUID(),
+      message: '合成的提交确认丢失竞态输入',
+    }).then((response) => response);
+    await provider.dispatched.promise;
+
+    const operationId = randomUUID();
+    const body = {
+      operationId,
+      action: 'withdraw',
+      consentType: 'privacy_policy',
+      consentVersion: env.REQUIRED_PRIVACY_VERSION,
+      expectedRevision: 1,
+    } as const;
+    const committed = deferred();
+    const dropAcknowledgement = deferred();
+    const originalMutate = consentLifecycle.mutate.bind(consentLifecycle);
+    const mutateSpy = jest
+      .spyOn(consentLifecycle, 'mutate')
+      .mockImplementationOnce(async (...args) => {
+        await originalMutate(...args);
+        committed.resolve();
+        await dropAcknowledgement.promise;
+        throw new Error('synthetic_commit_acknowledgement_lost');
+      })
+      .mockImplementation(originalMutate);
+    const decisionsBefore = await database.database
+      .select({ value: count() })
+      .from(consentDecisions)
+      .where(eq(consentDecisions.userId, auth.userId));
+
+    try {
+      const uncertainPromise = mutation(auth, '/consents')
+        .send(body)
+        .expect(503)
+        .then((response) => response);
+      await committed.promise;
+      const committedOperation = await consentLifecycle.findOperation(auth.userId, operationId);
+      expect(committedOperation).toMatchObject({
+        operationId,
+        decision: 'withdrawn',
+        outcome: 'applied',
+      });
+      expect(contexts.get(auth.userId, auth.sessionId, contextId)).not.toBeNull();
+
+      dropAcknowledgement.resolve();
+      const uncertain = await uncertainPromise;
+      expect(uncertain.body.error.code).toBe('CONSENT_RESULT_UNKNOWN');
+      expect(provider.streamSignals).toHaveLength(1);
+      expect(provider.streamSignals[0]?.aborted).toBe(true);
+      expect(contexts.get(auth.userId, auth.sessionId, contextId)).toBeNull();
+
+      mutateSpy.mockRestore();
+      const replay = await mutation(auth, '/consents').send(body).expect(200);
+      expect(replay.body.data).toMatchObject({
+        receipt: { operationId, action: 'withdraw', outcome: 'applied' },
+        current: { status: 'withdrawn', stateRevision: 2 },
+      });
+      const decisionsAfterReplay = await database.database
+        .select({ value: count() })
+        .from(consentDecisions)
+        .where(eq(consentDecisions.userId, auth.userId));
+      expect(decisionsAfterReplay).toEqual(
+        decisionsBefore.map((row) => ({ value: row.value + 1 })),
+      );
+
+      await mutation(auth, '/consents')
+        .send({
+          operationId: randomUUID(),
+          action: 'accept',
+          consentType: 'privacy_policy',
+          consentVersion: env.REQUIRED_PRIVACY_VERSION,
+          documentKey: 'synthetic.privacy-policy',
+          documentRevision: 'test-revision-1',
+          expectedRevision: 2,
+        })
+        .expect(200);
+      const replacementContextId = await createContext(auth);
+      await mutation(auth, '/consents').send(body).expect(200);
+      expect(contexts.get(auth.userId, auth.sessionId, replacementContextId)).not.toBeNull();
+
+      provider.releaseLateResult();
+      const response = await pendingStream;
+      expect(response.text).not.toContain('这是合成且安全的回复。');
+      expect(response.text).not.toContain('event: turn.completed');
+    } finally {
+      mutateSpy.mockRestore();
+      dropAcknowledgement.resolve();
+      provider.releaseLateResult();
     }
   });
 
@@ -1019,12 +1119,54 @@ describe('Phase 5C Incognito and privacy API integration', () => {
         expect.objectContaining({
           consentType: 'terms_of_service',
           consentVersion: env.REQUIRED_TERMS_VERSION,
+          isCurrentRequired: true,
           status: 'accepted',
+          documentEvidenceStatus: 'verified',
+          acceptableDocument: expect.objectContaining({
+            documentKey: 'synthetic.terms-of-service',
+            documentRevision: 'test-revision-1',
+          }),
         }),
         expect.objectContaining({
           consentType: 'privacy_policy',
           consentVersion: env.REQUIRED_PRIVACY_VERSION,
+          isCurrentRequired: true,
           status: 'accepted',
+          documentEvidenceStatus: 'verified',
+          acceptableDocument: expect.objectContaining({
+            documentKey: 'synthetic.privacy-policy',
+            documentRevision: 'test-revision-1',
+          }),
+        }),
+      ]),
+    );
+    expect(first.body.data.consentStates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          consentType: 'terms_of_service',
+          consentVersion: '0.9',
+          isCurrentRequired: false,
+          status: 'withdrawn',
+          stateRevision: 2,
+          documentKey: null,
+          documentRevision: null,
+          documentEvidenceStatus: 'unmapped_legacy',
+          acceptableDocument: null,
+          acceptanceEnabled: false,
+          withdrawalEnabled: false,
+        }),
+        expect.objectContaining({
+          consentType: 'privacy_policy',
+          consentVersion: '0.9',
+          isCurrentRequired: false,
+          status: 'accepted',
+          stateRevision: 1,
+          documentKey: null,
+          documentRevision: null,
+          documentEvidenceStatus: 'unmapped_legacy',
+          acceptableDocument: null,
+          acceptanceEnabled: false,
+          withdrawalEnabled: true,
         }),
       ]),
     );
@@ -1046,6 +1188,29 @@ describe('Phase 5C Incognito and privacy API integration', () => {
       .expect(200);
     expect(third.body.data.consents).toHaveLength(1);
     expect(third.body.data.nextCursor).toBeNull();
+    const history = [
+      ...first.body.data.consents,
+      ...second.body.data.consents,
+      ...third.body.data.consents,
+    ] as Array<Record<string, unknown>>;
+    expect(history).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: 'accept',
+          consentVersion: '0.9',
+          documentKey: null,
+          documentRevision: null,
+          documentEvidenceStatus: 'unmapped_legacy',
+        }),
+        expect.objectContaining({
+          action: 'withdraw',
+          consentVersion: '0.9',
+          targetDocumentKey: null,
+          targetDocumentRevision: null,
+          targetDocumentEvidenceStatus: 'unmapped_legacy',
+        }),
+      ]),
+    );
   });
 
   it('rejects implicit and mixed persistent/Incognito request shapes before any classifier or Provider call', async () => {

@@ -133,15 +133,19 @@ describe('Consent runtime coordination', () => {
     invalidatePending: boolean,
     withdrawalTargetDecisionId?: string,
   ) {
+    const result = { committed: true };
     return coordinator.coordinateMutation(
       {
         userId: USER_ID,
         signal: new AbortController().signal,
         deadlineAt: new Date(Date.now() + 5_000),
         mayWithdraw: true,
-        ...(withdrawalTargetDecisionId ? { withdrawalTargetDecisionId } : {}),
+        operationPreviouslyCommitted: withdrawalTargetDecisionId !== undefined,
+        prepareWithdrawal: () => Promise.resolve(withdrawn(value)),
+        resolveCommitted: () => Promise.resolve(null),
+        isDefiniteRollback: () => false,
       },
-      () => Promise.resolve({ committed: true }),
+      () => Promise.resolve(result),
       () => ({ dependency: withdrawn(value), invalidatePending }),
     );
   }
@@ -245,6 +249,10 @@ describe('Consent runtime coordination', () => {
           signal: controller.signal,
           deadlineAt: new Date(Date.now() + 5_000),
           mayWithdraw: false,
+          operationPreviouslyCommitted: false,
+          prepareWithdrawal: () => Promise.resolve(null),
+          resolveCommitted: () => Promise.resolve(null),
+          isDefiniteRollback: () => false,
         },
         () => {
           commitCalls += 1;
@@ -254,6 +262,94 @@ describe('Consent runtime coordination', () => {
       ),
     ).rejects.toBeInstanceOf(ConsentCoordinationNotStartedError);
     expect(commitCalls).toBe(0);
+  });
+
+  it('publishes an exact withdrawal after a committed operation loses its acknowledgement', async () => {
+    const execution = await boundExecution();
+    const recovered = { committed: true, replayed: true };
+    const acknowledgementLost = new Error('synthetic_commit_acknowledgement_lost');
+
+    await expect(
+      coordinator.coordinateMutation(
+        {
+          userId: USER_ID,
+          signal: new AbortController().signal,
+          deadlineAt: new Date(Date.now() + 5_000),
+          mayWithdraw: true,
+          operationPreviouslyCommitted: false,
+          prepareWithdrawal: () => Promise.resolve(withdrawn(first)),
+          resolveCommitted: () => Promise.resolve(recovered),
+          isDefiniteRollback: () => false,
+        },
+        () => Promise.reject(acknowledgementLost),
+        (_result, source, existed) => ({
+          dependency: withdrawn(first),
+          invalidatePending: source === 'recovery' && !existed,
+        }),
+      ),
+    ).rejects.toBe(acknowledgementLost);
+
+    expect(execution.signal.aborted).toBe(true);
+    expect(contexts.cleared).toEqual([first.acceptanceDecisionId]);
+    expect(lock.diagnostics()).toEqual({ users: 0, waiters: 0 });
+  });
+
+  it('uses the exact in-lock dependency as a fail-closed guard when reconciliation is unavailable', async () => {
+    const execution = await boundExecution();
+    const acknowledgementLost = new Error('synthetic_commit_acknowledgement_lost');
+
+    await expect(
+      coordinator.coordinateMutation(
+        {
+          userId: USER_ID,
+          signal: new AbortController().signal,
+          deadlineAt: new Date(Date.now() + 5_000),
+          mayWithdraw: true,
+          operationPreviouslyCommitted: false,
+          prepareWithdrawal: () => Promise.resolve(withdrawn(first)),
+          resolveCommitted: () => Promise.reject(new Error('synthetic_reconciliation_failure')),
+          isDefiniteRollback: () => false,
+        },
+        () => Promise.reject(acknowledgementLost),
+        () => null,
+      ),
+    ).rejects.toBe(acknowledgementLost);
+
+    expect(execution.signal.aborted).toBe(true);
+    await expect(
+      coordinator.start(execution, 'generation', () => Promise.resolve('unexpected')),
+    ).rejects.toBeDefined();
+    expect(lock.diagnostics()).toEqual({ users: 0, waiters: 0 });
+  });
+
+  it('does not publish a withdrawal for a confirmed transaction rollback', async () => {
+    const execution = await boundExecution();
+    const rollback = new Error('synthetic_confirmed_rollback');
+    let reconciliationCalls = 0;
+
+    await expect(
+      coordinator.coordinateMutation(
+        {
+          userId: USER_ID,
+          signal: new AbortController().signal,
+          deadlineAt: new Date(Date.now() + 5_000),
+          mayWithdraw: true,
+          operationPreviouslyCommitted: false,
+          prepareWithdrawal: () => Promise.resolve(withdrawn(first)),
+          resolveCommitted: () => {
+            reconciliationCalls += 1;
+            return Promise.resolve(null);
+          },
+          isDefiniteRollback: (error) => error === rollback,
+        },
+        () => Promise.reject(rollback),
+        () => null,
+      ),
+    ).rejects.toBe(rollback);
+
+    expect(reconciliationCalls).toBe(0);
+    expect(execution.signal.aborted).toBe(false);
+    expect(contexts.cleared).toEqual([]);
   });
 
   it('orders a guarded persistence operation before a concurrent withdrawal', async () => {

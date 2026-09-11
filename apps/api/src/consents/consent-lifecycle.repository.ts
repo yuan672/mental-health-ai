@@ -8,6 +8,7 @@ import {
   inArray,
   lt,
   or,
+  sql,
   users,
   type AppDatabase,
   type AppTransaction,
@@ -147,6 +148,64 @@ export class ConsentLifecycleRepository {
   async findOperation(userId: string, operationId: string): Promise<ConsentDecisionRecord | null> {
     const row = await this.findOperationWith(this.databaseService.database, userId, operationId);
     return row ? this.hydrateTarget(this.databaseService.database, row) : null;
+  }
+
+  async resolveCommittedOperation(
+    userId: string,
+    input: ConsentMutationRequest,
+    deadlineAt: Date,
+  ): Promise<{
+    receipt: ConsentDecisionRecord;
+    current: ConsentProjectionRecord;
+    replayed: true;
+  } | null> {
+    return this.databaseService.database.transaction(async (transaction) => {
+      const remainingMs = deadlineAt.getTime() - Date.now();
+      if (remainingMs <= 0) {
+        throw new Error('consent_reconciliation_deadline_exceeded');
+      }
+      const databaseTimeout = `${remainingMs}ms`;
+      await transaction.execute(
+        sql`SELECT set_config('lock_timeout', ${databaseTimeout}, true), set_config('statement_timeout', ${databaseTimeout}, true)`,
+      );
+
+      // The mutation transaction locks the same owner row before committing. Waiting
+      // on that lock distinguishes a confirmed rollback from a commit whose client
+      // acknowledgement was lost; a plain MVCC read could observe the old snapshot.
+      const [owner] = await transaction
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1)
+        .for('update');
+      if (!owner) return null;
+
+      const row = await this.findOperationWith(transaction, userId, input.operationId);
+      if (!row) return null;
+      this.assertReplayMatches(row, input);
+      const [current] = await transaction
+        .select(projectionSelection())
+        .from(consents)
+        .where(eq(consents.id, row.consentId))
+        .limit(1);
+      if (!current) {
+        throw new ConsentTargetInvalidRepositoryError();
+      }
+      return {
+        receipt: await this.hydrateTarget(transaction, row),
+        current,
+        replayed: true,
+      };
+    });
+  }
+
+  async findWithdrawalDependency(
+    userId: string,
+    input: Extract<ConsentMutationRequest, { action: 'withdraw' }>,
+  ): Promise<ConsentDecisionRecord | null> {
+    const projection = await this.findProjection(userId, input.consentType, input.consentVersion);
+    if (!projection || projection.stateRevision !== input.expectedRevision) return null;
+    return this.findEffectiveAcceptance(userId, input.consentType, input.consentVersion);
   }
 
   assertOperationMatches(record: ConsentDecisionRecord, input: ConsentMutationRequest): void {

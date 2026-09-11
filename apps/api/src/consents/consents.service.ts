@@ -1,6 +1,7 @@
 import type {
   ConsentCurrentItem,
   ConsentDecisionReceipt,
+  ConsentDocumentEvidenceStatus,
   ConsentHistoryResponse,
   ConsentMutationRequest,
   ConsentMutationResponse,
@@ -45,32 +46,6 @@ function asConsentType(value: string): ConsentType {
   return value as ConsentType;
 }
 
-function toReceipt(record: ConsentDecisionRecord): ConsentDecisionReceipt {
-  const common = {
-    operationId: record.operationId,
-    outcome: record.outcome,
-    consentType: asConsentType(record.consentType),
-    consentVersion: record.consentVersion,
-    priorRevision: record.priorRevision,
-    resultingRevision: record.resultingRevision,
-    occurredAt: record.occurredAt.toISOString(),
-    decisionSource: record.decisionSource,
-  };
-  return record.decision === 'accepted'
-    ? {
-        ...common,
-        action: 'accept',
-        documentKey: record.documentKey,
-        documentRevision: record.documentRevision,
-      }
-    : {
-        ...common,
-        action: 'withdraw',
-        targetDocumentKey: record.targetDocumentKey,
-        targetDocumentRevision: record.targetDocumentRevision,
-      };
-}
-
 @Injectable()
 export class ConsentsService {
   constructor(
@@ -91,28 +66,48 @@ export class ConsentsService {
       const hasNextPage = records.length > query.limit;
       const page = records.slice(0, query.limit);
       const last = page.at(-1);
+      const projections = await this.lifecycleRepository.listProjections(userId);
+      const projectionByPolicy = new Map(
+        projections.map((projection) => [
+          `${projection.consentType}:${projection.consentVersion}`,
+          projection,
+        ]),
+      );
+      const requiredPolicies = this.consentPolicy.getRequiredPolicies();
       const currentRequiredConsents = await Promise.all(
-        this.consentPolicy.getRequiredPolicies().map(async (policy) => {
-          const projection = await this.lifecycleRepository.findProjection(
+        requiredPolicies.map(async (policy) => {
+          const projection =
+            projectionByPolicy.get(`${policy.consentType}:${policy.consentVersion}`) ?? null;
+          return this.toCurrentFromOptionalProjection(
             userId,
             policy.consentType,
             policy.consentVersion,
+            projection,
           );
-          const acceptance = projection
-            ? await this.lifecycleRepository.findEffectiveAcceptance(
-                userId,
-                policy.consentType,
-                policy.consentVersion,
-              )
-            : null;
-          return this.toCurrent(policy.consentType, policy.consentVersion, projection, acceptance);
         }),
+      );
+      const currentPolicyKeys = new Set(
+        requiredPolicies.map((policy) => `${policy.consentType}:${policy.consentVersion}`),
+      );
+      const historicalStates = await Promise.all(
+        projections
+          .filter(
+            (projection) =>
+              !currentPolicyKeys.has(`${projection.consentType}:${projection.consentVersion}`),
+          )
+          .sort(
+            (left, right) =>
+              right.effectiveAt.getTime() - left.effectiveAt.getTime() ||
+              left.consentType.localeCompare(right.consentType),
+          )
+          .map((projection) => this.toCurrentFromProjection(projection)),
       );
       return {
         success: true,
         data: {
           currentRequiredConsents,
-          consents: page.map(toReceipt),
+          consentStates: [...currentRequiredConsents, ...historicalStates],
+          consents: page.map((record) => this.toReceipt(record)),
           nextCursor:
             hasNextPage && last
               ? encodeOpaqueCursor({
@@ -191,33 +186,49 @@ export class ConsentsService {
       }
 
       const signal = AbortSignal.timeout(env.LLM_TOTAL_TIMEOUT_MS);
-      const withdrawalTargetDecisionId =
-        existingOperation?.decision === 'withdrawn'
-          ? (existingOperation.targetAcceptanceDecisionId ?? undefined)
-          : input.action === 'withdraw'
-            ? (
-                await this.lifecycleRepository.findEffectiveAcceptance(
-                  userId,
-                  input.consentType,
-                  input.consentVersion,
-                )
-              )?.id
-            : undefined;
+      const deadlineAt = new Date(Date.now() + env.LLM_TOTAL_TIMEOUT_MS);
       coordinationStarted = true;
       const result = await this.withdrawalCoordinator.mutate(
         {
           userId,
           signal,
-          deadlineAt: new Date(Date.now() + env.LLM_TOTAL_TIMEOUT_MS),
+          deadlineAt,
           mayWithdraw: input.action === 'withdraw',
-          ...(withdrawalTargetDecisionId ? { withdrawalTargetDecisionId } : {}),
+          operationPreviouslyCommitted: existingOperation !== null,
+          prepareWithdrawal: async () => {
+            if (input.action !== 'withdraw') return null;
+            const target =
+              existingOperation?.decision === 'withdrawn'
+                ? existingOperation
+                : await this.lifecycleRepository.findWithdrawalDependency(userId, input);
+            const acceptanceDecisionId =
+              target?.decision === 'withdrawn'
+                ? target.targetAcceptanceDecisionId
+                : target?.decision === 'accepted'
+                  ? target.id
+                  : null;
+            return acceptanceDecisionId
+              ? {
+                  acceptanceDecisionId,
+                  consentType: input.consentType,
+                  consentVersion: input.consentVersion,
+                }
+              : null;
+          },
+          resolveCommitted: () =>
+            this.lifecycleRepository.resolveCommittedOperation(userId, input, deadlineAt),
+          isDefiniteRollback: (error) =>
+            error instanceof ConsentOperationConflictRepositoryError ||
+            error instanceof ConsentDocumentIdentityConflictRepositoryError ||
+            error instanceof ConsentStateChangedRepositoryError ||
+            error instanceof ConsentTargetInvalidRepositoryError,
         },
         () => this.lifecycleRepository.mutate(userId, input),
       );
       return {
         success: true,
         data: {
-          receipt: toReceipt(result.receipt),
+          receipt: this.toReceipt(result.receipt),
           current: await this.toCurrentFromProjection(result.current),
         },
       };
@@ -254,17 +265,26 @@ export class ConsentsService {
   private async toCurrentFromProjection(
     projection: ConsentProjectionRecord,
   ): Promise<ConsentCurrentItem> {
-    const acceptance = await this.lifecycleRepository.findEffectiveAcceptance(
+    return this.toCurrentFromOptionalProjection(
       projection.userId,
-      projection.consentType,
-      projection.consentVersion,
-    );
-    return this.toCurrent(
       asConsentType(projection.consentType),
       projection.consentVersion,
       projection,
-      acceptance,
     );
+  }
+
+  private async toCurrentFromOptionalProjection(
+    userId: string,
+    consentType: ConsentType,
+    consentVersion: string,
+    projection: ConsentProjectionRecord | null,
+  ): Promise<ConsentCurrentItem> {
+    const acceptance = await this.lifecycleRepository.findEffectiveAcceptance(
+      userId,
+      consentType,
+      consentVersion,
+    );
+    return this.toCurrent(consentType, consentVersion, projection, acceptance);
   }
 
   private toCurrent(
@@ -284,28 +304,42 @@ export class ConsentsService {
           acceptance.documentRevision,
         )
       : null;
+    const documentEvidenceStatus = acceptance
+      ? this.documentEvidenceStatus(
+          acceptance.documentKey,
+          acceptance.documentRevision,
+          verified !== null,
+        )
+      : 'unavailable';
     const active =
       projection?.status === 'accepted' &&
       eligible !== null &&
       acceptance?.documentKey === eligible.documentKey &&
       acceptance.documentRevision === eligible.documentRevision;
     const confirmationRequired =
-      projection?.status === 'accepted' &&
-      acceptance !== null &&
-      acceptance.documentKey === null &&
-      acceptance.documentRevision === null;
+      currentPolicy && projection?.status === 'accepted' && acceptance !== null && !active;
     return {
       consentType,
       consentVersion,
+      isCurrentRequired: currentPolicy,
       status: projection?.status ?? 'not_accepted',
       stateRevision: projection?.stateRevision ?? 0,
       effectiveAt: projection?.effectiveAt.toISOString() ?? null,
       acceptedAt: projection?.acceptedAt.toISOString() ?? null,
       withdrawnAt: projection?.withdrawnAt?.toISOString() ?? null,
-      documentKey: acceptance?.documentKey ?? null,
-      documentRevision: acceptance?.documentRevision ?? null,
+      documentKey: verified?.documentKey ?? null,
+      documentRevision: verified?.documentRevision ?? null,
       documentUrl: verified?.documentUrl ?? null,
       displayKey: verified?.displayKey ?? eligible?.displayKey ?? DISPLAY_KEYS[consentType],
+      documentEvidenceStatus,
+      acceptableDocument: eligible
+        ? {
+            documentKey: eligible.documentKey,
+            documentRevision: eligible.documentRevision,
+            documentUrl: eligible.documentUrl,
+            displayKey: eligible.displayKey,
+          }
+        : null,
       authorizationStatus: active
         ? 'active'
         : confirmationRequired
@@ -314,5 +348,65 @@ export class ConsentsService {
       acceptanceEnabled: eligible !== null,
       withdrawalEnabled: projection?.status === 'accepted',
     };
+  }
+
+  private toReceipt(record: ConsentDecisionRecord): ConsentDecisionReceipt {
+    const registry = this.consentPolicy.getDocumentRegistry();
+    const consentType = asConsentType(record.consentType);
+    const common = {
+      operationId: record.operationId,
+      outcome: record.outcome,
+      consentType,
+      consentVersion: record.consentVersion,
+      priorRevision: record.priorRevision,
+      resultingRevision: record.resultingRevision,
+      occurredAt: record.occurredAt.toISOString(),
+      decisionSource: record.decisionSource,
+    };
+    if (record.decision === 'accepted') {
+      const verified = registry.findVerifiedDocument(
+        consentType,
+        record.consentVersion,
+        record.documentKey,
+        record.documentRevision,
+      );
+      return {
+        ...common,
+        action: 'accept',
+        documentKey: verified?.documentKey ?? null,
+        documentRevision: verified?.documentRevision ?? null,
+        documentEvidenceStatus: this.documentEvidenceStatus(
+          record.documentKey,
+          record.documentRevision,
+          verified !== null,
+        ),
+      };
+    }
+    const verifiedTarget = registry.findVerifiedDocument(
+      consentType,
+      record.consentVersion,
+      record.targetDocumentKey,
+      record.targetDocumentRevision,
+    );
+    return {
+      ...common,
+      action: 'withdraw',
+      targetDocumentKey: verifiedTarget?.documentKey ?? null,
+      targetDocumentRevision: verifiedTarget?.documentRevision ?? null,
+      targetDocumentEvidenceStatus: this.documentEvidenceStatus(
+        record.targetDocumentKey,
+        record.targetDocumentRevision,
+        verifiedTarget !== null,
+      ),
+    };
+  }
+
+  private documentEvidenceStatus(
+    documentKey: string | null,
+    documentRevision: string | null,
+    verified: boolean,
+  ): ConsentDocumentEvidenceStatus {
+    if (!documentKey && !documentRevision) return 'unmapped_legacy';
+    return verified ? 'verified' : 'unavailable';
   }
 }
