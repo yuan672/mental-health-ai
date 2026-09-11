@@ -978,16 +978,21 @@ describe('Phase 5C Incognito and privacy API integration', () => {
         await release.promise;
         return originalFindProjection(...args);
       });
-    const preparation = orchestration.prepareIncognitoTurn(
-      { userId: auth.userId, sessionId: auth.sessionId },
-      {
-        mode: 'incognito',
-        contextId,
-        clientRequestId: randomUUID(),
-        message: '合成的 Consent 查询竞态输入',
-      },
-      new AbortController().signal,
-    );
+    const preparation = orchestration
+      .prepareIncognitoTurn(
+        { userId: auth.userId, sessionId: auth.sessionId },
+        {
+          mode: 'incognito',
+          contextId,
+          clientRequestId: randomUUID(),
+          message: '合成的 Consent 查询竞态输入',
+        },
+        new AbortController().signal,
+      )
+      .then(
+        (value) => ({ status: 'fulfilled' as const, value }),
+        (reason: unknown) => ({ status: 'rejected' as const, reason }),
+      );
     await entered.promise;
 
     const withdrawal = mutation(auth, '/consents')
@@ -1001,14 +1006,35 @@ describe('Phase 5C Incognito and privacy API integration', () => {
       .expect(200);
     release.resolve();
     await withdrawal;
-    await expect(preparation).rejects.toBeDefined();
+    const preparationOutcome = await preparation;
+    if (preparationOutcome.status === 'fulfilled') {
+      expect(preparationOutcome.value.kind).toBe('ready');
+      if (preparationOutcome.value.kind !== 'ready') {
+        throw new Error('Synthetic LOW-risk preparation must use the ready path');
+      }
+      const preparedStream = orchestration.streamPreparedIncognitoTurn(
+        preparationOutcome.value,
+        new AbortController().signal,
+      );
+      const iterator = preparedStream[Symbol.asyncIterator]();
+      await expect(iterator.next()).resolves.toMatchObject({
+        done: false,
+        value: { type: 'turn.started' },
+      });
+      await expect(iterator.next()).rejects.toBeDefined();
+    } else {
+      expect(preparationOutcome.reason).toEqual(
+        expect.objectContaining({ message: 'consent_withdrawn' }),
+      );
+    }
     findProjection.mockRestore();
 
     expect(contexts.get(auth.userId, auth.sessionId, contextId)).toBeNull();
     expect(provider.streamCalls).toBe(0);
-    // The application-level fake may be entered before withdrawal wins the next lock,
-    // but the revoked execution cannot become usable or dispatch the generation Provider.
-    expect(riskClassifier.calls).toBe(1);
+    // The classifier may be entered before withdrawal wins the next lock, or skipped
+    // when withdrawal wins first. Either ordering must remain at-most-once and must
+    // not dispatch the generation Provider.
+    expect(riskClassifier.calls).toBeLessThanOrEqual(1);
   });
 
   it('cancels after admission but before Provider dispatch without retaining quota', async () => {
