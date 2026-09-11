@@ -19,13 +19,10 @@ Accepted decisions:
 15. ADR-015 User-Facing Conversation, Incognito, and Client Data Boundaries
 16. ADR-016 Consent Lifecycle and Policy Evidence
 17. ADR-017 Mood Tracking and Minimal Profile Data Boundaries
+18. ADR-018 Knowledge Base Content and Publication Boundaries
 
 New decisions should use the next sequential ADR number. Existing accepted ADRs should not be silently rewritten; supersede them with a new ADR when the decision materially changes.
 
 ADR-016 narrowly supersedes ADR-011's Consent single-lifecycle/no-reaccept rule
 and ADR-015's broad all-user withdrawal cleanup rule. All other decisions in
 ADR-011 and ADR-015 remain Accepted.
-
-Proposed decisions:
-
-18. ADR-018 Knowledge Base Content and Publication Boundaries

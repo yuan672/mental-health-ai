@@ -1,7 +1,8 @@
 # ADR-018: Knowledge Base Content and Publication Boundaries
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-11
+- Accepted: 2026-09-11
 - Related: ADR-001, ADR-003, ADR-004, ADR-007, ADR-008, ADR-013,
   ADR-014, ADR-015
 - Supersedes: None
@@ -23,7 +24,7 @@ single row would erase which body and sources were reviewed. Treating an officia
 URL as sufficient review would also confuse publisher identity, claim
 verification, reuse rights, and professional review.
 
-## Proposed decision
+## Decision
 
 ### Bounded user experience
 
@@ -81,6 +82,26 @@ Publication status is `draft | published | withdrawn`; review status is
 - Withdrawal hides the version from new reads without deleting or rewriting its
   evidence.
 
+Controlled publish and withdraw commands always name the exact article key and
+version. New versions are sequential: version 1 starts an article and only the
+immediate next version may advance it. Commands serialize on the logical article
+row, so a later version cannot win before its predecessor merely because of request
+scheduling.
+
+Repeating an exact manifest for the same currently published version is a no-op and
+preserves body, sources, `reviewedAt`, and `publishedAt`. Reusing a version with
+different content, sources, origin, or review evidence is an identity conflict. A
+withdrawn/superseded version is retired and cannot be republished. Withdrawal also
+targets one exact version; retrying a version-1 withdrawal after version 2 is
+published cannot affect version 2, and repeated withdrawal preserves the first
+`withdrawnAt`.
+
+Next-version replacement withdraws the current version and publishes the target in
+one transaction. Identical concurrent publish commands converge to one state;
+conflicting same-version manifests produce an identity conflict; and out-of-order
+versions are rejected. These rules use row state, locks, and constraints rather
+than a generic operation ledger or distributed publication system.
+
 No automatic content-version retention is selected in Phase 5E. This is not a
 promise of permanent retention; a future approved content-lifecycle policy may
 remove dependency-closed records. Normal update/withdrawal preserves them.
@@ -109,11 +130,15 @@ Only separately validated source records become links.
 
 ### Synthetic isolation
 
-Every version is `curated` or `synthetic_fixture`. Development/Test may serve
-visibly labelled synthetic fixtures from protected environments. Staging/Production
-reads and publication reject synthetic content; a configuration switch cannot
-promote it. Synthetic fixtures cannot establish professional review or production
-content approval.
+Every version is `curated` or `synthetic_fixture`. A separate guarded
+Development/Test fixture path may create visibly labelled, `unverified` synthetic
+content without `reviewedBy`/`reviewedAt`; it does not pass through or weaken the
+curated publisher. Test setup requires a protected `_test` database. The normal
+curated path always requires real source verification and has no bypass.
+Staging/Production list, detail, and publication policies reject synthetic content;
+a configuration switch cannot promote it. Synthetic responses preserve their real
+review status and cannot establish source/professional review or production content
+approval.
 
 ### Read and browser privacy
 
@@ -131,10 +156,10 @@ does not create reading histories, analytics profiles, or Mood/chat correlations
 ### AI integration boundary
 
 The HANDOFF's LLM-plus-Knowledge direction is retained. This decision establishes
-the independent content/read foundation but does not decide whether a bounded AI
-retrieval implementation belongs to a later Phase 5E batch or a separately
-authorized later phase. That is an explicit scope confirmation before AI code
-starts, not a permanent exclusion.
+the independent content/read foundation. Bounded AI retrieval is assigned to a
+later, independent Phase 5E batch that requires its own design, review, and explicit
+implementation authorization. It is not part of Phase 5E-1 and is not permanently
+excluded.
 
 Any approved RAG or retrieval batch must be separately reviewed for indexing and
 withdrawal consistency, citations, provider/Consent boundaries, safety gates, and
@@ -195,11 +220,14 @@ evaluation, and deletion boundaries and is not required for independent educatio
 reading. This does not reject the HANDOFF's overall LLM-plus-Knowledge direction;
 the later delivery boundary still requires explicit confirmation.
 
-## Adoption boundary
+## Accepted scope
 
-This ADR remains Proposed until the Phase 5E design is explicitly accepted. If
-accepted, it authorizes the bounded data/read architecture and synthetic engineering
-fixtures. It does not by itself decide or authorize the AI retrieval batch, nor
-approve an article body, source citation, copyright/reuse basis, reviewer identity,
-professional-review claim, production content release, Production AI enablement, or
-real-model evaluation.
+This ADR accepts the bounded article/version/source architecture, authenticated
+read-only API, controlled exact-version command semantics, safe structured content,
+and guarded synthetic engineering fixtures. It authorizes Phase 5E-1 implementation
+but not its merge.
+
+It does not authorize the later AI retrieval batch, Web experience, an article body,
+source citation, copyright/reuse basis, reviewer identity, professional-review
+claim, production content release, Production AI enablement, or real-model
+evaluation.

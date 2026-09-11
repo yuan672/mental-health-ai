@@ -1,8 +1,8 @@
 # Phase 5E — Knowledge Base Design Review
 
-- Status: Proposed; pending design review
+- Status: Accepted design; Phase 5E-1 implementation authorized
 - Baseline: `develop` at `ff84227061aed2c8f081d913767343af3b4d7ed5`
-- Architecture: Proposed ADR-018
+- Architecture: Accepted ADR-018
 - Implementation status: Not started
 - Source reconnaissance date: 2026-09-11
 
@@ -27,8 +27,8 @@ There is no Knowledge module, article table, source table, read API, Web route,
 content publishing workflow, embedding pipeline, or retrieval integration today.
 `LLMProvider.embed()` remains an unsupported capability and is not needed for the
 independent reading foundation. The HANDOFF's wider `LLM + Knowledge` direction is
-retained; the implementation-batch boundary for that integration is the one open
-scope decision in this proposal.
+retained and is assigned to a later independent Phase 5E batch with separate design
+and implementation authorization.
 
 `docs/HANDOFF.md` section 17 is the controlling content boundary: V1 may use only
 public, authoritative, traceable material; every article must preserve its source;
@@ -192,7 +192,7 @@ Knowledge articles:
 No page above is imported, copied, or published by this design. Live-source checks
 must not run in CI; tests use local synthetic source fixtures.
 
-## 6. Content lifecycle
+## 6. Content lifecycle and command semantics
 
 The workflow has two independent axes:
 
@@ -217,6 +217,72 @@ Only one version of a logical article may be published at once. Publication uses
 database transaction, an article-row lock, and a partial unique constraint. A
 failed transaction leaves the previous publication state intact.
 
+Both controlled mutation commands name the exact `articleKey` and positive integer
+`version`; neither accepts “latest” as a target.
+
+### Publish
+
+The publish command validates and canonicalizes the full manifest before opening a
+transaction. The immutable comparison fields are the article key/version, title,
+summary, ordered content blocks, ordered source evidence, content origin,
+`reviewStatus`, `reviewedBy`, and `reviewedAt`. Comparison is against those bounded
+fields directly; the service does not persist a content hash or generic operation
+receipt.
+
+Inside the transaction the service locks the logical article, then applies these
+rules:
+
+1. Version 1 is the first publishable version. A new later version must be exactly
+   one greater than the highest version already recorded for that article; gaps and
+   publishing out of order are rejected.
+2. An absent valid target is inserted with its sources and published atomically. An
+   exact source-verified draft may be published only when it is the next version and
+   no higher version exists.
+3. If the exact target is already the current published version and every immutable
+   field matches, the command is a no-op. It returns the existing state without
+   rewriting `publishedAt`, `reviewedAt`, body, or sources.
+4. If an existing target differs in any immutable content, source, origin, or review
+   field, the command rejects it as a version-identity conflict. First-write success
+   is not permission to mutate that version.
+5. A withdrawn/superseded target is retired and cannot be republished. A target
+   older than the highest/current version is stale and cannot replace a newer
+   version.
+6. Publishing the next version withdraws the current version and publishes the new
+   version in the same transaction. Any insert, source, status, or commit failure
+   rolls back the entire replacement.
+
+Concurrent commands serialize on the article row. Two identical commands for the
+same next version converge to one publication plus one no-op. Conflicting manifests
+for the same version produce one possible winner and one identity conflict. Two
+different future versions do not race to arbitrary final state: only the immediate
+next version may advance. For example, version 3 submitted before version 2 is
+committed is rejected; it may be explicitly invoked again after version 2 succeeds.
+
+### Withdraw
+
+The withdrawal command locks the article and targets only the supplied version:
+
+- a currently published target becomes withdrawn and receives its first
+  `withdrawnAt`;
+- an already withdrawn/superseded target is an idempotent no-op that preserves the
+  original `withdrawnAt`;
+- a draft cannot be withdrawn through the publication command surface; and
+- a missing article/version returns a definite not-found result.
+
+The command never resolves “current version” on behalf of the caller. Therefore a
+retry for old version 1 after version 2 is published observes version 1 as already
+withdrawn and cannot affect version 2. Concurrent publication/withdrawal follows the
+same article lock: withdrawing version 1 before publishing version 2 leaves version
+2 eligible; publishing version 2 first retires version 1, so the exact version-1
+withdrawal becomes a no-op.
+
+These guarantees use the existing article/version rows, immutable fields, row lock,
+and constraints. Phase 5E does not add a generic operation ledger, distributed
+publisher, or cross-process lock service. A command that returned a definite
+validation/not-found result is complete; repeating it later is a new operator
+invocation. A commit acknowledgement whose result is unknown is resolved by reading
+the exact article/version state and re-running the exact same manifest/target.
+
 Published and withdrawn content versions have no automatic retention policy in
 this phase because their traceable editorial history is needed. This is not a
 promise of permanent retention or a legal conclusion. A future approved content-
@@ -225,15 +291,26 @@ update and withdrawal do not.
 
 ## 7. Synthetic content isolation
 
-Every version has a bounded origin: `curated` or `synthetic_fixture`.
+Every version has a bounded origin: `curated` or `synthetic_fixture`. Synthetic
+creation is an explicit exception to the normal curated publishing path:
 
-- Development/Test may insert visibly labelled synthetic fixtures through guarded
-  setup against protected test/development databases.
+- A separate Development/Test fixture entry point may insert an `unverified`
+  synthetic version with no `reviewedBy` or `reviewedAt`. It does not call or weaken
+  the curated publisher.
+- Test fixture setup additionally requires a protected `_test` database. Development
+  fixtures require the explicit development-only fixture command and remain visibly
+  labelled.
+- The normal curated publisher always requires real source verification, a real
+  reviewer identity/time, and sources; it has no environment/configuration bypass.
 - Staging/Production read policies return only `curated` versions.
 - Staging/Production publication rejects `synthetic_fixture` before writing.
 - An environment flag cannot promote a synthetic row into curated content.
-- Synthetic fixtures cannot carry or display `professional_reviewed` and do not
-  satisfy production content approval.
+- Synthetic fixture responses preserve their actual `reviewStatus` (`unverified` in
+  the first fixture path). The API/UI must not label them `source_verified` merely
+  because a test inserted them.
+- Synthetic fixtures have no invented reviewer or verification timestamp, cannot
+  carry/display `professional_reviewed`, and do not satisfy production content
+  approval.
 - CI uses only local synthetic sources and performs no network publication check.
 
 The origin remains stored with the version; changing it is not a publication
@@ -275,7 +352,7 @@ KnowledgeArticle lifecycle.
 Rejected because updating the body or source in place would erase what a user read
 under an earlier version and make `source_verified` evidence ambiguous.
 
-## 9. Proposed data model
+## 9. Accepted data model
 
 ### `knowledge_articles`
 
@@ -355,7 +432,7 @@ user-supplied URL, or executable component. Source links come only from validate
 source records. Counts and lengths are bounded in shared/API Zod schemas and again
 at the release command.
 
-## 10. Proposed read API
+## 10. Accepted read API
 
 All endpoints require authentication and respond with
 `Cache-Control: private, no-store`.
@@ -446,18 +523,15 @@ Phase 5E does not implement automated link monitoring, source archiving, or a
 professional-review expiry scheduler. These may be considered after a real content
 operation exists.
 
-## 13. AI integration boundary — scope confirmation required
+## 13. AI integration boundary
 
 The HANDOFF's wider `LLM + Knowledge` direction remains part of the product
-direction. The minimum reader, source, and version foundation is useful on its own
-and should be implemented first. Whether a bounded AI retrieval integration is a
-later Phase 5E delivery batch or a separately authorized later phase is not clear in
-the existing baseline and needs one explicit scope decision before such code starts.
-
-The recommendation is to make it a separate, later Phase 5E batch after the read
-model and curated publication contract exist. That preserves the overall direction
-without coupling the first reversible reader delivery to unapproved provider and
-evaluation work. It is not a decision to exclude Knowledge from AI permanently.
+direction. Bounded AI retrieval is assigned to a later, independent Phase 5E batch
+after the read model and curated publication contract exist. That batch requires
+separate design, review, and explicit implementation authorization. This preserves
+the overall direction without coupling the first reversible reader delivery to
+unapproved provider and evaluation work, and it does not exclude Knowledge from AI
+permanently.
 
 If that batch is approved, its narrow design must decide:
 
@@ -516,12 +590,11 @@ authentication.
 
 ### Conditional Phase 5E AI integration batch
 
-Only if the open scope decision explicitly keeps AI retrieval inside Phase 5E, use
-a later independent design/implementation PR after the read foundation and content
-contract are stable. Its acceptance, tests, and rollback boundary must cover
-indexing/version invalidation, provider/Consent privacy, AI safety, citations, and
-quality evaluation. No infrastructure for that hypothetical batch is added by the
-reader implementation.
+The accepted scope keeps AI retrieval inside Phase 5E as a later independent
+design/implementation batch after the read foundation and content contract are
+stable. Its acceptance, tests, and rollback boundary must cover indexing/version
+invalidation, provider/Consent privacy, AI safety, citations, and quality
+evaluation. Phase 5E-1 adds no infrastructure for that later batch.
 
 ## 15. Acceptance and test plan
 
@@ -573,7 +646,7 @@ login → Knowledge list → open synthetic article → verify version/source la
 return to list → logout. The source target is local/synthetic; CI performs no live
 third-party request. Component/API tests keep detailed withdrawal/error cases.
 
-## 16. Default implementation assumptions and one open scope decision
+## 16. Accepted implementation boundary
 
 The minimum reader implementation uses these ordinary V1 recommendations without
 turning them into permanent product exclusions:
@@ -588,10 +661,10 @@ These choices can be revisited from usage evidence through normal reviewed chang
 They do not need separate product decisions before the synthetic Phase 5E-1/5E-2
 engineering work.
 
-The only material scope confirmation is: **should bounded AI retrieval be a later
-Phase 5E batch, as recommended, or be authorized under a separate later phase?**
-Until answered, it neither blocks the independent reader nor authorizes any AI
-integration.
+The AI scope decision is now resolved: bounded LLM-plus-Knowledge integration remains
+a later, independent Phase 5E batch with its own design, review, and implementation
+authorization. It is not part of Phase 5E-1, is not permanently excluded, and is not
+authorized by acceptance of this document.
 
 ## 17. Production publication prerequisites
 
