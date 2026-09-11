@@ -12,6 +12,7 @@ async function bootstrap(): Promise<void> {
   app.enableCors({
     origin: env.WEB_ORIGINS,
     credentials: true,
+    exposedHeaders: ['X-MH-Knowledge-References'],
   });
   app.enableShutdownHooks();
 

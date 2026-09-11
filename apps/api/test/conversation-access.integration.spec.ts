@@ -1,12 +1,16 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import {
   auditLogs,
+  assistantMessageKnowledgeReferences,
   conversations,
   count,
   createDatabaseClient,
   eq,
   messages,
   migrate,
+  knowledgeArticles,
+  knowledgeArticleSources,
+  knowledgeArticleVersions,
   riskEvents,
   sessions,
   users,
@@ -342,6 +346,118 @@ describe('Phase 5A conversation access API integration', () => {
     ).toEqual([1]);
     expect(third.body.data.nextCursor).toBeNull();
     await authenticatedGet(other, `/conversations/${conversation.id}/messages`).expect(404);
+  });
+
+  it('negotiates strict v2 history and fails a referenced v1 page closed with 406', async () => {
+    const auth = await createAuthContext();
+    const other = await createAuthContext();
+    const conversation = await seedConversation(auth.userId);
+    const assistant = await seedMessage(conversation.id, 2, '合成知识回复');
+    const articleId = randomUUID();
+    const articleVersionId = randomUUID();
+    const reviewedAt = new Date('2026-09-01T00:00:00.000Z');
+    const publishedAt = new Date('2026-09-02T00:00:00.000Z');
+    const retrievedAt = new Date('2026-08-31T00:00:00.000Z');
+    await database.database.insert(knowledgeArticles).values({
+      id: articleId,
+      articleKey: 'synthetic-history-reference',
+      createdAt: reviewedAt,
+    });
+    await database.database.insert(knowledgeArticleVersions).values({
+      id: articleVersionId,
+      articleId,
+      version: 1,
+      title: '合成历史引用',
+      summary: '仅用于协议测试',
+      contentBlocks: [{ type: 'paragraph', text: '合成知识正文' }],
+      publicationStatus: 'draft',
+      reviewStatus: 'unverified',
+      contentOrigin: 'synthetic_fixture',
+      reviewedBy: null,
+      reviewedAt: null,
+      publishedAt: null,
+      withdrawnAt: null,
+      createdAt: reviewedAt,
+    });
+    await database.database.insert(knowledgeArticleSources).values({
+      id: randomUUID(),
+      articleVersionId,
+      ordinal: 1,
+      publisherName: '合成来源发布者',
+      sourceTitle: '合成来源标题',
+      sourceUrl: 'https://fixture.invalid/reference',
+      sourcePublishedAt: null,
+      sourceVersionLabel: 'fixture-v1',
+      sourceLocator: 'synthetic-section',
+      retrievedAt,
+    });
+    await database.database
+      .update(knowledgeArticleVersions)
+      .set({ publicationStatus: 'published', publishedAt })
+      .where(eq(knowledgeArticleVersions.id, articleVersionId));
+    await database.database.insert(assistantMessageKnowledgeReferences).values({
+      assistantMessageId: assistant.id,
+      articleVersionId,
+      ordinal: 1,
+    });
+
+    const v1 = await authenticatedGet(auth, `/conversations/${conversation.id}/messages`).expect(
+      406,
+    );
+    expect(v1.body).toEqual({
+      success: false,
+      error: {
+        code: 'CLIENT_CAPABILITY_REQUIRED',
+        message: '此内容需要更新客户端后查看',
+      },
+    });
+    expect(v1.headers.vary).toContain('X-MH-Knowledge-References');
+    expect(JSON.stringify(v1.body)).not.toContain('合成知识回复');
+
+    const v2 = await authenticatedGet(auth, `/conversations/${conversation.id}/messages`)
+      .set('X-MH-Knowledge-References', '1')
+      .expect(200);
+    expect(v2.headers['x-mh-knowledge-references']).toBe('1');
+    expect(v2.headers.vary).toContain('X-MH-Knowledge-References');
+    expect(v2.body.data.messages).toEqual([
+      {
+        id: assistant.id,
+        role: 'assistant',
+        content: '合成知识回复',
+        sequence: 2,
+        createdAt: assistant.createdAt.toISOString(),
+        knowledgeReferences: [
+          {
+            articleKey: 'synthetic-history-reference',
+            title: '合成历史引用',
+            version: 1,
+            contentOrigin: 'synthetic_fixture',
+            reviewStatus: 'unverified',
+            reviewedAt: null,
+            availability: 'currently_published',
+            sources: [
+              {
+                linkState: 'available',
+                ordinal: 1,
+                publisherName: '合成来源发布者',
+                sourceTitle: '合成来源标题',
+                sourceUrl: 'https://fixture.invalid/reference',
+                sourcePublishedAt: null,
+                sourceVersionLabel: 'fixture-v1',
+                sourceLocator: 'synthetic-section',
+                retrievedAt: retrievedAt.toISOString(),
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+    await authenticatedGet(other, `/conversations/${conversation.id}/messages`)
+      .set('X-MH-Knowledge-References', '1')
+      .expect(404);
+    await authenticatedGet(auth, `/conversations/${conversation.id}/messages`)
+      .set('X-MH-Knowledge-References', '2')
+      .expect(400);
   });
 
   it('saves an active conversation idempotently and enforces CSRF and ownership', async () => {

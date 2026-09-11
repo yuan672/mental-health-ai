@@ -157,6 +157,12 @@ export class KnowledgePublicationForbiddenError extends AppError {
   }
 }
 
+export class ClientCapabilityRequiredError extends AppError {
+  constructor(message = '此内容需要更新客户端后查看') {
+    super(ERROR_CODES.CLIENT_CAPABILITY_REQUIRED, 406, message);
+  }
+}
+
 export class DatabaseError extends AppError {
   constructor(message = '数据服务暂时不可用') {
     super(ERROR_CODES.DATABASE_ERROR, 500, message);

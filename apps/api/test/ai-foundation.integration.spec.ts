@@ -1039,6 +1039,45 @@ describe('Phase 3 AI foundation integration', () => {
     expect(response.text).not.toContain('safe-fake-trace');
     expect(response.text).not.toContain('promptVersion');
     expect(response.text).not.toContain('inputTokens');
+    expect(response.text).not.toContain('deliveryMode');
+    expect(response.text).not.toContain('knowledgeReferences');
+
+    const v2Response = await request(app.getHttpServer())
+      .post('/ai/chat/stream')
+      .set('Origin', 'http://localhost:5173')
+      .set('Cookie', `mh_session=${rawToken}; mh_csrf=synthetic-csrf`)
+      .set('x-csrf-token', 'synthetic-csrf')
+      .set('X-MH-Knowledge-References', '1')
+      .send({
+        mode: 'persistent',
+        clientRequestId: randomUUID(),
+        conversationId: conversation.id,
+        message: 'synthetic-v2-http-message',
+      })
+      .expect(200)
+      .expect('content-type', /text\/event-stream/u);
+    expect(v2Response.headers['x-mh-knowledge-references']).toBe('1');
+    expect(v2Response.headers.vary).toContain('X-MH-Knowledge-References');
+    expect(v2Response.text).toContain('"deliveryMode":"immediate"');
+    expect(v2Response.text).toContain('"knowledgeReferences":[]');
+
+    await request(app.getHttpServer())
+      .post('/ai/chat/stream')
+      .set('Origin', 'http://localhost:5173')
+      .set('Cookie', `mh_session=${rawToken}; mh_csrf=synthetic-csrf`)
+      .set('x-csrf-token', 'synthetic-csrf')
+      .set('X-MH-Knowledge-References', 'unsupported')
+      .send({
+        mode: 'persistent',
+        clientRequestId: randomUUID(),
+        conversationId: conversation.id,
+        message: 'must-not-reach-provider',
+      })
+      .expect(400)
+      .expect({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: '不支持的知识引用协议版本' },
+      });
   });
 
   it('uses the existing authentication boundary for the streaming endpoint', async () => {

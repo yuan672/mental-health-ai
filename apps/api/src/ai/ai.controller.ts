@@ -1,6 +1,7 @@
-import { Body, Controller, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Headers, Post, Req, Res, UseGuards } from '@nestjs/common';
 import type {
   AiStreamEvent,
+  AiStreamEventV2,
   IncognitoAiChatRequest,
   IncognitoAiStreamEvent,
   PersistentAiStreamEvent,
@@ -10,22 +11,40 @@ import { AuthenticatedSessionGuard } from '../auth/authenticated-session.guard';
 import type { AuthenticatedRequest } from '../auth/authenticated-request';
 import { CsrfGuard } from '../auth/csrf.guard';
 import { AppError, ERROR_CODES } from '../common/errors';
+import {
+  applyKnowledgeReferenceResponseHeaders,
+  parseKnowledgeReferenceCapability,
+  type KnowledgeReferenceRepresentation,
+} from '../common/http/knowledge-reference-capability';
 import { ZodValidationPipe } from '../common/validation/zod-validation.pipe';
 import { AiOrchestrationService } from './ai-orchestration.service';
 import type { ConsentBoundExecution } from './runtime/active-ai-execution.registry';
 import { ConsentExecutionCoordinator } from '../consents/runtime/consent-execution.coordinator';
 import { aiChatRequestSchema, type AiChatRequest } from './ai.schemas';
+import {
+  parseAiStreamEventV2,
+  toAiStreamEventV1,
+  toImmediateAiStreamEventV2,
+} from './ai-public.schemas';
 
 export async function writeSse(
   response: Response,
-  event: AiStreamEvent,
+  event: AiStreamEvent | AiStreamEventV2,
   sequence: number,
   signal: AbortSignal,
+  representation: KnowledgeReferenceRepresentation = 'v1',
 ): Promise<void> {
   if (signal.aborted) throw signal.reason ?? new Error('AI stream aborted');
   if (response.destroyed || response.writableEnded) throw new Error('AI stream is not writable');
-  const streamId = event.data.mode === 'persistent' ? event.data.turnId : event.data.generationId;
-  const frame = `id: ${streamId}:${sequence}\nevent: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`;
+  const wireEvent =
+    representation === 'v2'
+      ? 'deliveryMode' in event.data
+        ? parseAiStreamEventV2(event)
+        : toImmediateAiStreamEventV2(event as AiStreamEvent)
+      : toAiStreamEventV1(event);
+  const streamId =
+    wireEvent.data.mode === 'persistent' ? wireEvent.data.turnId : wireEvent.data.generationId;
+  const frame = `id: ${streamId}:${sequence}\nevent: ${wireEvent.type}\ndata: ${JSON.stringify(wireEvent.data)}\n\n`;
   if (response.write(frame)) return;
 
   await new Promise<void>((resolve, reject) => {
@@ -90,8 +109,11 @@ export class AiController {
   async streamChat(
     @Req() request: AuthenticatedRequest,
     @Res() response: Response,
+    @Headers('x-mh-knowledge-references') knowledgeCapability: string | undefined,
     @Body(new ZodValidationPipe(aiChatRequestSchema)) body: AiChatRequest,
   ): Promise<void> {
+    response.vary('X-MH-Knowledge-References');
+    const representation = parseKnowledgeReferenceCapability(knowledgeCapability);
     const abortController = new AbortController();
     const onClose = (): void => {
       if (!response.writableEnded) {
@@ -101,7 +123,7 @@ export class AiController {
     response.once('close', onClose);
 
     if (body.mode === 'incognito') {
-      await this.streamIncognito(request, response, body, abortController, onClose);
+      await this.streamIncognito(request, response, body, abortController, onClose, representation);
       return;
     }
 
@@ -122,6 +144,7 @@ export class AiController {
 
     if (prepared.kind === 'existing') {
       response.removeListener('close', onClose);
+      applyKnowledgeReferenceResponseHeaders(response, representation);
       response.status(200).json({
         success: true,
         data: {
@@ -143,6 +166,7 @@ export class AiController {
     }
 
     response.status(200);
+    applyKnowledgeReferenceResponseHeaders(response, representation);
     response.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     response.setHeader('Cache-Control', 'no-cache, no-transform');
     response.setHeader('Connection', 'keep-alive');
@@ -262,6 +286,7 @@ export class AiController {
     body: IncognitoAiChatRequest,
     abortController: AbortController,
     onClose: () => void,
+    representation: KnowledgeReferenceRepresentation,
   ): Promise<void> {
     let prepared;
     try {
@@ -285,6 +310,7 @@ export class AiController {
     }
 
     response.status(200);
+    applyKnowledgeReferenceResponseHeaders(response, representation);
     response.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     response.setHeader('Cache-Control', 'no-cache, no-transform');
     response.setHeader('Connection', 'keep-alive');
@@ -379,12 +405,13 @@ export class AiController {
 
   private async writeBoundSse(
     response: Response,
-    event: AiStreamEvent,
+    event: AiStreamEvent | AiStreamEventV2,
     sequence: number,
     execution: ConsentBoundExecution,
     signal: AbortSignal,
   ): Promise<void> {
     await this.consentExecutions.assertStillUsable(execution);
-    await writeSse(response, event, sequence, signal);
+    const representation = response.getHeader('X-MH-Knowledge-References') === '1' ? 'v2' : 'v1';
+    await writeSse(response, event, sequence, signal, representation);
   }
 }

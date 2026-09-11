@@ -2,6 +2,7 @@ import type {
   ConversationDetailResponse,
   ConversationListResponse,
   ConversationMessagesResponse,
+  ConversationMessagesResponseV2,
   ConversationMetadata,
   ConversationMessage,
   DeleteConversationHistoryResponse,
@@ -9,15 +10,20 @@ import type {
 } from '@mental-health/types';
 import { Injectable } from '@nestjs/common';
 import { decodeOpaqueCursor, encodeOpaqueCursor } from '../common/pagination/opaque-cursor';
+import { ClientCapabilityRequiredError, DatabaseError } from '../common/errors';
+import type { KnowledgeReferenceRepresentation } from '../common/http/knowledge-reference-capability';
 import { ConversationService } from '../conversations/conversation.service';
 import type { ConversationRecord } from '../conversations/conversation.repository';
 import { MessageService } from '../messages/message.service';
 import type { MessageRecord } from '../messages/message.repository';
+import { KnowledgeMessageReferenceRepository } from '../knowledge/knowledge-message-reference.repository';
+import { conversationMessagesResponseV2Schema } from '../ai/ai-public.schemas';
 import {
   conversationCursorSchema,
   messageCursorSchema,
   type PaginationQuery,
 } from './conversation-access.schemas';
+import { toPublicKnowledgeReference } from './knowledge-reference.presenter';
 
 function toConversationMetadata(record: ConversationRecord): ConversationMetadata {
   return {
@@ -43,6 +49,7 @@ export class ConversationAccessService {
   constructor(
     private readonly conversations: ConversationService,
     private readonly messages: MessageService,
+    private readonly knowledgeReferences: KnowledgeMessageReferenceRepository,
   ) {}
 
   async list(
@@ -93,8 +100,9 @@ export class ConversationAccessService {
     userId: string,
     conversationId: string,
     query: PaginationQuery,
+    representation: KnowledgeReferenceRepresentation = 'v1',
     now = new Date(),
-  ): Promise<ConversationMessagesResponse> {
+  ): Promise<ConversationMessagesResponse | ConversationMessagesResponseV2> {
     const decoded = decodeOpaqueCursor(query.cursor, messageCursorSchema);
     const records = await this.messages.readMessagePage(userId, conversationId, {
       now,
@@ -104,17 +112,69 @@ export class ConversationAccessService {
     const hasNextPage = records.length > query.limit;
     const descendingPage = records.slice(0, query.limit);
     const oldest = descendingPage.at(-1);
+    const assistantMessageIds = descendingPage
+      .filter((message) => message.role === 'assistant')
+      .map((message) => message.id);
+    let storedReferences;
+    try {
+      storedReferences = await this.knowledgeReferences.findOwnedByMessageIds(
+        userId,
+        assistantMessageIds,
+      );
+    } catch {
+      throw new DatabaseError();
+    }
+    if (representation === 'v1' && storedReferences.length > 0) {
+      throw new ClientCapabilityRequiredError();
+    }
+    const referencesByMessage = new Map<string, ReturnType<typeof toPublicKnowledgeReference>[]>();
+    if (representation === 'v2') {
+      try {
+        const requestedMessageIds = new Set(assistantMessageIds);
+        for (const storedReference of [...storedReferences].sort(
+          (left, right) => left.ordinal - right.ordinal,
+        )) {
+          if (!requestedMessageIds.has(storedReference.assistantMessageId)) {
+            throw new Error('Knowledge reader returned a reference outside the requested page');
+          }
+          const current = referencesByMessage.get(storedReference.assistantMessageId) ?? [];
+          if (current.length >= 2) {
+            throw new Error('Knowledge reader returned too many references for one message');
+          }
+          current.push(toPublicKnowledgeReference(storedReference));
+          referencesByMessage.set(storedReference.assistantMessageId, current);
+        }
+      } catch {
+        throw new DatabaseError('知识引用暂时无法读取');
+      }
+    }
 
-    return {
+    const messages = descendingPage.reverse().map(toConversationMessage);
+
+    const response = {
       success: true,
       data: {
-        messages: descendingPage.reverse().map(toConversationMessage),
+        messages:
+          representation === 'v2'
+            ? messages.map((message) => ({
+                ...message,
+                knowledgeReferences: referencesByMessage.get(message.id) ?? [],
+              }))
+            : messages,
         nextCursor:
           hasNextPage && oldest
             ? encodeOpaqueCursor({ kind: 'message', version: 1, sequence: oldest.sequenceNumber })
             : null,
       },
     };
+    if (representation === 'v2') {
+      try {
+        return conversationMessagesResponseV2Schema.parse(response);
+      } catch {
+        throw new DatabaseError('知识引用暂时无法读取');
+      }
+    }
+    return response as ConversationMessagesResponse;
   }
 
   async save(
