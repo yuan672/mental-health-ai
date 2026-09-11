@@ -215,6 +215,7 @@ export function MoodPage() {
             ],
           };
         });
+        if (mode === 'replace') setEditing(null);
         setStale(false);
         return true;
       } catch (reason) {
@@ -307,7 +308,7 @@ export function MoodPage() {
       if (isAbortError(reason) || !mountedRef.current) return;
       if (isUnknownMutationResult(reason)) {
         setPendingCreate({ request, checkedAbsent: false });
-        setError('本次创建结果暂时无法确认。不会自动重新提交原创建请求。');
+        setError(null);
       } else {
         setError(reason instanceof Error ? reason.message : '无法保存心情记录');
       }
@@ -328,7 +329,7 @@ export function MoodPage() {
         await refresh();
       } else {
         setPendingCreate({ ...pendingCreate, checkedAbsent: true });
-        setError('服务器当前未看到这条记录；这不证明原请求失败、取消，也不保证它以后不会提交。');
+        setError(null);
       }
     } catch (reason) {
       if (!isAbortError(reason) && mountedRef.current) {
@@ -349,26 +350,30 @@ export function MoodPage() {
         const response = await runMutation((signal) => getMoodEntry(entryId, signal));
         if (!response) return false;
         if (!mountedRef.current) return false;
-        setHistory((previous) =>
-          previous
-            ? {
-                ...previous,
-                entries: previous.entries.map((entry) =>
-                  entry.id === entryId ? response.data.entry : entry,
-                ),
-              }
-            : previous,
-        );
-        setEditing(null);
-        setStale(false);
+        const refreshed = await refresh();
+        if (!refreshed) {
+          if (mountedRef.current) {
+            setStale(true);
+            setError('已读取服务器记录，但无法同步完整列表与趋势。重新加载成功前不能继续修改。');
+          }
+          return false;
+        }
+        if (!mountedRef.current) return false;
         setNotice(message);
         return true;
       } catch (reason) {
         if (reason instanceof ApiClientError && reason.status === 404) {
           if (!mountedRef.current) return false;
-          setEditing(null);
+          const refreshed = await refresh();
+          if (!refreshed) {
+            if (mountedRef.current) {
+              setStale(true);
+              setError('服务器当前已看不到这条记录，但完整列表刷新失败。请稍后重新加载。');
+            }
+            return false;
+          }
+          if (!mountedRef.current) return false;
           setNotice('服务器当前已看不到这条记录；无法判断是哪一次请求造成的结果。');
-          await refresh();
           return true;
         }
         if (!isAbortError(reason) && mountedRef.current) {
@@ -380,6 +385,14 @@ export function MoodPage() {
     },
     [refresh, runMutation],
   );
+
+  const reloadStaleHistory = async () => {
+    const discardedEdit = Boolean(editing);
+    const refreshed = await refresh();
+    if (refreshed && discardedEdit && mountedRef.current) {
+      setNotice('已读取服务器最新记录。原编辑草稿未提交，请重新打开记录后再决定是否修改。');
+    }
+  };
 
   const submitEdit = async (event: FormEvent) => {
     event.preventDefault();
@@ -497,31 +510,40 @@ export function MoodPage() {
       {error ? (
         <div className="mood-feedback" role="alert">
           <p>{error}</p>
-          {pendingCreate ? (
-            <div className="mood-inline-actions">
-              <button
-                type="button"
-                className="button button-secondary"
-                disabled={mutationBusy || loading}
-                onClick={() => void checkUnknownCreate()}
-              >
-                核对创建结果
-              </button>
-              {pendingCreate.checkedAbsent ? (
-                <button type="button" className="button button-quiet" onClick={startFreshCreate}>
-                  放弃核对并开始新的记录
-                </button>
-              ) : null}
-            </div>
-          ) : stale ? (
+          {stale ? (
             <button
               type="button"
               className="button button-secondary"
-              onClick={() => void refresh()}
+              disabled={loading}
+              onClick={() => void reloadStaleHistory()}
             >
               重新加载
             </button>
           ) : null}
+        </div>
+      ) : null}
+      {pendingCreate ? (
+        <div className="mood-feedback" role="status" aria-live="polite">
+          <p>
+            {pendingCreate.checkedAbsent
+              ? '服务器当前未看到这条记录；这不证明原请求失败、取消，也不保证它以后不会提交。'
+              : '本次创建结果暂时无法确认。不会自动重新提交原创建请求。'}
+          </p>
+          <div className="mood-inline-actions">
+            <button
+              type="button"
+              className="button button-secondary"
+              disabled={mutationBusy || loading}
+              onClick={() => void checkUnknownCreate()}
+            >
+              核对创建结果
+            </button>
+            {pendingCreate.checkedAbsent ? (
+              <button type="button" className="button button-quiet" onClick={startFreshCreate}>
+                放弃核对并开始新的记录
+              </button>
+            ) : null}
+          </div>
         </div>
       ) : null}
       {notice ? (
@@ -568,6 +590,7 @@ export function MoodPage() {
                 aria-pressed={days === range}
                 disabled={mutationBusy || loading}
                 onClick={() => {
+                  if (days === range) return;
                   setDays(range);
                   setHistory(null);
                   setEditing(null);
@@ -629,7 +652,7 @@ export function MoodPage() {
                     value={editing.draft}
                     onChange={(next) => setEditing({ ...editing, draft: next })}
                     prefix={`edit-${entry.id}`}
-                    disabled={mutationBusy}
+                    disabled={mutationBusy || loading || stale}
                   />
                   <div className="mood-inline-actions">
                     <button
@@ -643,7 +666,12 @@ export function MoodPage() {
                     <button
                       type="submit"
                       className="button"
-                      disabled={mutationBusy || codePointLength(editing.draft.note) > 500}
+                      disabled={
+                        mutationBusy ||
+                        loading ||
+                        stale ||
+                        codePointLength(editing.draft.note) > 500
+                      }
                     >
                       保存修改
                     </button>

@@ -82,6 +82,14 @@ function renderMood() {
   );
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
 describe('Mood page', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -109,6 +117,37 @@ describe('Mood page', () => {
     await waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(2));
     expect(mocks.list).toHaveBeenNthCalledWith(2, 7, 'opaque+/=cursor', expect.any(AbortSignal));
     expect(screen.getByText('4 分')).toBeInTheDocument();
+  });
+
+  it('preserves an already selected range and loads only genuine 7/30-day switches', async () => {
+    const sevenDayEntry = moodEntry({ note: '七天范围内容' });
+    const thirtyDayEntry = moodEntry({ note: '三十天范围内容' });
+    mocks.list
+      .mockResolvedValueOnce(history([sevenDayEntry]))
+      .mockResolvedValueOnce(
+        history([thirtyDayEntry], {
+          days: 30,
+          period: { startDate: '2026-08-13', endDate: '2026-09-11' },
+        }),
+      )
+      .mockResolvedValueOnce(history([sevenDayEntry]));
+    renderMood();
+
+    expect(await screen.findByText('七天范围内容')).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: '7 天' }));
+    expect(screen.getByText('七天范围内容')).toBeVisible();
+    expect(mocks.list).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole('button', { name: '30 天' }));
+    expect(await screen.findByText('三十天范围内容')).toBeVisible();
+    expect(mocks.list).toHaveBeenCalledTimes(2);
+    await userEvent.click(screen.getByRole('button', { name: '30 天' }));
+    expect(screen.getByText('三十天范围内容')).toBeVisible();
+    expect(mocks.list).toHaveBeenCalledTimes(2);
+
+    await userEvent.click(screen.getByRole('button', { name: '7 天' }));
+    expect(await screen.findByText('七天范围内容')).toBeVisible();
+    expect(mocks.list).toHaveBeenCalledTimes(3);
   });
 
   it('counts trimmed Unicode code points and prevents a duplicate create click', async () => {
@@ -180,6 +219,48 @@ describe('Mood page', () => {
     expect(mocks.create.mock.calls[1]?.[0].clientRequestId).not.toBe(firstId);
   });
 
+  it('keeps unknown-create recovery available across range changes and pagination', async () => {
+    const absent: MoodCreationStatusResponse = { success: true, data: { status: 'absent' } };
+    mocks.list
+      .mockResolvedValueOnce(history())
+      .mockResolvedValueOnce(
+        history([], {
+          days: 30,
+          period: { startDate: '2026-08-13', endDate: '2026-09-11' },
+          nextCursor: 'opaque-next-page',
+        }),
+      )
+      .mockResolvedValueOnce(
+        history([], {
+          days: 30,
+          period: { startDate: '2026-08-13', endDate: '2026-09-11' },
+        }),
+      );
+    mocks.create.mockRejectedValueOnce(new TypeError('synthetic acknowledgement loss'));
+    mocks.creationStatus.mockResolvedValue(absent);
+    renderMood();
+
+    await screen.findByText('这段时间还没有心情记录。');
+    fireEvent.change(screen.getByLabelText('备注（可选）'), {
+      target: { value: '等待核对的合成创建' },
+    });
+    await userEvent.click(screen.getByRole('button', { name: '保存心情记录' }));
+    const requestId = mocks.create.mock.calls[0]?.[0].clientRequestId;
+    expect(await screen.findByRole('button', { name: '核对创建结果' })).toBeVisible();
+
+    await userEvent.click(screen.getByRole('button', { name: '30 天' }));
+    expect(await screen.findByRole('list', { name: '30 天每日趋势' })).toBeVisible();
+    expect(screen.getByRole('button', { name: '核对创建结果' })).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: '加载更多' }));
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(3));
+    expect(screen.getByRole('button', { name: '核对创建结果' })).toBeVisible();
+
+    await userEvent.click(screen.getByRole('button', { name: '核对创建结果' }));
+    expect(await screen.findByText(/不保证它以后不会提交/u)).toBeVisible();
+    expect(mocks.creationStatus).toHaveBeenCalledWith(requestId, expect.any(AbortSignal));
+    expect(mocks.create).toHaveBeenCalledTimes(1);
+  });
+
   it('renders the server current row when create resolves an existing live key', async () => {
     const current = moodEntry({ stateRevision: 3, moodScore: 4, note: '后来编辑后的服务器内容' });
     mocks.list.mockResolvedValueOnce(history()).mockResolvedValueOnce(history([current]));
@@ -217,11 +298,21 @@ describe('Mood page', () => {
     expect(mocks.create).toHaveBeenCalledTimes(1);
   });
 
-  it('re-reads the authoritative row after a stale edit and never auto-retries the patch', async () => {
-    const original = moodEntry();
-    const current = moodEntry({ moodScore: 2, stateRevision: 2, note: '另一标签页的内容' });
+  it('refreshes both the authoritative row and daily trend after an edit conflict', async () => {
+    const original = moodEntry({ moodScore: 2 });
+    const current = moodEntry({ moodScore: 5, stateRevision: 2, note: '另一标签页的内容' });
     const currentResponse: MoodEntryResponse = { success: true, data: { entry: current } };
-    mocks.list.mockResolvedValue(history([original]));
+    mocks.list
+      .mockResolvedValueOnce(
+        history([original], {
+          dailyTrend: [{ localDate: '2026-09-11', entryCount: 1, averageMoodScore: 2 }],
+        }),
+      )
+      .mockResolvedValueOnce(
+        history([current], {
+          dailyTrend: [{ localDate: '2026-09-11', entryCount: 1, averageMoodScore: 5 }],
+        }),
+      );
     mocks.update.mockRejectedValueOnce(
       new ApiClientError('MOOD_STATE_CHANGED', '记录已经变化', 409),
     );
@@ -236,9 +327,108 @@ describe('Mood page', () => {
 
     expect(await screen.findByText(/已读取服务器当前内容/u)).toBeInTheDocument();
     expect(screen.getByText('另一标签页的内容')).toBeInTheDocument();
+    expect(screen.getByText('平均 5.0 分 · 1 条')).toBeVisible();
     expect(mocks.update).toHaveBeenCalledTimes(1);
     expect(mocks.update.mock.calls[0]?.[1]).toMatchObject({ expectedRevision: 1, moodScore: 5 });
     expect(mocks.get).toHaveBeenCalledWith(ENTRY_ID, expect.any(AbortSignal));
+    expect(mocks.list).toHaveBeenCalledTimes(2);
+  });
+
+  it('aborts a stale pagination read before publishing reconciled history and trend', async () => {
+    const original = moodEntry({ moodScore: 2 });
+    const current = moodEntry({ moodScore: 5, stateRevision: 2, note: '权威恢复内容' });
+    const lateEntry = moodEntry({ id: SECOND_ENTRY_ID, note: '迟到分页内容' });
+    const latePage = deferred<MoodHistoryResponse>();
+    let appendSignal: AbortSignal | undefined;
+    mocks.list
+      .mockResolvedValueOnce(history([original], { nextCursor: 'opaque-page-two' }))
+      .mockImplementationOnce((_days: number, _cursor: string, signal: AbortSignal) => {
+        appendSignal = signal;
+        return latePage.promise;
+      })
+      .mockResolvedValueOnce(
+        history([current], {
+          dailyTrend: [{ localDate: '2026-09-11', entryCount: 1, averageMoodScore: 5 }],
+        }),
+      );
+    mocks.update.mockRejectedValueOnce(
+      new ApiClientError('MOOD_STATE_CHANGED', '记录已经变化', 409),
+    );
+    mocks.get.mockResolvedValue({ success: true, data: { entry: current } });
+    renderMood();
+
+    const entry = await screen.findByText('合成心情正文');
+    await userEvent.click(within(entry.closest('li')!).getByRole('button', { name: '编辑' }));
+    await userEvent.click(screen.getByRole('button', { name: '加载更多' }));
+    await waitFor(() => expect(appendSignal).toBeDefined());
+    await userEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    expect(await screen.findByText('权威恢复内容')).toBeVisible();
+    expect(screen.getByText('平均 5.0 分 · 1 条')).toBeVisible();
+    expect(appendSignal?.aborted).toBe(true);
+    latePage.resolve(history([lateEntry]));
+    await waitFor(() => expect(screen.queryByText('迟到分页内容')).not.toBeInTheDocument());
+  });
+
+  it('keeps recovery incomplete when the point read succeeds but full trend refresh fails', async () => {
+    const original = moodEntry({ moodScore: 2 });
+    const current = moodEntry({ moodScore: 5, stateRevision: 2 });
+    mocks.list
+      .mockResolvedValueOnce(
+        history([original], {
+          dailyTrend: [{ localDate: '2026-09-11', entryCount: 1, averageMoodScore: 2 }],
+        }),
+      )
+      .mockRejectedValueOnce(new TypeError('synthetic list refresh failure'));
+    mocks.update.mockRejectedValueOnce(
+      new ApiClientError('MOOD_STATE_CHANGED', '记录已经变化', 409),
+    );
+    mocks.get.mockResolvedValue({ success: true, data: { entry: current } });
+    renderMood();
+
+    const entry = await screen.findByText('合成心情正文');
+    await userEvent.click(within(entry.closest('li')!).getByRole('button', { name: '编辑' }));
+    await userEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    expect(await screen.findByText(/无法同步完整列表与趋势/u)).toBeVisible();
+    expect(screen.getByText('平均 2.0 分 · 1 条')).toBeVisible();
+    expect(screen.getByRole('button', { name: '保存修改' })).toBeDisabled();
+    expect(mocks.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('discards a stale edit snapshot after an authoritative reload and requires a new edit', async () => {
+    const original = moodEntry({ moodScore: 2 });
+    const current = moodEntry({ moodScore: 5, stateRevision: 2, note: '服务器 revision 2' });
+    const updated = moodEntry({ moodScore: 4, stateRevision: 3, note: '服务器 revision 2' });
+    mocks.list
+      .mockResolvedValueOnce(history([original]))
+      .mockResolvedValueOnce(history([current]))
+      .mockResolvedValueOnce(history([updated]));
+    mocks.update
+      .mockRejectedValueOnce(new ApiClientError('MOOD_STATE_CHANGED', '记录已经变化', 409))
+      .mockResolvedValueOnce({ success: true, data: { entry: updated } });
+    mocks.get.mockRejectedValueOnce(new TypeError('synthetic point read failure'));
+    renderMood();
+
+    const entry = await screen.findByText('合成心情正文');
+    await userEvent.click(within(entry.closest('li')!).getByRole('button', { name: '编辑' }));
+    await userEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    expect(await screen.findByText(/刷新成功前不能继续使用旧修订/u)).toBeVisible();
+    expect(screen.getByRole('button', { name: '保存修改' })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole('button', { name: '重新加载' }));
+    expect(await screen.findByText('服务器 revision 2')).toBeVisible();
+    expect(screen.queryByRole('heading', { name: '编辑记录' })).not.toBeInTheDocument();
+    expect(screen.getByText(/原编辑草稿未提交/u)).toBeVisible();
+
+    const currentEntry = screen.getByText('服务器 revision 2').closest('li')!;
+    await userEvent.click(within(currentEntry).getByRole('button', { name: '编辑' }));
+    const freshForm = screen.getByRole('heading', { name: '编辑记录' }).closest('form')!;
+    await userEvent.click(within(freshForm).getByLabelText('4'));
+    await userEvent.click(within(freshForm).getByRole('button', { name: '保存修改' }));
+
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(2));
+    expect(mocks.update.mock.calls.map((call) => call[1].expectedRevision)).toEqual([1, 2]);
   });
 
   it('does not claim a refresh after an uncertain delete when the authoritative read fails', async () => {

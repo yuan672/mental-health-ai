@@ -396,8 +396,13 @@ test('Mood/Profile supports the complete synthetic P0 lifecycle', async ({ page 
   await page.getByRole('button', { name: '30 天' }).click();
   await expect(page.getByRole('list', { name: '30 天每日趋势' })).toBeVisible();
   await expect(page.getByText('平均 3.0 分 · 2 条')).toBeVisible();
+  await page.getByRole('button', { name: '30 天' }).click();
+  await expect(page.getByText('第一条合成心情记录。')).toBeVisible();
+  await expect(page.getByText('平均 3.0 分 · 2 条')).toBeVisible();
   await page.getByRole('button', { name: '7 天' }).click();
   await expect(page.getByRole('list', { name: '7 天每日趋势' })).toBeVisible();
+  await page.getByRole('button', { name: '7 天' }).click();
+  await expect(page.getByText('第二条合成心情记录。')).toBeVisible();
 
   const firstEntry = page.getByText('第一条合成心情记录。').locator('..');
   await firstEntry.getByRole('button', { name: '编辑' }).click();
@@ -450,4 +455,37 @@ test('Mood/Profile supports the complete synthetic P0 lifecycle', async ({ page 
   await page.getByRole('button', { name: '退出' }).click();
   await expect(page).toHaveURL(/\/login\?returnTo=/u);
   await expect(page.getByText('第一条已编辑的合成记录。')).toHaveCount(0);
+});
+
+test('Mood preserves read-only unknown-create recovery across a range change', async ({ page }) => {
+  await login(page);
+  await clearMoodHistory(page);
+  await page.goto('/app/mood');
+  await expect(page.getByRole('heading', { name: '心情记录' })).toBeVisible();
+
+  let moodCreateCalls = 0;
+  await page.route('**/mood-entries*', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (request.method() === 'POST' && url.pathname === '/mood-entries') {
+      moodCreateCalls += 1;
+      await route.abort('connectionfailed');
+      return;
+    }
+    await route.continue();
+  });
+
+  await page.getByLabel('备注（可选）').fill('结果未知的合成浏览器记录。');
+  await page.getByRole('button', { name: '保存心情记录' }).click();
+  await expect(page.getByText(/不会自动重新提交原创建请求/u)).toBeVisible();
+  await expect(page.getByRole('button', { name: '核对创建结果' })).toBeVisible();
+
+  await page.getByRole('button', { name: '30 天' }).click();
+  await expect(page.getByRole('list', { name: '30 天每日趋势' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '核对创建结果' })).toBeVisible();
+  await page.getByRole('button', { name: '核对创建结果' }).click();
+
+  await expect(page.getByText(/不保证它以后不会提交/u)).toBeVisible();
+  expect(moodCreateCalls).toBe(1);
+  await expect(page.getByRole('button', { name: '保存心情记录' })).toBeDisabled();
 });
