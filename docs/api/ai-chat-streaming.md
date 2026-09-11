@@ -48,7 +48,7 @@ termination.
 
 ## Negotiated Knowledge-reference representation
 
-The Phase 5E Knowledge AI-A backend Draft adds an opt-in v2 representation without
+The Phase 5E Knowledge AI-A backend adds an opt-in v2 representation without
 changing the four SSE event names. The client requests it on both the stream and
 message-history requests:
 
@@ -83,7 +83,13 @@ Persistent message history negotiates the same header on
 `knowledgeReferences` array to every message. A v1 request for a page that contains
 a referenced assistant message fails closed with HTTP 406
 `CLIENT_CAPABILITY_REQUIRED`; an affected client must update instead of displaying
-the body without its provenance. Unreferenced pages remain readable as v1.
+the body without its provenance. Unreferenced pages remain readable as v1. Owner
+and active-state validation, message pagination, exact-version references, and
+their ordered sources are read through one short repeatable-read database snapshot,
+so deletion cannot splice an older message body together with missing provenance.
+Staging and Production fail closed if persisted historical evidence is synthetic;
+this guard remains active even while new Knowledge augmentation is disabled and
+does not delete or rewrite the stored evidence.
 
 The existing Web application deliberately remains a v1 client until the separately
 reviewed Knowledge AI-B batch. Therefore the AI-A enhancement is disabled by

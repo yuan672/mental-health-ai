@@ -23,7 +23,9 @@ import { insertRequiredConsentFixtures } from './consent-fixtures';
 import { AppModule } from '../src/app.module';
 import { hashSessionToken } from '../src/auth/sessions.service';
 import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
+import { env } from '../src/config/env';
 import { DatabaseService } from '../src/database/database.service';
+import { MessageService } from '../src/messages/message.service';
 import { QuotaService } from '../src/quota/quota.service';
 import { AuditLogRepository } from '../src/safety/audit/audit-log.repository';
 
@@ -41,6 +43,7 @@ describe('Phase 5A conversation access API integration', () => {
   let app: INestApplication;
   let migrationClient: ReturnType<typeof createDatabaseClient>;
   let database: DatabaseService;
+  let messageService: MessageService;
   let quotaService: QuotaService;
   let audits: AuditLogRepository;
 
@@ -70,6 +73,7 @@ describe('Phase 5A conversation access API integration', () => {
     await app.init();
 
     database = moduleRef.get(DatabaseService);
+    messageService = moduleRef.get(MessageService);
     quotaService = moduleRef.get(QuotaService);
     audits = moduleRef.get(AuditLogRepository);
   }, 60_000);
@@ -151,6 +155,100 @@ describe('Phase 5A conversation access API integration', () => {
     };
     await database.database.insert(messages).values(row);
     return row;
+  }
+
+  async function seedKnowledgeReference(
+    assistantMessageId: string,
+    options: Readonly<{
+      articleKey?: string;
+      contentOrigin?: 'curated' | 'synthetic_fixture';
+    }> = {},
+  ) {
+    const articleId = randomUUID();
+    const articleVersionId = randomUUID();
+    const articleKey = options.articleKey ?? `history-${randomUUID()}`;
+    const contentOrigin = options.contentOrigin ?? 'synthetic_fixture';
+    const reviewedAt = new Date('2026-09-01T00:00:00.000Z');
+    const publishedAt = new Date('2026-09-02T00:00:00.000Z');
+    const retrievedAt = new Date('2026-08-31T00:00:00.000Z');
+    const sourceUrl = `https://fixture.invalid/${articleKey}`;
+
+    await database.database.insert(knowledgeArticles).values({
+      id: articleId,
+      articleKey,
+      createdAt: reviewedAt,
+    });
+    await database.database.insert(knowledgeArticleVersions).values({
+      id: articleVersionId,
+      articleId,
+      version: 1,
+      title: `合成历史引用 ${articleKey}`,
+      summary: '仅用于历史引用集成测试',
+      contentBlocks: [{ type: 'paragraph', text: '合成知识正文' }],
+      publicationStatus: 'draft',
+      reviewStatus: 'unverified',
+      contentOrigin,
+      reviewedBy: null,
+      reviewedAt: null,
+      publishedAt: null,
+      withdrawnAt: null,
+      createdAt: reviewedAt,
+    });
+    await database.database.insert(knowledgeArticleSources).values({
+      id: randomUUID(),
+      articleVersionId,
+      ordinal: 1,
+      publisherName: '合成来源发布者',
+      sourceTitle: '合成来源标题',
+      sourceUrl,
+      sourcePublishedAt: null,
+      sourceVersionLabel: 'fixture-v1',
+      sourceLocator: 'synthetic-section',
+      retrievedAt,
+    });
+    await database.database
+      .update(knowledgeArticleVersions)
+      .set({
+        publicationStatus: 'published',
+        publishedAt,
+        ...(contentOrigin === 'curated'
+          ? {
+              reviewStatus: 'source_verified' as const,
+              reviewedBy: 'synthetic-test-reviewer',
+              reviewedAt,
+            }
+          : {}),
+      })
+      .where(eq(knowledgeArticleVersions.id, articleVersionId));
+    await database.database.insert(assistantMessageKnowledgeReferences).values({
+      assistantMessageId,
+      articleVersionId,
+      ordinal: 1,
+    });
+
+    return { articleKey, articleVersionId, reviewedAt, publishedAt, retrievedAt, sourceUrl };
+  }
+
+  function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((complete) => {
+      resolve = complete;
+    });
+    return { promise, resolve };
+  }
+
+  async function withBarrierTimeout(promise: Promise<void>, label: string): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), 5_000);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   function authenticatedGet(auth: AuthContext, path: string) {
@@ -459,6 +557,168 @@ describe('Phase 5A conversation access API integration', () => {
       .set('X-MH-Knowledge-References', '2')
       .expect(400);
   });
+
+  it('returns a complete referenced snapshot when history reading finishes before deletion', async () => {
+    const auth = await createAuthContext();
+    const conversation = await seedConversation(auth.userId);
+    const assistant = await seedMessage(conversation.id, 2, '读取先发生的合成知识回复');
+    const reference = await seedKnowledgeReference(assistant.id);
+
+    const response = await authenticatedGet(auth, `/conversations/${conversation.id}/messages`)
+      .set('X-MH-Knowledge-References', '1')
+      .expect(200);
+    await authenticatedDelete(auth, `/conversations/${conversation.id}`).expect(200);
+
+    expect(response.body.data.messages).toEqual([
+      expect.objectContaining({
+        id: assistant.id,
+        content: '读取先发生的合成知识回复',
+        knowledgeReferences: [expect.objectContaining({ articleKey: reference.articleKey })],
+      }),
+    ]);
+    await authenticatedGet(auth, `/conversations/${conversation.id}/messages`)
+      .set('X-MH-Knowledge-References', '1')
+      .expect(404);
+  });
+
+  it('returns not found when deletion commits before the history read starts', async () => {
+    const auth = await createAuthContext();
+    const conversation = await seedConversation(auth.userId);
+    const assistant = await seedMessage(conversation.id, 2, '删除先发生的合成知识回复');
+    await seedKnowledgeReference(assistant.id);
+
+    await authenticatedDelete(auth, `/conversations/${conversation.id}`).expect(200);
+    const response = await authenticatedGet(auth, `/conversations/${conversation.id}/messages`)
+      .set('X-MH-Knowledge-References', '1')
+      .expect(404);
+
+    expect(JSON.stringify(response.body)).not.toContain('删除先发生的合成知识回复');
+  });
+
+  it.each([
+    { representation: 'v1' as const, expectedStatus: 406 },
+    { representation: 'v2' as const, expectedStatus: 200 },
+  ])(
+    'keeps the $representation body and reference decision in one PostgreSQL snapshot during deletion',
+    async ({ representation, expectedStatus }) => {
+      const auth = await createAuthContext();
+      const conversation = await seedConversation(auth.userId);
+      const content = `读取期间删除的${representation}合成知识回复`;
+      const assistant = await seedMessage(conversation.id, 2, content);
+      const reference = await seedKnowledgeReference(assistant.id);
+      const messagePageRead = deferred();
+      const continueReferenceRead = deferred();
+      const originalRead = messageService.readMessagePageWithinTransaction.bind(messageService);
+      const readSpy = jest
+        .spyOn(messageService, 'readMessagePageWithinTransaction')
+        .mockImplementation(async (transaction, userId, conversationId, options) => {
+          const records = await originalRead(transaction, userId, conversationId, options);
+          messagePageRead.resolve();
+          await continueReferenceRead.promise;
+          return records;
+        });
+
+      let readPromise: Promise<request.Response> | undefined;
+      try {
+        const historyRequest = authenticatedGet(auth, `/conversations/${conversation.id}/messages`);
+        if (representation === 'v2') {
+          historyRequest.set('X-MH-Knowledge-References', '1');
+        }
+        readPromise = historyRequest.expect(expectedStatus).then((response) => response);
+
+        await withBarrierTimeout(messagePageRead.promise, `${representation} message-page read`);
+        await authenticatedDelete(auth, `/conversations/${conversation.id}`).expect(200);
+        continueReferenceRead.resolve();
+        const response = await readPromise;
+
+        if (representation === 'v1') {
+          expect(response.body.error.code).toBe('CLIENT_CAPABILITY_REQUIRED');
+          expect(JSON.stringify(response.body)).not.toContain(content);
+        } else {
+          expect(response.body.data.messages).toEqual([
+            expect.objectContaining({
+              id: assistant.id,
+              content,
+              knowledgeReferences: [expect.objectContaining({ articleKey: reference.articleKey })],
+            }),
+          ]);
+        }
+        await authenticatedGet(auth, `/conversations/${conversation.id}/messages`)
+          .set('X-MH-Knowledge-References', '1')
+          .expect(404);
+      } finally {
+        continueReferenceRead.resolve();
+        readSpy.mockRestore();
+        await readPromise?.catch(() => undefined);
+      }
+    },
+  );
+
+  it.each(['staging', 'production'] as const)(
+    'rejects synthetic historical references in %s even when new augmentation is disabled',
+    async (appEnvironment) => {
+      const auth = await createAuthContext();
+      const conversation = await seedConversation(auth.userId);
+      const content = `不应在${appEnvironment}返回的合成知识回复`;
+      const assistant = await seedMessage(conversation.id, 2, content);
+      const reference = await seedKnowledgeReference(assistant.id, {
+        articleKey: `synthetic-${appEnvironment}-${randomUUID()}`,
+      });
+      const previousEnvironment = env.APP_ENV;
+      let response: request.Response;
+      try {
+        env.APP_ENV = appEnvironment;
+        expect(env.AI_KNOWLEDGE_ENABLED).toBe(false);
+        response = await authenticatedGet(auth, `/conversations/${conversation.id}/messages`)
+          .set('X-MH-Knowledge-References', '1')
+          .expect(500);
+      } finally {
+        env.APP_ENV = previousEnvironment;
+      }
+
+      const serialized = JSON.stringify(response!.body);
+      expect(response!.body.error.code).toBe('DATABASE_ERROR');
+      expect(serialized).not.toContain(content);
+      expect(serialized).not.toContain(reference.articleKey);
+      expect(serialized).not.toContain(reference.sourceUrl);
+    },
+  );
+
+  it.each(['staging', 'production'] as const)(
+    'keeps curated source-verified historical references readable in %s',
+    async (appEnvironment) => {
+      const auth = await createAuthContext();
+      const conversation = await seedConversation(auth.userId);
+      const assistant = await seedMessage(conversation.id, 2, '核验路径的合成历史知识回复');
+      const reference = await seedKnowledgeReference(assistant.id, {
+        articleKey: `curated-${appEnvironment}-${randomUUID()}`,
+        contentOrigin: 'curated',
+      });
+      const previousEnvironment = env.APP_ENV;
+      let response: request.Response;
+      try {
+        env.APP_ENV = appEnvironment;
+        response = await authenticatedGet(auth, `/conversations/${conversation.id}/messages`)
+          .set('X-MH-Knowledge-References', '1')
+          .expect(200);
+      } finally {
+        env.APP_ENV = previousEnvironment;
+      }
+
+      expect(response!.body.data.messages).toEqual([
+        expect.objectContaining({
+          id: assistant.id,
+          knowledgeReferences: [
+            expect.objectContaining({
+              articleKey: reference.articleKey,
+              contentOrigin: 'curated',
+              reviewStatus: 'source_verified',
+            }),
+          ],
+        }),
+      ]);
+    },
+  );
 
   it('saves an active conversation idempotently and enforces CSRF and ownership', async () => {
     const auth = await createAuthContext();

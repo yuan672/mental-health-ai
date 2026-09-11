@@ -24,8 +24,8 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   Phase 5E-2 Web reader engineering is complete and delivered by PR #23; curated
   production content remains unverified and unpublished; the bounded LLM +
   Knowledge architecture is accepted in ADR-019 and the Knowledge AI-A backend is
-  being delivered on an unmerged Draft feature branch; Knowledge AI-B remains
-  pending, so Phase 5E is not phase-complete
+  engineering complete and delivered by PR #25; Knowledge AI-B remains pending,
+  so Phase 5E is not phase-complete
 - Phase 6 — Admin and operations features: Not started
 
 ## Current Production State
@@ -65,6 +65,8 @@ safety, or validation for clinical use.
   content foundation and source-evidence freeze boundary
 - [PR #23](https://github.com/yuan672/mental-health-ai/pull/23) — Knowledge Base Web
   reader and final accessibility/state recovery fixes
+- [PR #25](https://github.com/yuan672/mental-health-ai/pull/25) — Knowledge AI-A
+  backend and final history consistency/environment-isolation fixes
 
 ## Current Feature Status
 
@@ -94,13 +96,16 @@ safety, or validation for clinical use.
   remain unverified and awaiting article-by-article human review. Accepted ADR-019
   and `docs/architecture/phase-5e-llm-knowledge-integration-design.md` define the
   bounded local lexical-retrieval and exact-version citation architecture. The
-  current unmerged Knowledge AI-A Draft adds local bounded retrieval, strict
+  Knowledge AI-A adds local bounded retrieval, strict
   grounded-response validation, negotiated v2 delivery/history, and atomic
   assistant-message provenance through forward-only Migration
   `0008_gorgeous_gladiator`. The enhancement is disabled by default; the existing
   Web remains v1 until Knowledge AI-B, and a v1 history page containing a referenced
-  message fails closed with `CLIENT_CAPABILITY_REQUIRED` (HTTP 406). No content
-  publication, real-model evaluation, or AI enablement is authorized.
+  message fails closed with `CLIENT_CAPABILITY_REQUIRED` (HTTP 406). Message bodies,
+  frozen references, and sources are read from one short repeatable-read history
+  snapshot; Staging/Production also reject synthetic historical evidence without
+  deleting or rewriting it. No content publication, real-model evaluation, or AI
+  enablement is authorized.
   Admin/Reviewer features and production enablement remain outside completed scope.
 
 ## Phase 5C Batch Scope and Open Consent Product Flow
@@ -157,16 +162,15 @@ controls.
 
 ## Active Parallel Work
 
-- Phase 5E Knowledge AI-A backend Draft implementation on
-  `feature/knowledge-ai-backend`; this work is not merged into `develop`.
+- None recorded in this project-control handoff.
 
 ## Immediate Next Step
 
-Complete and review the Phase 5E Knowledge AI-A backend Draft against ADR-019. Keep
-augmentation disabled by default and retain the v2 reader plus v1 history guard
-once references may exist. Knowledge AI-B citation presentation, curated content
-publication, and real-model evaluation remain separate work; do not publish
-content or start Phase 6 without separate authorization.
+Design and review the separate Phase 5E Knowledge AI-B citation-presentation and
+client-reconciliation batch. Keep augmentation disabled by default and retain the
+v2 reader plus v1 history guard once references may exist. Curated content
+publication and real-model evaluation remain separate work; do not publish content
+or start Phase 6 without separate authorization.
 
 ## Source of Truth
 

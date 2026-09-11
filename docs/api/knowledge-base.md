@@ -91,7 +91,7 @@ AI orchestration service, and no reading-history record is created.
 ## Relationship to chat grounding
 
 Accepted ADR-019 defines a separate, bounded chat-grounding path. The Knowledge
-AI-A backend Draft uses local lexical retrieval over eligible current article
+AI-A backend uses local lexical retrieval over eligible current article
 versions and preserves the exact selected article-version/source relation with a
 persistent assistant message. Migration `0008_gorgeous_gladiator` adds
 `assistant_message_knowledge_references`; it does not change this independent

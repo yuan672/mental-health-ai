@@ -41,6 +41,7 @@ import { KnowledgeVisibilityPolicy } from './knowledge-visibility.policy';
     KnowledgePublicationService,
     KnowledgeRetrievalService,
     KnowledgeService,
+    KnowledgeVisibilityPolicy,
   ],
 })
 export class KnowledgeModule {}

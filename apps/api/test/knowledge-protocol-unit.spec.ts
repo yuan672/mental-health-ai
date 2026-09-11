@@ -16,7 +16,9 @@ import {
 import { ConversationAccessService } from '../src/conversation-access/conversation-access.service';
 import { toPublicKnowledgeReference } from '../src/conversation-access/knowledge-reference.presenter';
 import type { ConversationService } from '../src/conversations/conversation.service';
+import type { DatabaseService } from '../src/database/database.service';
 import type { KnowledgeMessageReferenceRepository } from '../src/knowledge/knowledge-message-reference.repository';
+import { KnowledgeVisibilityPolicy } from '../src/knowledge/knowledge-visibility.policy';
 import type { MessageService } from '../src/messages/message.service';
 
 const IDS = {
@@ -205,12 +207,25 @@ describe('Knowledge-aware owner-scoped history', () => {
       createdAt: new Date('2026-09-11T00:00:00.000Z'),
     };
     const messages = {
-      readMessagePage: jest.fn().mockResolvedValue([message]),
+      readMessagePageWithinTransaction: jest.fn().mockResolvedValue([message]),
     } as unknown as MessageService;
     const reader = {
-      findOwnedByMessageIds: jest.fn().mockResolvedValue(references),
+      findOwnedByMessageIdsWithinTransaction: jest.fn().mockResolvedValue(references),
     } as unknown as KnowledgeMessageReferenceRepository;
-    const service = new ConversationAccessService({} as ConversationService, messages, reader);
+    const database = {
+      database: {
+        transaction: jest.fn(
+          async (work: (transaction: Record<string, never>) => Promise<unknown>) => work({}),
+        ),
+      },
+    } as unknown as DatabaseService;
+    const service = new ConversationAccessService(
+      {} as ConversationService,
+      messages,
+      reader,
+      new KnowledgeVisibilityPolicy(),
+      database,
+    );
     return { service, reader };
   }
 
@@ -219,7 +234,11 @@ describe('Knowledge-aware owner-scoped history', () => {
     await expect(
       service.listMessages('owner-1', IDS.conversation, { limit: 20 }, 'v1', new Date()),
     ).rejects.toMatchObject({ code: 'CLIENT_CAPABILITY_REQUIRED', statusCode: 406 });
-    expect(reader.findOwnedByMessageIds).toHaveBeenCalledWith('owner-1', [IDS.message]);
+    expect(reader.findOwnedByMessageIdsWithinTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      'owner-1',
+      [IDS.message],
+    );
   });
 
   it('returns a strict v2 body/reference pair from one owner-scoped batch read', async () => {
@@ -239,7 +258,7 @@ describe('Knowledge-aware owner-scoped history', () => {
         knowledgeReferences: [PUBLIC_REFERENCE],
       }),
     ]);
-    expect(reader.findOwnedByMessageIds).toHaveBeenCalledTimes(1);
+    expect(reader.findOwnedByMessageIdsWithinTransaction).toHaveBeenCalledTimes(1);
   });
 
   it('preserves the v1 shape when the requested page has no references', async () => {
