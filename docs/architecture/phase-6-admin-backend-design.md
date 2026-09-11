@@ -181,7 +181,7 @@ Drizzle migration and retain the existing ordinary-user tables unchanged.
 
 | Field                    | Rule                                                              |
 | ------------------------ | ----------------------------------------------------------------- |
-| `id`                     | UUID primary key                                                  |
+| `id`                     | caller-generated UUID primary key and creation-confirmation key   |
 | `status`                 | stable DB enum `active \| disabled`                               |
 | `authorization_revision` | positive integer, monotonically incremented on role/status change |
 | `created_at`             | immutable timestamp                                               |
@@ -200,6 +200,9 @@ future account-deletion/retention policy is separate from disablement.
 | `created_at`, `updated_at` | credential lifecycle timestamps                         |
 
 Email and password material never enter Audit or ordinary/security logs.
+The credential row is created only in the same transaction as its principal; the
+initial implementation has no endpoint that creates a principal without a usable
+credential or later fills one by direct database editing.
 
 ### 5.3 `staff_sessions`
 
@@ -216,19 +219,28 @@ Indexes cover principal and expiry. TTL comes from validated
 
 ### 5.4 `staff_role_grants`
 
-| Field                                   | Rule                                                                                  |
-| --------------------------------------- | ------------------------------------------------------------------------------------- |
-| `id`                                    | UUID primary key                                                                      |
-| `staff_principal_id`                    | FK with `ON DELETE CASCADE`                                                           |
-| `role_key`                              | application/Zod bounded text, not arbitrary public input                              |
-| `granted_by_principal_id`               | nullable self-domain FK with `ON DELETE SET NULL`; null only for controlled bootstrap |
-| `granted_at`                            | immutable grant timestamp                                                             |
-| `revoked_by_principal_id`, `revoked_at` | nullable revocation evidence; actor FK uses `SET NULL`                                |
+| Field                                   | Rule                                                                                   |
+| --------------------------------------- | -------------------------------------------------------------------------------------- |
+| `id`                                    | UUID primary key                                                                       |
+| `staff_principal_id`                    | FK with `ON DELETE CASCADE`                                                            |
+| `role_key`                              | application/Zod bounded text, not arbitrary public input                               |
+| `grant_source`                          | stable `bootstrap \| staff` discriminator                                              |
+| `granted_by_principal_id`               | nullable self-domain FK with `ON DELETE SET NULL`; required when a staff grant is made |
+| `granted_at`                            | immutable grant timestamp                                                              |
+| `revoked_by_principal_id`, `revoked_at` | nullable revocation evidence; actor FK uses `SET NULL`                                 |
 
 A partial unique index permits at most one active grant for a principal/role.
 Normal revocation sets the revocation fields and never edits the original grant
 identity/time. Application validation rejects unknown role keys. `SET NULL` is a
 technical lifecycle rule, not a claim that records are anonymized.
+
+A second partial unique index permits only one `grant_source=bootstrap` grant, and
+application/database checks restrict that source to `access_administrator`.
+`grant_source` distinguishes a real bootstrap from a later lifecycle cleanup that
+sets a staff actor FK to null. Bootstrap grants are never hard-deleted in the
+initial lifecycle, so disabling or revoking the first principal does not silently
+reopen bootstrap. Recovery after that point requires the separately approved
+operational procedure, not another ordinary bootstrap invocation.
 
 Audit rows remain the action record for staff creation, role changes, disablement,
 session revocation, and sensitive reads. Audit actor IDs intentionally remain
@@ -247,11 +259,21 @@ email, grants only the explicitly requested `access_administrator` role, and emi
 no credential or email. The database transaction creates the principal,
 credential, role grant, and bounded bootstrap Audit action atomically.
 
+Before checking whether bootstrap is available, that transaction acquires one
+fixed, application-owned PostgreSQL transaction advisory lock. The availability
+check and all inserts therefore execute in one database-wide serial order even
+when two processes submit different emails and no principal row yet exists. The
+lock is released automatically on commit or rollback. It is not held while hashing
+the password, and it is not a distributed bootstrap service. The partial unique
+bootstrap-grant index remains the database invariant if a caller omits or
+misorders the advisory-lock protocol.
+
 The command:
 
 - refuses to run against a Development/Test fixture database unless its name ends
   in `_test` when destructive setup is requested;
-- refuses to create a second bootstrap administrator after an active one exists;
+- refuses to create another bootstrap principal after any committed bootstrap
+  grant, even if the original principal is later disabled or its role is revoked;
 - is fail-closed in Staging/Production unless an explicit deployment-controlled
   bootstrap prerequisite is present;
 - never accepts a wildcard role list.
@@ -262,9 +284,29 @@ synthetic setup does not satisfy them.
 
 ### 6.2 Explicit staff creation and grants
 
-An `access_administrator` creates a staff principal with no domain role in one
-transaction. Roles are then granted explicitly. Account creation does not copy an
-ordinary user or infer a role from an email/domain.
+An `access_administrator` creates a staff principal and its initial password
+credential in one transaction; the new principal has no domain role. The request
+contains a caller-generated `staffPrincipalId`, normalized email, and initial
+password. The password is validated and Argon2id-hashed before the short database
+transaction, is never returned, and is never passed to Audit or logging. The
+transaction revalidates the actor permission, inserts principal and credential,
+appends `staff_principal_created`, then commits. An Audit or credential insert
+failure rolls everything back. Roles are granted separately and explicitly.
+Account creation does not copy an ordinary user or infer a role from an
+email/domain.
+
+The UUID gives a row-lifetime confirmation boundary without a general operation
+ledger. If that ID already exists for the same normalized email with a credential,
+the endpoint returns `no_change` plus the current staff state and never replaces
+the stored password hash; the response is not an immutable receipt for the
+original password. The same ID with another email, or the same email with another
+ID, returns 409 and changes nothing. After a network-unknown result, the caller
+keeps the original request in memory and first reads
+`GET /admin/staff-principals/:id`. `present` confirms only the current row;
+`missing` may mean the first transaction is still in flight and does not prove
+rollback. Retrying creation is permitted only with the same ID, email, and original
+password snapshot. If that snapshot is unavailable, the caller must stop and
+resolve state rather than generate a replacement ID or password automatically.
 
 Grant, revoke, and disable operations use the target principal's
 `expectedAuthorizationRevision`:
@@ -293,6 +335,34 @@ A role grant or revocation also invalidates all target sessions. This is stricte
 than waiting for cached roles to expire and prevents an old session from retaining
 a removed permission. A newly granted role requires a new login; role mutation does
 not mint a session.
+
+Explicit `revoke-sessions` participates in the same revision protocol. The service
+locks the target principal, checks active status and exact
+`expectedAuthorizationRevision`, increments authorization revision, revokes every
+active session visible under that lock, and appends `staff_sessions_revoked`
+atomically. This explicit security command returns `applied` even when
+`sessionCount` is zero: advancing revision records the completed revocation
+boundary and prevents an old request from targeting a later login. Audit failure
+rolls back the revision and every session update. `no_change` remains a result for
+role/status desired-state operations, but is deliberately not a result of
+`revoke-sessions`.
+
+Staff login takes the same principal-row lock after password verification. While
+holding it, login rechecks active status and current grants, then inserts a session
+bound to that exact revision. The lock is released before returning the cookie.
+Consequently, if login commits first, a following revocation sees and revokes that
+session; if revocation commits first, a later login receives the new revision and
+is not part of the earlier revocation.
+
+A committed revocation whose response is lost is an unknown result, not a claimed
+rollback or immutable receipt. Reading current state may show a newer revision and
+no sessions, but does not prove which request caused it. Replaying the old request
+with its old expected revision returns 409 and cannot revoke a session created by a
+later login. A fresh explicit revocation must start from the newly read revision.
+An `applied` result with zero revoked sessions proves the revision boundary was
+committed, not that future login is disabled; future login remains possible. A
+stale 409 proves only that the supplied revision is no longer current. No response
+is guaranteed after an approved future cleanup removes the staff row.
 
 ## 7. Authorization and transaction boundary
 
@@ -330,10 +400,12 @@ contains normalized email and access state. It follows this same authorize,
 allowlisted read, access-audit, commit, then return sequence; it is not exempt merely
 because it does not contain psychological content.
 
-Mutation lock order is fixed: unique staff principal/session rows first (sorted by
-principal UUID where actor and target differ), then the domain resource, then Audit
-append. No Audit or domain callback acquires staff locks in reverse order. Lock
-waits use the request deadline/AbortSignal and remain bounded.
+Mutation lock order is fixed: the bootstrap-only advisory lock when applicable,
+then unique staff principal/session rows (sorted by principal UUID where actor and
+target differ), then the domain resource, then Audit append. Login, role/status
+changes, and explicit session revocation all serialize on the same target principal
+row. No Audit or domain callback acquires staff locks in reverse order. Lock waits
+use the request deadline/AbortSignal and remain bounded.
 
 `DefaultDenySafetyReviewerAuthorizer` remains the fallback until a real
 database-backed staff authorizer and staff session context are installed. The
@@ -348,18 +420,18 @@ guards. These routes are backend contracts only; this design adds no page.
 
 ### 8.1 Identity/session foundation batch
 
-| Method and route                                    | Permission                  | Request/result                                                                                             |
-| --------------------------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `POST /admin/auth/login`                            | none; trusted Admin origin  | staff email/password; sets only staff cookies; returns principal ID, active role keys, revision and expiry |
-| `GET /admin/auth/session`                           | active staff session        | same bounded session view; no email/password hash/token                                                    |
-| `POST /admin/auth/logout`                           | active staff session + CSRF | revokes current staff session and clears staff cookies                                                     |
-| `POST /admin/staff-principals`                      | `staff_principal:create`    | normalized email; creates active principal with no roles                                                   |
-| `GET /admin/staff-principals`                       | `staff_principal:read`      | opaque-cursor page of ID, email, status, active roles, revision and timestamps                             |
-| `GET /admin/staff-principals/:id`                   | `staff_principal:read`      | the same bounded authoritative state                                                                       |
-| `PUT /admin/staff-principals/:id/roles/:roleKey`    | `staff_role:grant`          | `{ expectedAuthorizationRevision }`; applied/no-change plus current state                                  |
-| `DELETE /admin/staff-principals/:id/roles/:roleKey` | `staff_role:revoke`         | CSRF and `{ expectedAuthorizationRevision }`; applied/no-change plus current state                         |
-| `POST /admin/staff-principals/:id/disable`          | `staff_principal:disable`   | `{ expectedAuthorizationRevision }`; applied/no-change plus current state                                  |
-| `POST /admin/staff-principals/:id/revoke-sessions`  | `staff_session:revoke`      | `{ expectedAuthorizationRevision }`; revokes current sessions without changing roles                       |
+| Method and route                                    | Permission                  | Request/result                                                                                                                                         |
+| --------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `POST /admin/auth/login`                            | none; trusted Admin origin  | staff email/password; sets only staff cookies; returns principal ID, active role keys, revision and expiry                                             |
+| `GET /admin/auth/session`                           | active staff session        | same bounded session view; no email/password hash/token                                                                                                |
+| `POST /admin/auth/logout`                           | active staff session + CSRF | revokes current staff session and clears staff cookies                                                                                                 |
+| `POST /admin/staff-principals`                      | `staff_principal:create`    | `{ staffPrincipalId, email, initialPassword }`; atomically creates active principal, credential and Audit with no roles                                |
+| `GET /admin/staff-principals`                       | `staff_principal:read`      | opaque-cursor page of ID, email, status, active roles, revision and timestamps                                                                         |
+| `GET /admin/staff-principals/:id`                   | `staff_principal:read`      | the same bounded authoritative state                                                                                                                   |
+| `PUT /admin/staff-principals/:id/roles/:roleKey`    | `staff_role:grant`          | `{ expectedAuthorizationRevision }`; applied/no-change plus current state                                                                              |
+| `DELETE /admin/staff-principals/:id/roles/:roleKey` | `staff_role:revoke`         | CSRF and `{ expectedAuthorizationRevision }`; applied/no-change plus current state                                                                     |
+| `POST /admin/staff-principals/:id/disable`          | `staff_principal:disable`   | `{ expectedAuthorizationRevision }`; applied/no-change plus current state                                                                              |
+| `POST /admin/staff-principals/:id/revoke-sessions`  | `staff_session:revoke`      | `{ expectedAuthorizationRevision }`; always applied at a current revision, increments it, revokes the locked visible session set and audits atomically |
 
 Missing and non-readable staff IDs share one 404 boundary. Login uses the same
 response for unknown accounts and incorrect passwords.
@@ -526,16 +598,47 @@ enablement. No batch depends on an Admin UI.
 
 ### 12.2 Lifecycle and concurrency
 
-- bootstrap creates no default wildcard and refuses a second active bootstrap;
-- account creation plus Audit is atomic;
+- bootstrap creates no default wildcard; two different-email first-bootstrap
+  transactions are serialized by the fixed PostgreSQL transaction advisory lock,
+  while the partial unique bootstrap-grant index enforces the invariant; exactly
+  one succeeds, and the loser leaves no principal, credential, role, or Audit
+  residue;
+- bootstrap Audit failure rolls back principal, credential and role creation;
+- protected account creation requires a caller UUID, email and initial password;
+  principal, credential and Audit are atomic, duplicate ID/email conflicts are
+  bounded as specified, and a network-unknown read is not called a receipt;
+- two concurrent creates with the same UUID/email yield one principal, one
+  credential and one creation Audit; a different UUID using the same email, or the
+  same UUID using another email, returns 409 without partial rows or Audit;
+- with the first create held before commit, a status read may return missing; after
+  commit-response loss, the same read returns the current principal, and neither
+  observation is described as an immutable create receipt or cancellation proof;
+- concurrent creation using the same ID/email produces one principal, one
+  credential and one creation Audit; a different ID for the same email or a reused
+  ID for another email returns 409 without residue;
+- after a deliberately lost create response, a bounded status read can observe the
+  current row but missing does not prove rollback; a same-snapshot retry never
+  overwrites an existing password hash;
 - two concurrent grants of the same role result in one active grant;
 - two different mutations from one revision produce one applied result and one 409;
 - role revoke/disable plus session revocation plus Audit either all commit or all
   roll back;
+- login and revoke-sessions use the same principal-row serialization: revoke-first
+  permits a later new-revision login, while login-first causes that session to be
+  revoked;
+- after a committed revoke-sessions response is lost and a new login succeeds, a
+  replay carrying the old revision returns 409 and cannot revoke the new session;
+- revoke-sessions always produces `applied` at a current revision, including a zero
+  session count; role/status `no_change`, revoke-sessions `applied`, stale and
+  unknown results retain the evidence limits defined in section 6.3, and Audit
+  failure rolls back the applied path;
 - a session validated after revocation/disable cannot use the removed permission;
 - an operation authorized before revocation is treated as in-flight and must have a
   committed access Audit before any sensitive response;
-- lock waits are bounded and tests use barriers rather than sleep.
+- PostgreSQL tests hold the principal row at the login/revocation boundary to prove
+  both orders, and hold Audit failure before commit to prove revision and session
+  changes roll back;
+- lock waits are bounded and concurrency tests use barriers rather than sleep.
 
 ### 12.3 Safety Review
 

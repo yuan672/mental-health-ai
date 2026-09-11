@@ -57,9 +57,24 @@ disablement atomically increments that revision, revokes existing staff sessions
 and appends a bounded Audit record. Session validation requires an active principal
 and an exact revision match.
 
+An explicit revoke-sessions operation uses the same principal lock and revision
+boundary. An applied revocation increments revision, revokes the locked visible
+session set, and audits atomically even when that set is empty. The command has no
+`no_change` result because the revision advance is the replay-safety boundary.
+Login takes the same lock for its final active/revision recheck and session insert.
+An old expected revision therefore cannot revoke a session created after an earlier
+unknown-result revocation.
+
 The first access administrator is created by a restricted offline bootstrap command
-with an explicit role and no credential logging. Later principals and roles require
-an authenticated `access_administrator`. Production bootstrap, MFA, recovery, and
+with an explicit role and no credential logging. A fixed PostgreSQL transaction
+advisory lock serializes its availability check and atomic
+principal/credential/role/Audit creation, including concurrent first-bootstrap
+attempts with different emails. A partial unique index on the retained bootstrap
+grant also prevents a second bootstrap after commit, including after later
+disablement or role revocation. Later principals require an authenticated
+`access_administrator`, a caller-generated principal UUID, normalized email, and an
+initial password; principal, Argon2id credential, and Audit are created atomically
+before roles are granted separately. Production bootstrap, MFA, recovery, and
 offboarding remain operational prerequisites rather than synthetic-test claims.
 
 ### Persistence
@@ -68,6 +83,16 @@ Add `staff_principals`, `staff_password_credentials`, `staff_sessions`, and
 `staff_role_grants` through a forward-only Drizzle migration. Active role grants
 are unique; revocation retains their original grant evidence. Role keys are strict
 application/Zod values rather than a database-configurable authorization language.
+Each role grant carries a bounded `bootstrap | staff` source so a future actor-FK
+`SET NULL` cannot be mistaken for bootstrap; only one retained bootstrap grant is
+permitted.
+
+The caller-generated principal UUID is the bounded creation-confirmation key while
+that row exists. A retry for the same ID/email never overwrites the stored password;
+duplicate ID/email mismatches conflict. A status read after an unknown result is
+current state, not an immutable creation receipt or proof that a missing transaction
+cannot still commit. No permanent operation ledger, password fingerprint, or
+default credential is added.
 
 Staff account disablement is the first implementation's terminal action. It is not
 account deletion and does not decide production retention.
