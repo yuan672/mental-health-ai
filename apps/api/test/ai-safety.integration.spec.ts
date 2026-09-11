@@ -225,7 +225,10 @@ class FakeGenerationProvider implements LLMProvider {
     options: LLMCallOptions,
   ): AsyncIterable<LLMProviderStreamEvent> {
     void request;
-    void options;
+    await options.startTransport((signal) => {
+      if (signal.aborted) throw signal.reason;
+      return undefined;
+    });
     this.streamCalls += 1;
     const metadata = { provider: 'fake', model: 'fake', requestId: 'safe-trace' };
     try {
@@ -1107,13 +1110,17 @@ describe('Phase 4 AI safety integration', () => {
   it('deduplicates 20 concurrent Incognito CRITICAL events without persisting content', async () => {
     const userId = await createUser();
     const sessionId = randomUUID();
+    // The runtime store's background cleanup uses the real clock. Keep this concurrency
+    // fixture on that same clock so a historical business timestamp cannot make the context
+    // expire during the deliberately contended Consent-lock sequence.
+    const contextNow = new Date();
     const runtimeContext = await consentExecutions.createIncognitoContext({
       userId,
       sessionId,
-      sessionExpiresAt: new Date(Date.now() + 60_000),
+      sessionExpiresAt: new Date(contextNow.getTime() + 60_000),
       signal: new AbortController().signal,
-      deadlineAt: new Date(Date.now() + 30_000),
-      now: NOW,
+      deadlineAt: new Date(contextNow.getTime() + 30_000),
+      now: contextNow,
     });
     const clientRequestId = randomUUID();
     riskClassifier.reset('CRITICAL');
@@ -1135,8 +1142,9 @@ describe('Phase 4 AI safety integration', () => {
             sessionId,
             clientSignal: new AbortController().signal,
           });
-          const execution = await consentExecutions.bindRequired(pending);
+          let execution: Awaited<ReturnType<typeof consentExecutions.bindRequired>> | null = null;
           try {
+            execution = await consentExecutions.bindRequired(pending);
             return await incognito.claim({
               userId,
               sessionId,
@@ -1145,10 +1153,10 @@ describe('Phase 4 AI safety integration', () => {
               message: '合成的紧急风险测试表达。',
               signal: execution.signal,
               execution,
-              now: NOW,
+              now: contextNow,
             });
           } finally {
-            execution.dispose();
+            (execution ?? pending).dispose();
           }
         }),
       );
@@ -1164,6 +1172,15 @@ describe('Phase 4 AI safety integration', () => {
     );
     expect(fulfilled).toHaveLength(1);
     expect(fulfilled[0]?.value.kind).toBe('trusted');
+    const rejected = results.filter(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    );
+    expect(rejected).toHaveLength(19);
+    expect(rejected.map((result) => result.reason)).toEqual(
+      Array.from({ length: 19 }, () =>
+        expect.objectContaining({ code: 'AI_TURN_IN_PROGRESS', statusCode: 409 }),
+      ),
+    );
     expect(riskClassifier.calls).toBe(1);
     if (fulfilled[0]) {
       incognitoStore.releaseGeneration(

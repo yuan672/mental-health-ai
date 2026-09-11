@@ -163,6 +163,13 @@ const environmentSchema = z
         message: 'Knowledge retrieval timeout cannot exceed total timeout',
       });
     }
+    if (value.AI_KNOWLEDGE_CONTEXT_TOKEN_BUDGET >= value.LLM_CONTEXT_TOKEN_BUDGET) {
+      context.addIssue({
+        code: 'custom',
+        path: ['AI_KNOWLEDGE_CONTEXT_TOKEN_BUDGET'],
+        message: 'Knowledge context allowance must leave room in the total LLM context budget',
+      });
+    }
 
     if (
       value.AI_KNOWLEDGE_SYNTHETIC_FIXTURES_ENABLED &&

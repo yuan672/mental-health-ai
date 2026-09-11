@@ -21,6 +21,7 @@ import { insertConsentFixture, insertRequiredConsentFixtures } from './consent-f
 import { AiOrchestrationService } from '../src/ai/ai-orchestration.service';
 import { ConversationContextService } from '../src/ai/context/conversation-context.service';
 import { IncognitoGenerationAdmissionService } from '../src/ai/incognito/incognito-generation-admission.service';
+import { IncognitoContextsService } from '../src/ai/incognito/incognito-contexts.service';
 import { ConsentExecutionCoordinator } from '../src/consents/runtime/consent-execution.coordinator';
 import {
   deriveIncognitoQuotaIdempotencyKey,
@@ -48,6 +49,7 @@ import {
 } from '../src/ai/safety/safety-gates';
 import type { RiskDecision } from '../src/safety/safety.types';
 import { AiTurnService } from '../src/ai/turns/ai-turn.service';
+import { AiExecutionTotalTimeoutError } from '../src/ai/runtime/active-ai-execution.registry';
 import { AppModule } from '../src/app.module';
 import { hashSessionToken, SessionsService } from '../src/auth/sessions.service';
 import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
@@ -112,6 +114,10 @@ class FakeStreamingProvider implements LLMProvider {
     options: LLMCallOptions,
   ): AsyncIterable<LLMProviderStreamEvent> {
     void request;
+    await options.startTransport((signal) => {
+      if (signal.aborted) throw signal.reason;
+      return undefined;
+    });
     this.streamCalls += 1;
     this.resolveDispatched?.();
     yield { type: 'started', metadata: PROVIDER_METADATA };
@@ -236,6 +242,7 @@ describe('Phase 3 AI foundation integration', () => {
   let turnsService: AiTurnService;
   let incognitoStore: InMemoryIncognitoContextStore;
   let incognitoAdmission: IncognitoGenerationAdmissionService;
+  let incognitoContexts: IncognitoContextsService;
   let consentExecutions: ConsentExecutionCoordinator;
   const provider = new FakeStreamingProvider();
   const postGate = new RecordingPostGenerationGate();
@@ -280,6 +287,7 @@ describe('Phase 3 AI foundation integration', () => {
     turnsService = moduleRef.get(AiTurnService);
     incognitoStore = moduleRef.get(InMemoryIncognitoContextStore);
     incognitoAdmission = moduleRef.get(IncognitoGenerationAdmissionService);
+    incognitoContexts = moduleRef.get(IncognitoContextsService);
     consentExecutions = moduleRef.get(ConsentExecutionCoordinator);
   }, 60_000);
 
@@ -407,6 +415,40 @@ describe('Phase 3 AI foundation integration', () => {
     }
   });
 
+  it('refunds and cancels a prepared turn when delivery closes after turn.started but before dispatch', async () => {
+    const userId = await createUser();
+    const conversation = await conversationsService.create(userId, BASE_NOW);
+    const prepared = await orchestration.preparePersistentTurn(
+      { userId, sessionId: randomUUID() },
+      {
+        clientRequestId: randomUUID(),
+        conversationId: conversation.id,
+        message: 'synthetic-first-frame-close',
+      },
+      new AbortController().signal,
+      BASE_NOW,
+    );
+    if (prepared.kind !== 'ready') throw new Error('Expected a ready turn');
+
+    const stream = orchestration.streamPreparedTurn(prepared, new AbortController().signal);
+    const iterator = stream[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toMatchObject({
+      done: false,
+      value: { type: 'turn.started' },
+    });
+    await iterator.return?.();
+
+    expect(provider.streamCalls).toBe(0);
+    expect(await quotaService.getUsage(userId, BASE_NOW)).toMatchObject({ usedCount: 0 });
+    await expect(
+      turnsService.findByClientRequestId(userId, prepared.turn.clientRequestId),
+    ).resolves.toMatchObject({
+      status: 'cancelled',
+      failureCode: 'STREAM_DELIVERY_TERMINATED',
+      assistantMessageId: null,
+    });
+  });
+
   it('deduplicates the same clientRequestId even when a retry submits different text', async () => {
     const userId = await createUser();
     const conversation = await conversationsService.create(userId, BASE_NOW);
@@ -504,10 +546,7 @@ describe('Phase 3 AI foundation integration', () => {
         .where(eq(conversations.userId, userId)),
     ).toHaveLength(0);
     expect(
-      await databaseService.database
-        .select()
-        .from(aiTurns)
-        .where(eq(aiTurns.userId, userId)),
+      await databaseService.database.select().from(aiTurns).where(eq(aiTurns.userId, userId)),
     ).toHaveLength(0);
   });
 
@@ -870,7 +909,9 @@ describe('Phase 3 AI foundation integration', () => {
   it('enforces total timeout while deltas continue and never completes a partial response', async () => {
     provider.reset('stream-until-abort');
     const originalTotalTimeout = env.LLM_TOTAL_TIMEOUT_MS;
-    env.LLM_TOTAL_TIMEOUT_MS = 100;
+    // Leave enough budget for the real database-backed preparation path even under CI load,
+    // while still exercising the registry's total-turn deadline during a live provider stream.
+    env.LLM_TOTAL_TIMEOUT_MS = 1_000;
     try {
       const userId = await createUser();
       const conversation = await conversationsService.create(userId, BASE_NOW);
@@ -889,6 +930,7 @@ describe('Phase 3 AI foundation integration', () => {
         code: 'AI_PROVIDER_TIMEOUT',
         statusCode: 504,
       });
+      expect(provider.streamCalls).toBe(1);
       expect(await quotaService.getUsage(userId, BASE_NOW)).toMatchObject({ usedCount: 1 });
       if (prepared.kind !== 'ready') throw new Error('Expected ready');
       const persisted = await turnsService.findByClientRequestId(
@@ -1078,6 +1120,117 @@ describe('Phase 3 AI foundation integration', () => {
         success: false,
         error: { code: 'VALIDATION_ERROR', message: '不支持的知识引用协议版本' },
       });
+  });
+
+  it('returns a bounded timeout response when a Persistent execution expires after prepare', async () => {
+    const now = new Date();
+    const userId = await createUser();
+    const conversation = await conversationsService.create(userId, now);
+    const rawToken = `synthetic-pre-stream-timeout-${randomUUID()}`;
+    await databaseService.database.insert(sessions).values({
+      id: randomUUID(),
+      userId,
+      tokenHash: hashSessionToken(rawToken),
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+    });
+    const originalPrepare = orchestration.preparePersistentTurn.bind(orchestration);
+    const prepareSpy = jest
+      .spyOn(orchestration, 'preparePersistentTurn')
+      .mockImplementationOnce(async (...input) => {
+        const prepared = await originalPrepare(...input);
+        if (prepared.kind !== 'ready') throw new Error('Expected a ready Persistent turn');
+        prepared.execution.abort(new AiExecutionTotalTimeoutError());
+        return prepared;
+      });
+
+    try {
+      await request(app.getHttpServer())
+        .post('/ai/chat/stream')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', `mh_session=${rawToken}; mh_csrf=synthetic-csrf`)
+        .set('x-csrf-token', 'synthetic-csrf')
+        .send({
+          mode: 'persistent',
+          clientRequestId: randomUUID(),
+          conversationId: conversation.id,
+          message: 'synthetic-pre-stream-timeout',
+        })
+        .expect(504)
+        .expect({
+          success: false,
+          error: { code: 'AI_PROVIDER_TIMEOUT', message: 'AI 服务响应超时，请稍后重试' },
+        });
+
+      expect(provider.streamCalls).toBe(0);
+      expect(await quotaService.getUsage(userId, now)).toMatchObject({ usedCount: 0 });
+      const [turn] = await databaseService.database
+        .select()
+        .from(aiTurns)
+        .where(eq(aiTurns.conversationId, conversation.id));
+      expect(turn).toMatchObject({
+        status: 'failed',
+        failureCode: 'TOTAL_TIMEOUT_BEFORE_PROVIDER',
+      });
+    } finally {
+      prepareSpy.mockRestore();
+    }
+  });
+
+  it('returns Consent-required instead of hanging when Incognito is revoked after prepare', async () => {
+    const now = new Date();
+    const userId = await createUser();
+    const sessionId = randomUUID();
+    const rawToken = `synthetic-pre-stream-consent-${randomUUID()}`;
+    await databaseService.database.insert(sessions).values({
+      id: sessionId,
+      userId,
+      tokenHash: hashSessionToken(rawToken),
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+    });
+    const context = await incognitoContexts.create(
+      {
+        id: sessionId,
+        userId,
+        expiresAt: new Date(now.getTime() + 60_000),
+        revokedAt: null,
+      },
+      now,
+    );
+    const originalPrepare = orchestration.prepareIncognitoTurn.bind(orchestration);
+    const prepareSpy = jest
+      .spyOn(orchestration, 'prepareIncognitoTurn')
+      .mockImplementationOnce(async (...input) => {
+        const prepared = await originalPrepare(...input);
+        if (prepared.kind !== 'ready') throw new Error('Expected a ready Incognito turn');
+        prepared.execution.abort(new Error('consent_withdrawn'));
+        return prepared;
+      });
+
+    try {
+      await request(app.getHttpServer())
+        .post('/ai/chat/stream')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', `mh_session=${rawToken}; mh_csrf=synthetic-csrf`)
+        .set('x-csrf-token', 'synthetic-csrf')
+        .send({
+          mode: 'incognito',
+          clientRequestId: randomUUID(),
+          contextId: context.id,
+          message: 'synthetic-pre-stream-consent-withdrawal',
+        })
+        .expect(400)
+        .expect({
+          success: false,
+          error: { code: 'CONSENT_REQUIRED', message: '请接受当前版本的必要条款' },
+        });
+
+      expect(provider.streamCalls).toBe(0);
+      expect(await quotaService.getUsage(userId, now)).toMatchObject({ usedCount: 0 });
+    } finally {
+      prepareSpy.mockRestore();
+    }
   });
 
   it('uses the existing authentication boundary for the streaming endpoint', async () => {

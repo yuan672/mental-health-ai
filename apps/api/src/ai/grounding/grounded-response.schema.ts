@@ -27,15 +27,27 @@ const groundedProviderEnvelopeSchema = z
 
 export type GroundedProviderEnvelope = z.infer<typeof groundedProviderEnvelopeSchema>;
 
+export class GroundedResponseContractError extends Error {
+  constructor(public readonly reason: 'malformed_envelope' | 'invalid_reference') {
+    super(`Grounded response contract rejected: ${reason}`);
+    this.name = GroundedResponseContractError.name;
+  }
+}
+
 export function parseGroundedProviderEnvelope(
   raw: string,
   offeredReferenceIds: readonly string[],
 ): GroundedProviderEnvelope {
-  const parsedJson: unknown = JSON.parse(raw);
-  const envelope = groundedProviderEnvelopeSchema.parse(parsedJson);
+  let envelope: GroundedProviderEnvelope;
+  try {
+    const parsedJson: unknown = JSON.parse(raw);
+    envelope = groundedProviderEnvelopeSchema.parse(parsedJson);
+  } catch {
+    throw new GroundedResponseContractError('malformed_envelope');
+  }
   const offered = new Set(offeredReferenceIds);
   if (envelope.usedReferenceIds.some((identifier) => !offered.has(identifier))) {
-    throw new Error('Grounded response selected an unknown reference');
+    throw new GroundedResponseContractError('invalid_reference');
   }
   return envelope;
 }

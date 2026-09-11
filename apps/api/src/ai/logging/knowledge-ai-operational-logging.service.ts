@@ -1,17 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { PinoLogger } from 'nestjs-pino';
 
-export type KnowledgeRetrievalOutcome =
-  | 'hit'
-  | 'no_hit'
-  | 'unavailable'
-  | 'corpus_limit_exceeded';
+export type KnowledgeRetrievalOutcome = 'hit' | 'no_hit' | 'unavailable' | 'corpus_limit_exceeded';
 
 type RetrievalMetadata = Readonly<{
   outcome: KnowledgeRetrievalOutcome;
   policyVersion: string;
   durationMs: number;
-  candidateCount: number;
   selectedCount: number;
 }>;
 
@@ -28,7 +23,6 @@ export class KnowledgeAiOperationalLoggingService {
       retrievalOutcome: metadata.outcome,
       retrievalPolicyVersion: metadata.policyVersion,
       durationMs: metadata.durationMs,
-      candidateCount: metadata.candidateCount,
       selectedCount: metadata.selectedCount,
     });
   }
@@ -44,6 +38,16 @@ export class KnowledgeAiOperationalLoggingService {
       failureCategory,
       promptKey,
       promptVersion,
+    });
+  }
+
+  groundingCompletionResultUnknown(turnId: string, durationMs: number): void {
+    this.logger.warn({
+      event: 'knowledge_grounding_completion_result_unknown',
+      eventCategory: 'ai_operational',
+      turnId,
+      failureCategory: 'persistence_result_unknown',
+      durationMs,
     });
   }
 }

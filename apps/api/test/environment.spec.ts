@@ -175,4 +175,14 @@ describe('identity environment validation', () => {
       }),
     ).toThrow('Knowledge retrieval timeout cannot exceed total timeout');
   });
+
+  it('requires the Knowledge allowance to leave room for instructions and the user message', () => {
+    expect(() =>
+      parseEnvironment({
+        ...baseEnvironment,
+        LLM_CONTEXT_TOKEN_BUDGET: '1000',
+        AI_KNOWLEDGE_CONTEXT_TOKEN_BUDGET: '1000',
+      }),
+    ).toThrow();
+  });
 });

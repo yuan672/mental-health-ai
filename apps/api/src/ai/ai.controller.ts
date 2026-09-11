@@ -136,6 +136,8 @@ export class AiController {
         },
         body,
         abortController.signal,
+        new Date(),
+        representation,
       );
     } catch (error) {
       response.removeListener('close', onClose);
@@ -160,8 +162,15 @@ export class AiController {
     }
 
     if (prepared.execution.signal.aborted || response.destroyed || response.writableEnded) {
-      await this.orchestration.cancelPreparedPersistentTurnBeforeProvider(prepared);
-      response.removeListener('close', onClose);
+      try {
+        await this.orchestration.cancelPreparedPersistentTurnBeforeProvider(prepared);
+      } finally {
+        response.removeListener('close', onClose);
+      }
+      if (response.destroyed || response.writableEnded) return;
+      if (prepared.execution.signal.aborted) {
+        throw this.orchestration.preProviderTerminationError(prepared);
+      }
       return;
     }
 
@@ -258,7 +267,11 @@ export class AiController {
         );
       }
     } catch (error) {
-      if (!response.destroyed && !response.writableEnded) {
+      if (
+        !prepared.deliveryState.groundedCommitSucceeded &&
+        !response.destroyed &&
+        !response.writableEnded
+      ) {
         eventSequence += 1;
         try {
           await this.writeBoundSse(
@@ -297,6 +310,8 @@ export class AiController {
         },
         body,
         abortController.signal,
+        new Date(),
+        representation,
       );
     } catch (error) {
       response.removeListener('close', onClose);
@@ -304,8 +319,15 @@ export class AiController {
     }
 
     if (prepared.generation.signal.aborted || response.destroyed || response.writableEnded) {
-      await this.orchestration.cancelPreparedIncognitoTurnBeforeProvider(prepared);
-      response.removeListener('close', onClose);
+      try {
+        await this.orchestration.cancelPreparedIncognitoTurnBeforeProvider(prepared);
+      } finally {
+        response.removeListener('close', onClose);
+      }
+      if (response.destroyed || response.writableEnded) return;
+      if (prepared.generation.signal.aborted) {
+        throw this.orchestration.preProviderTerminationError(prepared);
+      }
       return;
     }
 
@@ -369,6 +391,7 @@ export class AiController {
       return;
     }
 
+    let groundedCompletionWritten = false;
     try {
       for await (const event of this.orchestration.streamPreparedIncognitoTurn(
         prepared,
@@ -382,9 +405,21 @@ export class AiController {
           prepared.execution,
           prepared.generation.signal,
         );
+        if (
+          event.type === 'turn.completed' &&
+          'deliveryMode' in event.data &&
+          event.data.deliveryMode === 'commit_with_references'
+        ) {
+          groundedCompletionWritten = true;
+        }
       }
     } catch (error) {
-      if (!prepared.generation.signal.aborted && !response.destroyed && !response.writableEnded) {
+      if (
+        !prepared.deliveryState.groundedCommitSucceeded &&
+        !prepared.generation.signal.aborted &&
+        !response.destroyed &&
+        !response.writableEnded
+      ) {
         try {
           await this.writeBoundSse(
             response,
@@ -398,6 +433,9 @@ export class AiController {
         }
       }
     } finally {
+      if (prepared.deliveryState.groundedCommitSucceeded && !groundedCompletionWritten) {
+        this.orchestration.retireGroundedIncognitoDelivery(prepared);
+      }
       response.removeListener('close', onClose);
       if (!response.writableEnded && !response.destroyed) response.end();
     }

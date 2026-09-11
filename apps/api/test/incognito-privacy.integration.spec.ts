@@ -107,6 +107,10 @@ class ControlledGenerationProvider implements LLMProvider {
     options: LLMCallOptions,
   ): AsyncIterable<LLMProviderStreamEvent> {
     void request;
+    await options.startTransport((signal) => {
+      if (signal.aborted) throw signal.reason;
+      return undefined;
+    });
     this.streamCalls += 1;
     this.streamSignals.push(options.signal);
     const metadata = { provider: 'fake', model: 'phase5c-fake', requestId: 'safe-trace' };

@@ -21,6 +21,13 @@ export type ClaimedAiTurn = Readonly<{
 
 export type CompletedAiTurn = AiTurnRecord & { assistantMessageId: string };
 
+export class AiTurnCompletionResultUnknownError extends Error {
+  constructor() {
+    super('AI turn completion result is unknown');
+    this.name = AiTurnCompletionResultUnknownError.name;
+  }
+}
+
 @Injectable()
 export class AiTurnService {
   constructor(
@@ -204,6 +211,7 @@ export class AiTurnService {
     assistantContent: string,
     articleVersionIds: readonly string[],
     now: Date,
+    reconciliationTimeoutMs = 2_000,
   ): Promise<CompletedAiTurn> {
     const assistantMessageId = randomUUID();
     try {
@@ -229,6 +237,27 @@ export class AiTurnService {
     } catch (error) {
       if (error instanceof NotFoundError) {
         throw error;
+      }
+      try {
+        const committed = await this.repository.findCommittedGroundedCompletion({
+          turnId: turn.id,
+          userId: turn.userId,
+          assistantMessageId,
+          assistantContent,
+          articleVersionIds,
+          lockTimeoutMs: reconciliationTimeoutMs,
+        });
+        if (committed?.assistantMessageId) {
+          this.logging.messageAppended(
+            turn.userId,
+            turn.conversationId,
+            assistantMessageId,
+            'assistant',
+          );
+          return committed as CompletedAiTurn;
+        }
+      } catch {
+        throw new AiTurnCompletionResultUnknownError();
       }
       throw new DatabaseError();
     }
@@ -262,6 +291,25 @@ export class AiTurnService {
   ): Promise<void> {
     try {
       await this.repository.finish(turn.id, turn.userId, status, failureCode, now);
+    } catch {
+      throw new DatabaseError();
+    }
+  }
+
+  async settleBeforeProviderFailure(
+    turn: AiTurnRecord,
+    status: 'failed' | 'cancelled',
+    failureCode: string,
+    now = new Date(),
+  ): Promise<void> {
+    try {
+      await this.repository.settleBeforeProviderFailure({
+        turnId: turn.id,
+        userId: turn.userId,
+        status,
+        failureCode,
+        now,
+      });
     } catch {
       throw new DatabaseError();
     }

@@ -16,6 +16,10 @@ import { IncognitoContextsService } from './incognito/incognito-contexts.service
 import { IncognitoRuntimeModule } from './incognito/incognito-runtime.module';
 import { AiOperationalLoggingService } from './logging/ai-operational-logging.service';
 import { KnowledgeAiOperationalLoggingService } from './logging/knowledge-ai-operational-logging.service';
+import {
+  KNOWLEDGE_AUGMENTATION_CONFIG,
+  knowledgeAugmentationConfig,
+} from './grounding/knowledge-augmentation.config';
 import { LlmProviderModule } from './providers/llm-provider.module';
 import { PromptModule } from './prompts/prompt.module';
 import { AiSafetyConfigurationGuard } from './safety/safety-gates';
@@ -39,6 +43,10 @@ import { AiTurnService } from './turns/ai-turn.service';
   providers: [
     AiOperationalLoggingService,
     KnowledgeAiOperationalLoggingService,
+    {
+      provide: KNOWLEDGE_AUGMENTATION_CONFIG,
+      useFactory: knowledgeAugmentationConfig,
+    },
     AiOrchestrationService,
     AiSafetyConfigurationGuard,
     AiTurnRepository,

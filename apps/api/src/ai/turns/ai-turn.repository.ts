@@ -1,6 +1,8 @@
 import {
   aiTurns,
   and,
+  asc,
+  assistantMessageKnowledgeReferences,
   conversations,
   eq,
   gt,
@@ -42,6 +44,13 @@ export class ActiveAiTurnError extends Error {
   constructor(public readonly turn: AiTurnRecord) {
     super('Conversation already has an active AI turn');
     this.name = ActiveAiTurnError.name;
+  }
+}
+
+export class GroundedCompletionReconciliationError extends Error {
+  constructor() {
+    super('Grounded completion outcome could not be reconciled');
+    this.name = GroundedCompletionReconciliationError.name;
   }
 }
 
@@ -236,8 +245,14 @@ export class AiTurnRepository {
         })
         .where(eq(aiTurns.id, input.turnId))
         .returning();
+      await this.beforeStartCommit(transaction);
       return started ?? null;
     });
+  }
+
+  protected async beforeStartCommit(_transaction: AppTransaction): Promise<void> {
+    void _transaction;
+    return Promise.resolve();
   }
 
   async completeTrusted(input: {
@@ -508,8 +523,100 @@ export class AiTurnRepository {
         })
         .where(eq(aiTurns.id, input.turnId))
         .returning();
+      await this.beforeGroundedCompletionCommit(transaction);
       return completed ?? null;
     });
+  }
+
+  protected async beforeGroundedCompletionCommit(_transaction: AppTransaction): Promise<void> {
+    void _transaction;
+    return Promise.resolve();
+  }
+
+  protected async beforeGroundedCompletionReconciliationLock(
+    _transaction: AppTransaction,
+  ): Promise<void> {
+    void _transaction;
+    return Promise.resolve();
+  }
+
+  protected async afterGroundedCompletionReconciliationLock(
+    _transaction: AppTransaction,
+  ): Promise<void> {
+    void _transaction;
+    return Promise.resolve();
+  }
+
+  async findCommittedGroundedCompletion(input: {
+    turnId: string;
+    userId: string;
+    assistantMessageId: string;
+    assistantContent: string;
+    articleVersionIds: readonly string[];
+    lockTimeoutMs: number;
+  }): Promise<AiTurnRecord | null> {
+    if (!Number.isInteger(input.lockTimeoutMs) || input.lockTimeoutMs <= 0) {
+      throw new GroundedCompletionReconciliationError();
+    }
+    try {
+      return await this.databaseService.database.transaction(async (transaction) => {
+        const timeout = `${input.lockTimeoutMs}ms`;
+        await transaction.execute(sql`SELECT set_config('lock_timeout', ${timeout}, true)`);
+        await transaction.execute(sql`SELECT set_config('statement_timeout', ${timeout}, true)`);
+        await this.beforeGroundedCompletionReconciliationLock(transaction);
+        const [turn] = await transaction
+          .select()
+          .from(aiTurns)
+          .where(and(eq(aiTurns.id, input.turnId), eq(aiTurns.userId, input.userId)))
+          .limit(1)
+          .for('update');
+        await this.afterGroundedCompletionReconciliationLock(transaction);
+
+        if (!turn) throw new GroundedCompletionReconciliationError();
+        if (turn.status !== 'completed') return null;
+        if (turn.assistantMessageId !== input.assistantMessageId) {
+          throw new GroundedCompletionReconciliationError();
+        }
+
+        const [message] = await transaction
+          .select({
+            conversationId: messages.conversationId,
+            role: messages.role,
+            content: messages.content,
+          })
+          .from(messages)
+          .where(eq(messages.id, input.assistantMessageId))
+          .limit(1);
+        if (
+          !message ||
+          message.conversationId !== turn.conversationId ||
+          message.role !== 'assistant' ||
+          message.content !== input.assistantContent
+        ) {
+          throw new GroundedCompletionReconciliationError();
+        }
+
+        const references = await transaction
+          .select({ articleVersionId: assistantMessageKnowledgeReferences.articleVersionId })
+          .from(assistantMessageKnowledgeReferences)
+          .where(
+            eq(assistantMessageKnowledgeReferences.assistantMessageId, input.assistantMessageId),
+          )
+          .orderBy(asc(assistantMessageKnowledgeReferences.ordinal));
+        if (
+          references.length !== input.articleVersionIds.length ||
+          references.some(
+            (reference, index) => reference.articleVersionId !== input.articleVersionIds[index],
+          )
+        ) {
+          throw new GroundedCompletionReconciliationError();
+        }
+        return turn;
+      });
+    } catch (error) {
+      if (error instanceof GroundedCompletionReconciliationError) throw error;
+      throw new GroundedCompletionReconciliationError();
+    }
   }
 
   async finish(
@@ -529,6 +636,41 @@ export class AiTurnRepository {
           inArray(aiTurns.status, ['claimed', 'streaming']),
         ),
       );
+  }
+
+  async settleBeforeProviderFailure(input: {
+    turnId: string;
+    userId: string;
+    status: 'failed' | 'cancelled';
+    failureCode: string;
+    now: Date;
+  }): Promise<void> {
+    await this.databaseService.database.transaction(async (transaction) => {
+      const [turn] = await transaction
+        .select({ status: aiTurns.status })
+        .from(aiTurns)
+        .where(and(eq(aiTurns.id, input.turnId), eq(aiTurns.userId, input.userId)))
+        .limit(1)
+        .for('update');
+      if (!turn || !['claimed', 'streaming'].includes(turn.status)) return;
+
+      await transaction
+        .update(aiTurns)
+        .set({ status: input.status, failureCode: input.failureCode, completedAt: input.now })
+        .where(
+          and(
+            eq(aiTurns.id, input.turnId),
+            eq(aiTurns.userId, input.userId),
+            inArray(aiTurns.status, ['claimed', 'streaming']),
+          ),
+        );
+      await this.quotaRepository.refundWithinTransaction(
+        transaction,
+        input.userId,
+        input.turnId,
+        input.now,
+      );
+    });
   }
 
   private async nextMessageSequence(

@@ -173,59 +173,68 @@ export class QuotaRepository {
   }
 
   async refund(userId: string, idempotencyKey: string, now: Date): Promise<QuotaRefundResult> {
-    return this.databaseService.database.transaction(async (transaction) => {
-      const matching = await transaction
-        .select({ id: quotaConsumptions.id, usageDate: quotaConsumptions.usageDate })
-        .from(quotaConsumptions)
-        .where(
-          and(
-            eq(quotaConsumptions.userId, userId),
-            eq(quotaConsumptions.idempotencyKey, idempotencyKey),
-          ),
-        )
-        .limit(2)
-        .for('update');
+    return this.databaseService.database.transaction((transaction) =>
+      this.refundWithinTransaction(transaction, userId, idempotencyKey, now),
+    );
+  }
 
-      if (matching.length === 0) {
-        return { status: 'not_consumed' };
-      }
-      if (matching.length > 1) {
-        throw new Error('Quota refund key matches more than one consumption');
-      }
+  async refundWithinTransaction(
+    transaction: AppTransaction,
+    userId: string,
+    idempotencyKey: string,
+    now: Date,
+  ): Promise<QuotaRefundResult> {
+    const matching = await transaction
+      .select({ id: quotaConsumptions.id, usageDate: quotaConsumptions.usageDate })
+      .from(quotaConsumptions)
+      .where(
+        and(
+          eq(quotaConsumptions.userId, userId),
+          eq(quotaConsumptions.idempotencyKey, idempotencyKey),
+        ),
+      )
+      .limit(2)
+      .for('update');
 
-      const consumption = matching[0];
-      if (!consumption) {
-        return { status: 'not_consumed' };
-      }
-      const [deleted] = await transaction
-        .delete(quotaConsumptions)
-        .where(eq(quotaConsumptions.id, consumption.id))
-        .returning({ usageDate: quotaConsumptions.usageDate });
-      if (!deleted) {
-        return { status: 'not_consumed' };
-      }
+    if (matching.length === 0) {
+      return { status: 'not_consumed' };
+    }
+    if (matching.length > 1) {
+      throw new Error('Quota refund key matches more than one consumption');
+    }
 
-      const [usage] = await transaction
-        .update(dailyUsageQuotas)
-        .set({ usedCount: sql`${dailyUsageQuotas.usedCount} - 1`, updatedAt: now })
-        .where(
-          and(
-            eq(dailyUsageQuotas.userId, userId),
-            eq(dailyUsageQuotas.usageDate, consumption.usageDate),
-            gt(dailyUsageQuotas.usedCount, 0),
-          ),
-        )
-        .returning({
-          userId: dailyUsageQuotas.userId,
-          usageDate: dailyUsageQuotas.usageDate,
-          dailyLimit: dailyUsageQuotas.dailyLimit,
-          usedCount: dailyUsageQuotas.usedCount,
-        });
+    const consumption = matching[0];
+    if (!consumption) {
+      return { status: 'not_consumed' };
+    }
+    const [deleted] = await transaction
+      .delete(quotaConsumptions)
+      .where(eq(quotaConsumptions.id, consumption.id))
+      .returning({ usageDate: quotaConsumptions.usageDate });
+    if (!deleted) {
+      return { status: 'not_consumed' };
+    }
 
-      if (!usage) {
-        throw new Error('Quota consumption exists without a refundable aggregate');
-      }
-      return { status: 'refunded', usage };
-    });
+    const [usage] = await transaction
+      .update(dailyUsageQuotas)
+      .set({ usedCount: sql`${dailyUsageQuotas.usedCount} - 1`, updatedAt: now })
+      .where(
+        and(
+          eq(dailyUsageQuotas.userId, userId),
+          eq(dailyUsageQuotas.usageDate, consumption.usageDate),
+          gt(dailyUsageQuotas.usedCount, 0),
+        ),
+      )
+      .returning({
+        userId: dailyUsageQuotas.userId,
+        usageDate: dailyUsageQuotas.usageDate,
+        dailyLimit: dailyUsageQuotas.dailyLimit,
+        usedCount: dailyUsageQuotas.usedCount,
+      });
+
+    if (!usage) {
+      throw new Error('Quota consumption exists without a refundable aggregate');
+    }
+    return { status: 'refunded', usage };
   }
 }
