@@ -469,6 +469,8 @@ export class AiOrchestrationService {
         try {
           this.assertPersistentConversationBinding(existing, input.conversationId);
           await this.conversations.get(principal.userId, existing.conversationId, now);
+          this.expireExecutionAtDeadline(execution);
+          throwIfAborted(execution.signal);
         } finally {
           execution.dispose();
         }
@@ -490,6 +492,8 @@ export class AiOrchestrationService {
       if (!claimed.created) {
         try {
           this.assertPersistentConversationBinding(claimed.turn, input.conversationId);
+          this.expireExecutionAtDeadline(execution);
+          throwIfAborted(execution.signal);
         } finally {
           execution.dispose();
         }
@@ -2017,12 +2021,7 @@ export class AiOrchestrationService {
   enforcePreparedExecutionDeadline(
     prepared: Exclude<PreparedAiTurn, { kind: 'existing' }> | PreparedIncognitoTurn,
   ): void {
-    if (
-      !prepared.execution.signal.aborted &&
-      prepared.execution.deadlineAt.getTime() <= Date.now()
-    ) {
-      prepared.execution.abort(new AiExecutionTotalTimeoutError());
-    }
+    this.expireExecutionAtDeadline(prepared.execution);
   }
 
   preProviderTerminationError(
@@ -2042,6 +2041,12 @@ export class AiOrchestrationService {
       return new AIIncognitoContextLostError();
     }
     return new AIProviderError('AI 对话已取消');
+  }
+
+  private expireExecutionAtDeadline(execution: ConsentBoundExecution): void {
+    if (!execution.signal.aborted && execution.deadlineAt.getTime() <= Date.now()) {
+      execution.abort(new AiExecutionTotalTimeoutError());
+    }
   }
 
   private releaseIncognitoGeneration(

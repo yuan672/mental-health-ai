@@ -127,9 +127,10 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
     now?: Date;
   }): Promise<IncognitoContext> {
     return this.userLock.runExclusive(input.userId, input.signal, input.deadlineAt, async () => {
+      this.assertRequestTime(input.signal, input.deadlineAt);
       const dependencies = await this.authorization.loadRequiredDependencies(input.userId);
+      this.assertRequestTime(input.signal, input.deadlineAt);
       this.assertNotRevoked(input.userId, dependencies);
-      if (input.signal.aborted) throw input.signal.reason;
       return this.incognitoContexts.create(
         input.userId,
         input.sessionId,
@@ -352,6 +353,11 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
       execution.abort(new AiExecutionTotalTimeoutError());
       throw execution.signal.reason;
     }
+  }
+
+  private assertRequestTime(signal: AbortSignal, deadlineAt: Date): void {
+    if (signal.aborted) throw signal.reason;
+    if (deadlineAt.getTime() <= Date.now()) throw new AiExecutionTotalTimeoutError();
   }
 
   private assertNotRevoked(userId: string, dependencies: readonly ConsentDependency[]): void {

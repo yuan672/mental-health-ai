@@ -80,8 +80,14 @@ class MutableAuthorization implements ConsentAuthorizationSnapshotPort {
 
 class TrackingContexts {
   cleared: string[] = [];
+  createCalls = 0;
   dependencies = new Set<string>();
   throwOnClear = false;
+
+  create(): never {
+    this.createCalls += 1;
+    throw new Error('unexpected_context_create');
+  }
 
   clearDependency(_userId: string, acceptanceDecisionId: string): number {
     this.cleared.push(acceptanceDecisionId);
@@ -276,6 +282,35 @@ describe('Consent runtime coordination', () => {
         () => undefined,
       ),
     ).rejects.toBeInstanceOf(AiExecutionTotalTimeoutError);
+    expect(lock.diagnostics()).toEqual({ users: 0, waiters: 0 });
+  });
+
+  it('does not create an Incognito context when authorization lookup crosses its deadline', async () => {
+    const deadlineAt = new Date(Date.now() + 5_000);
+    const dateSpy = jest.spyOn(Date, 'now');
+    const loadSpy = jest
+      .spyOn(authorization, 'loadRequiredDependencies')
+      .mockImplementationOnce(() => {
+        dateSpy.mockReturnValue(deadlineAt.getTime() + 1);
+        return Promise.resolve([first]);
+      });
+
+    try {
+      await expect(
+        coordinator.createIncognitoContext({
+          userId: USER_ID,
+          sessionId: SESSION_ID,
+          sessionExpiresAt: new Date(deadlineAt.getTime() + 5_000),
+          signal: new AbortController().signal,
+          deadlineAt,
+        }),
+      ).rejects.toBeInstanceOf(AiExecutionTotalTimeoutError);
+    } finally {
+      loadSpy.mockRestore();
+      dateSpy.mockRestore();
+    }
+
+    expect(contexts.createCalls).toBe(0);
     expect(lock.diagnostics()).toEqual({ users: 0, waiters: 0 });
   });
 

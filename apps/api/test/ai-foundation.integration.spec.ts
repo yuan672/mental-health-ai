@@ -475,6 +475,91 @@ describe('Phase 3 AI foundation integration', () => {
     expect(JSON.stringify(persisted)).not.toContain('different-sensitive-text');
   });
 
+  it('does not return retained-turn replay metadata after the execution deadline passes', async () => {
+    const userId = await createUser();
+    const conversation = await conversationsService.create(userId, BASE_NOW);
+    const clientRequestId = randomUUID();
+    const principal = { userId, sessionId: randomUUID() };
+    const first = await orchestration.preparePersistentTurn(
+      principal,
+      { clientRequestId, conversationId: conversation.id, message: 'synthetic-first-request' },
+      new AbortController().signal,
+      BASE_NOW,
+    );
+    await collect(first);
+
+    const originalFind = turnsService.findByClientRequestId.bind(turnsService);
+    const dateSpy = jest.spyOn(Date, 'now');
+    const expiredNow = Date.now() + env.LLM_TOTAL_TIMEOUT_MS + 1_000;
+    const findSpy = jest
+      .spyOn(turnsService, 'findByClientRequestId')
+      .mockImplementationOnce(async (...input) => {
+        const result = await originalFind(...input);
+        dateSpy.mockReturnValue(expiredNow);
+        return result;
+      });
+
+    try {
+      await expect(
+        orchestration.preparePersistentTurn(
+          principal,
+          { clientRequestId, conversationId: conversation.id, message: 'synthetic-replay' },
+          new AbortController().signal,
+          BASE_NOW,
+        ),
+      ).rejects.toMatchObject({ code: 'AI_PROVIDER_TIMEOUT', statusCode: 504 });
+    } finally {
+      findSpy.mockRestore();
+      dateSpy.mockRestore();
+    }
+
+    expect(provider.streamCalls).toBe(1);
+    expect(await quotaService.getUsage(userId, BASE_NOW)).toMatchObject({ usedCount: 1 });
+  });
+
+  it('does not return claim-race replay metadata after the execution deadline passes', async () => {
+    const userId = await createUser();
+    const conversation = await conversationsService.create(userId, BASE_NOW);
+    const clientRequestId = randomUUID();
+    const principal = { userId, sessionId: randomUUID() };
+    const first = await orchestration.preparePersistentTurn(
+      principal,
+      { clientRequestId, conversationId: conversation.id, message: 'synthetic-first-request' },
+      new AbortController().signal,
+      BASE_NOW,
+    );
+    await collect(first);
+
+    const originalClaim = turnsService.claim.bind(turnsService);
+    const dateSpy = jest.spyOn(Date, 'now');
+    const expiredNow = Date.now() + env.LLM_TOTAL_TIMEOUT_MS + 1_000;
+    const findSpy = jest.spyOn(turnsService, 'findByClientRequestId').mockResolvedValueOnce(null);
+    const claimSpy = jest.spyOn(turnsService, 'claim').mockImplementationOnce(async (...input) => {
+      const result = await originalClaim(...input);
+      expect(result.created).toBe(false);
+      dateSpy.mockReturnValue(expiredNow);
+      return result;
+    });
+
+    try {
+      await expect(
+        orchestration.preparePersistentTurn(
+          principal,
+          { clientRequestId, conversationId: conversation.id, message: 'synthetic-race-replay' },
+          new AbortController().signal,
+          BASE_NOW,
+        ),
+      ).rejects.toMatchObject({ code: 'AI_PROVIDER_TIMEOUT', statusCode: 504 });
+    } finally {
+      claimSpy.mockRestore();
+      findSpy.mockRestore();
+      dateSpy.mockRestore();
+    }
+
+    expect(provider.streamCalls).toBe(1);
+    expect(await quotaService.getUsage(userId, BASE_NOW)).toMatchObject({ usedCount: 1 });
+  });
+
   it('rejects replay metadata when the supplied original conversation does not match', async () => {
     const userId = await createUser();
     const original = await conversationsService.create(userId, BASE_NOW);
