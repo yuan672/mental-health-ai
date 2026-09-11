@@ -12,18 +12,21 @@ import {
   sessions,
   users,
 } from '@mental-health/database';
-import { type INestApplication } from '@nestjs/common';
+import { Injectable, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { resolve } from 'node:path';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { hashSessionToken } from '../src/auth/sessions.service';
 import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
+import { decodeOpaqueCursor, encodeOpaqueCursor } from '../src/common/pagination/opaque-cursor';
 import { DatabaseService } from '../src/database/database.service';
+import { MoodRepository } from '../src/mood/mood.repository';
 import { MoodService } from '../src/mood/mood.service';
 import {
   createMoodEntryResponseSchema,
   moodCreationStatusResponseSchema,
+  moodHistoryCursorSchema,
   moodHistoryResponseSchema,
 } from '../src/mood/mood.schemas';
 import { AuditLogRepository } from '../src/safety/audit/audit-log.repository';
@@ -41,11 +44,63 @@ type AuthContext = Readonly<{
   verifiedAt: Date;
 }>;
 
+type Deferred = Readonly<{
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+}>;
+
+function createDeferred(): Deferred {
+  let resolve!: () => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+async function withTimeout<T>(
+  promise: PromiseLike<T>,
+  label: string,
+  timeoutMs = 5_000,
+): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve(promise),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+@Injectable()
+class ObservableMoodRepository extends MoodRepository {
+  private historyEntriesReadHook: (() => Promise<void>) | null = null;
+
+  constructor(audits: AuditLogRepository, database: DatabaseService) {
+    super(audits, database);
+  }
+
+  setHistoryEntriesReadHook(hook: (() => Promise<void>) | null): void {
+    this.historyEntriesReadHook = hook;
+  }
+
+  protected override async afterHistoryEntriesRead(): Promise<void> {
+    await this.historyEntriesReadHook?.();
+  }
+}
+
 describe('Phase 5D-1 Mood and Profile backend integration', () => {
   let app: INestApplication;
   let migrationClient: ReturnType<typeof createDatabaseClient>;
   let database: DatabaseService;
   let moodService: MoodService;
+  let moodRepository: ObservableMoodRepository;
   let audits: AuditLogRepository;
 
   beforeAll(async () => {
@@ -64,13 +119,17 @@ describe('Phase 5D-1 Mood and Profile backend integration', () => {
       migrationsFolder: resolve(process.cwd(), '../../database/migrations'),
     });
 
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(MoodRepository)
+      .useClass(ObservableMoodRepository)
+      .compile();
     app = moduleRef.createNestApplication();
     app.useLogger(false);
     app.useGlobalFilters(new AppExceptionFilter());
     await app.init();
     database = moduleRef.get(DatabaseService);
     moodService = moduleRef.get(MoodService);
+    moodRepository = moduleRef.get(MoodRepository);
     audits = moduleRef.get(AuditLogRepository);
   }, 60_000);
 
@@ -143,6 +202,25 @@ describe('Phase 5D-1 Mood and Profile backend integration', () => {
       .set('Cookie', auth.cookie)
       .set('Origin', WEB_ORIGIN)
       .set('x-csrf-token', auth.csrfToken);
+  }
+
+  async function waitForBlockedMoodQuery(label: string): Promise<void> {
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      const waiting = await migrationClient.pool.query<{ found: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1
+           FROM pg_stat_activity
+           WHERE datname = current_database()
+             AND pid <> pg_backend_pid()
+             AND wait_event_type = 'Lock'
+             AND query ILIKE '%mood_entries%'
+         ) AS found`,
+      );
+      if (waiting.rows[0]?.found) return;
+      await new Promise<void>((resolveImmediate) => setImmediate(resolveImmediate));
+    }
+    throw new Error(`${label}: no blocked Mood query was observed`);
   }
 
   it('requires Session and CSRF while remaining independent of AI Consent and quota', async () => {
@@ -431,6 +509,88 @@ describe('Phase 5D-1 Mood and Profile backend integration', () => {
     expect(thirtyDays.data.period).toEqual({ startDate: '2026-08-13', endDate: '2026-09-11' });
   });
 
+  it('rejects forged Mood windows before repository access', async () => {
+    const auth = await createAuthContext();
+    const now = new Date();
+    for (const createdAt of [new Date(now.getTime() - 60_000), new Date(now.getTime() - 120_000)]) {
+      await database.database.insert(moodEntries).values({
+        id: randomUUID(),
+        userId: auth.userId,
+        clientRequestId: randomUUID(),
+        moodScore: 3,
+        emotion: null,
+        note: null,
+        stateRevision: 1,
+        createdAt,
+        updatedAt: createdAt,
+      });
+    }
+
+    const first = moodHistoryResponseSchema.parse(
+      await moodService.list(auth.userId, { days: 7, limit: 1 }, now),
+    );
+    const validCursor = decodeOpaqueCursor(
+      first.data.nextCursor ?? undefined,
+      moodHistoryCursorSchema,
+    );
+    expect(validCursor).not.toBeNull();
+
+    const afterMidnight = moodHistoryResponseSchema.parse(
+      await moodService.list(
+        auth.userId,
+        { days: 7, limit: 1, cursor: first.data.nextCursor ?? undefined },
+        new Date(now.getTime() + DAY_MS),
+      ),
+    );
+    expect(afterMidnight.data.period).toEqual(first.data.period);
+    await get(
+      auth,
+      `/mood-entries?days=7&limit=1&cursor=${encodeURIComponent(first.data.nextCursor!)}`,
+    ).expect(200);
+
+    const cursor = validCursor!;
+    const encode = (overrides: Partial<typeof cursor>): string =>
+      encodeOpaqueCursor({ ...cursor, ...overrides });
+    const invalidCursors = [
+      encode({
+        rangeStart: new Date(new Date(cursor.rangeStart).getTime() - 359 * DAY_MS).toISOString(),
+      }),
+      encode({
+        rangeStart: new Date(new Date(cursor.rangeStart).getTime() + 60 * 60 * 1_000).toISOString(),
+        rangeEnd: new Date(new Date(cursor.rangeEnd).getTime() + 60 * 60 * 1_000).toISOString(),
+      }),
+      encode({ createdAtCeiling: cursor.rangeEnd }),
+      encode({
+        rangeStart: new Date(new Date(cursor.rangeStart).getTime() + DAY_MS).toISOString(),
+        rangeEnd: new Date(new Date(cursor.rangeEnd).getTime() + DAY_MS).toISOString(),
+        createdAtCeiling: new Date(
+          new Date(cursor.createdAtCeiling).getTime() + DAY_MS,
+        ).toISOString(),
+        createdAt: new Date(new Date(cursor.createdAt).getTime() + DAY_MS).toISOString(),
+      }),
+      encode({
+        createdAt: new Date(new Date(cursor.rangeStart).getTime() - 1).toISOString(),
+      }),
+      encode({
+        createdAt: new Date(new Date(cursor.createdAtCeiling).getTime() + 1).toISOString(),
+      }),
+      encode({ days: 30 }),
+    ];
+
+    const repositorySpy = jest.spyOn(moodRepository, 'listWithTrend');
+    try {
+      for (const invalidCursor of invalidCursors) {
+        await get(
+          auth,
+          `/mood-entries?days=7&limit=1&cursor=${encodeURIComponent(invalidCursor)}`,
+        ).expect(400);
+      }
+      expect(repositorySpy).not.toHaveBeenCalled();
+    } finally {
+      repositorySpy.mockRestore();
+    }
+  });
+
   it('applies optimistic revision and owner isolation to update and delete', async () => {
     const auth = await createAuthContext();
     const other = await createAuthContext();
@@ -582,7 +742,250 @@ describe('Phase 5D-1 Mood and Profile backend integration', () => {
     expect(remaining[0]?.value).toBe(2);
   });
 
-  it('defines delete-all ordering with an explicit database-operation barrier', async () => {
+  it('excludes an inserted but uncommitted create from the delete-all visible set', async () => {
+    const auth = await createAuthContext();
+    const id = randomUUID();
+    const clientRequestId = randomUUID();
+    const creator = await migrationClient.pool.connect();
+    try {
+      await creator.query('BEGIN');
+      const timestamp = new Date();
+      await creator.query(
+        `INSERT INTO mood_entries
+         (id, user_id, client_request_id, mood_score, emotion, note,
+          state_revision, created_at, updated_at)
+         VALUES ($1, $2, $3, 3, NULL, NULL, 1, $4, $4)`,
+        [id, auth.userId, clientRequestId, timestamp],
+      );
+
+      const deleted = await withTimeout(
+        deleteRequest(auth, '/mood-entries'),
+        'delete-all while create is uncommitted',
+      );
+      expect(deleted.status).toBe(200);
+      expect(deleted.body.data.entryCount).toBe(0);
+      const beforeCommitAudits = await database.database
+        .select()
+        .from(auditLogs)
+        .where(eq(auditLogs.action, 'mood_history_deleted'));
+      expect(beforeCommitAudits.filter((row) => row.actorId === auth.userId)).toHaveLength(0);
+
+      await creator.query('COMMIT');
+      const status = await get(auth, `/mood-entries/creation-status/${clientRequestId}`).expect(
+        200,
+      );
+      expect(status.body.data).toEqual(
+        expect.objectContaining({ status: 'present', entry: expect.objectContaining({ id }) }),
+      );
+      const remaining = await database.database
+        .select({ value: count() })
+        .from(moodEntries)
+        .where(eq(moodEntries.userId, auth.userId));
+      expect(remaining[0]?.value).toBe(1);
+    } finally {
+      await creator.query('ROLLBACK').catch(() => undefined);
+      creator.release();
+    }
+  });
+
+  it('keeps update/delete ordering revision-safe in both real lock orders', async () => {
+    const auth = await createAuthContext();
+    const updateFirst = await post(auth, '/mood-entries')
+      .send({ clientRequestId: randomUUID(), moodScore: 2, emotion: null, note: null })
+      .expect(201);
+    const updateFirstId = updateFirst.body.data.entry.id as string;
+    const updater = await migrationClient.pool.connect();
+    try {
+      await updater.query('BEGIN');
+      await updater.query(
+        `UPDATE mood_entries
+         SET mood_score = 4, state_revision = 2, updated_at = NOW()
+         WHERE id = $1 AND user_id = $2 AND state_revision = 1`,
+        [updateFirstId, auth.userId],
+      );
+      const losingDelete = withTimeout(
+        deleteRequest(auth, `/mood-entries/${updateFirstId}`)
+          .send({ expectedRevision: 1 })
+          .then((response) => response),
+        'delete waiting behind update',
+      );
+      await waitForBlockedMoodQuery('delete waiting behind update');
+      await updater.query('COMMIT');
+      const deleteResponse = await losingDelete;
+      expect(deleteResponse.status).toBe(409);
+      expect(deleteResponse.body.error.code).toBe('MOOD_STATE_CHANGED');
+    } finally {
+      await updater.query('ROLLBACK').catch(() => undefined);
+      updater.release();
+    }
+
+    const updated = await get(auth, `/mood-entries/${updateFirstId}`).expect(200);
+    expect(updated.body.data.entry).toEqual(
+      expect.objectContaining({ moodScore: 4, stateRevision: 2 }),
+    );
+    const failedDeleteAudits = await database.database
+      .select()
+      .from(auditLogs)
+      .where(eq(auditLogs.idempotencyKey, `mood_entry_deleted:${auth.userId}:${updateFirstId}`));
+    expect(failedDeleteAudits).toHaveLength(0);
+
+    const deleteFirst = await post(auth, '/mood-entries')
+      .send({ clientRequestId: randomUUID(), moodScore: 3, emotion: null, note: null })
+      .expect(201);
+    const deleteFirstId = deleteFirst.body.data.entry.id as string;
+    const auditReached = createDeferred();
+    const allowDeleteCommit = createDeferred();
+    const originalAppend = audits.appendWithinTransaction.bind(audits);
+    const auditSpy = jest
+      .spyOn(audits, 'appendWithinTransaction')
+      .mockImplementationOnce(async (transaction, input) => {
+        await originalAppend(transaction, input);
+        auditReached.resolve();
+        await allowDeleteCommit.promise;
+      });
+    try {
+      const winningDelete = withTimeout(
+        deleteRequest(auth, `/mood-entries/${deleteFirstId}`)
+          .send({ expectedRevision: 1 })
+          .then((response) => response),
+        'delete-first request',
+      );
+      await withTimeout(auditReached.promise, 'delete audit barrier');
+      const losingUpdate = withTimeout(
+        patchRequest(auth, `/mood-entries/${deleteFirstId}`)
+          .send({ expectedRevision: 1, moodScore: 5, emotion: null, note: null })
+          .then((response) => response),
+        'update waiting behind delete',
+      );
+      await waitForBlockedMoodQuery('update waiting behind delete');
+      allowDeleteCommit.resolve();
+      const [deleteResponse, updateResponse] = await Promise.all([winningDelete, losingUpdate]);
+      expect(deleteResponse.status).toBe(200);
+      expect(updateResponse.status).toBe(404);
+      await get(auth, `/mood-entries/${deleteFirstId}`).expect(404);
+    } finally {
+      allowDeleteCommit.resolve();
+      auditSpy.mockRestore();
+    }
+    const successfulDeleteAudits = await database.database
+      .select()
+      .from(auditLogs)
+      .where(eq(auditLogs.idempotencyKey, `mood_entry_deleted:${auth.userId}:${deleteFirstId}`));
+    expect(successfulDeleteAudits).toHaveLength(1);
+  });
+
+  it('does not let an update revive rows deleted by a real overlapping delete-all', async () => {
+    const auth = await createAuthContext();
+    const target = await post(auth, '/mood-entries')
+      .send({ clientRequestId: randomUUID(), moodScore: 2, emotion: null, note: null })
+      .expect(201);
+    await post(auth, '/mood-entries')
+      .send({ clientRequestId: randomUUID(), moodScore: 4, emotion: null, note: null })
+      .expect(201);
+    const targetId = target.body.data.entry.id as string;
+    const auditReached = createDeferred();
+    const allowDeleteCommit = createDeferred();
+    const originalAppend = audits.appendWithinTransaction.bind(audits);
+    const auditSpy = jest
+      .spyOn(audits, 'appendWithinTransaction')
+      .mockImplementationOnce(async (transaction, input) => {
+        await originalAppend(transaction, input);
+        auditReached.resolve();
+        await allowDeleteCommit.promise;
+      });
+    try {
+      const deleteAll = withTimeout(
+        deleteRequest(auth, '/mood-entries').then((response) => response),
+        'overlapping delete-all',
+      );
+      await withTimeout(auditReached.promise, 'delete-all audit barrier');
+      const update = withTimeout(
+        patchRequest(auth, `/mood-entries/${targetId}`)
+          .send({ expectedRevision: 1, moodScore: 5, emotion: null, note: null })
+          .then((response) => response),
+        'update waiting behind delete-all',
+      );
+      await waitForBlockedMoodQuery('update waiting behind delete-all');
+      allowDeleteCommit.resolve();
+      const [deleteResponse, updateResponse] = await Promise.all([deleteAll, update]);
+      expect(deleteResponse.status).toBe(200);
+      expect(deleteResponse.body.data.entryCount).toBe(2);
+      expect(updateResponse.status).toBe(404);
+    } finally {
+      allowDeleteCommit.resolve();
+      auditSpy.mockRestore();
+    }
+
+    const remaining = await database.database
+      .select({ value: count() })
+      .from(moodEntries)
+      .where(eq(moodEntries.userId, auth.userId));
+    expect(remaining[0]?.value).toBe(0);
+    const historyAudits = await database.database
+      .select()
+      .from(auditLogs)
+      .where(eq(auditLogs.action, 'mood_history_deleted'));
+    const relevant = historyAudits.filter((row) => row.actorId === auth.userId);
+    expect(relevant).toHaveLength(1);
+    expect(relevant[0]?.safeMetadata).toEqual({ entryCount: 2 });
+  });
+
+  it('reads entries and trend from one repeatable-read view across a concurrent edit', async () => {
+    const auth = await createAuthContext();
+    const createdAt = new Date('2026-09-11T01:00:00.000Z');
+    const [entry] = await database.database
+      .insert(moodEntries)
+      .values({
+        id: randomUUID(),
+        userId: auth.userId,
+        clientRequestId: randomUUID(),
+        moodScore: 2,
+        emotion: null,
+        note: null,
+        stateRevision: 1,
+        createdAt,
+        updatedAt: createdAt,
+      })
+      .returning();
+    const entriesRead = createDeferred();
+    const allowTrendRead = createDeferred();
+    moodRepository.setHistoryEntriesReadHook(async () => {
+      moodRepository.setHistoryEntriesReadHook(null);
+      entriesRead.resolve();
+      await allowTrendRead.promise;
+    });
+    try {
+      const history = withTimeout(
+        moodService.list(auth.userId, { days: 7, limit: 20 }, new Date('2026-09-11T12:00:00Z')),
+        'consistent Mood history read',
+      );
+      await withTimeout(entriesRead.promise, 'entries query barrier');
+      await patchRequest(auth, `/mood-entries/${entry!.id}`)
+        .send({ expectedRevision: 1, moodScore: 5, emotion: null, note: null })
+        .expect(200);
+      allowTrendRead.resolve();
+      const first = moodHistoryResponseSchema.parse(await history);
+      expect(first.data.entries[0]).toEqual(expect.objectContaining({ moodScore: 2 }));
+      expect(first.data.dailyTrend).toEqual([
+        { localDate: '2026-09-11', entryCount: 1, averageMoodScore: 2 },
+      ]);
+    } finally {
+      allowTrendRead.resolve();
+      moodRepository.setHistoryEntriesReadHook(null);
+    }
+
+    const refreshed = moodHistoryResponseSchema.parse(
+      await moodService.list(auth.userId, { days: 7, limit: 20 }, new Date('2026-09-11T12:00:00Z')),
+    );
+    expect(refreshed.data.entries[0]).toEqual(
+      expect.objectContaining({ moodScore: 5, stateRevision: 2 }),
+    );
+    expect(refreshed.data.dailyTrend).toEqual([
+      { localDate: '2026-09-11', entryCount: 1, averageMoodScore: 5 },
+    ]);
+  });
+
+  it('defines sequential delete-all ordering around a later committed create', async () => {
     const auth = await createAuthContext();
     const lateId = randomUUID();
     const lateClientRequestId = randomUUID();

@@ -43,4 +43,20 @@ export class MoodDateRangePolicy {
   localDate(timestamp: Date): string {
     return localDate(timestamp);
   }
+
+  restoreFrozenRange(input: {
+    days: MoodHistoryDays;
+    start: Date;
+    end: Date;
+    createdAtCeiling: Date;
+  }): MoodDateRange | null {
+    const expected = this.create(input.createdAtCeiling, input.days);
+    if (
+      input.start.getTime() !== expected.start.getTime() ||
+      input.end.getTime() !== expected.end.getTime()
+    ) {
+      return null;
+    }
+    return expected;
+  }
 }

@@ -35,6 +35,10 @@ export class MoodRepository {
     private readonly database: DatabaseService,
   ) {}
 
+  protected async afterHistoryEntriesRead(): Promise<void> {
+    return Promise.resolve();
+  }
+
   async create(input: MoodEntryRecord): Promise<{
     entry: MoodEntryRecord;
     disposition: 'created' | 'existing';
@@ -102,6 +106,7 @@ export class MoodRepository {
           .where(and(commonPredicate, cursorPredicate))
           .orderBy(desc(moodEntries.createdAt), desc(moodEntries.id))
           .limit(input.limit);
+        await this.afterHistoryEntriesRead();
 
         const dateExpression = sql<string>`to_char(${moodEntries.createdAt} AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD')`;
         const trend = await transaction

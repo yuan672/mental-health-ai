@@ -103,21 +103,19 @@ export class MoodService {
       throw new ValidationError('分页游标与查询范围不一致');
     }
 
-    const range: MoodDateRange = cursor
-      ? {
+    const range: MoodDateRange | null = cursor
+      ? this.dateRangePolicy.restoreFrozenRange({
           days: cursor.days,
           start: new Date(cursor.rangeStart),
           end: new Date(cursor.rangeEnd),
           createdAtCeiling: new Date(cursor.createdAtCeiling),
-          startDate: this.dateRangePolicy.localDate(new Date(cursor.rangeStart)),
-          endDate: this.dateRangePolicy.localDate(
-            new Date(new Date(cursor.rangeEnd).getTime() - 1),
-          ),
-        }
+        })
       : this.dateRangePolicy.create(now, query.days);
     if (
+      !range ||
       range.start.getTime() >= range.end.getTime() ||
       range.createdAtCeiling.getTime() < range.start.getTime() ||
+      range.createdAtCeiling.getTime() > now.getTime() ||
       range.createdAtCeiling.getTime() >= range.end.getTime() ||
       (cursor &&
         (new Date(cursor.createdAt).getTime() < range.start.getTime() ||

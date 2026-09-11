@@ -71,7 +71,10 @@ tombstone. Idempotency is deliberately bounded to the row's lifetime.
 `days` is exactly 7 or 30. Asia/Shanghai defines the local calendar window while
 all timestamps remain UTC. Results are ordered by `(created_at, id)` descending.
 The opaque cursor fixes the selected range and a first-page creation-time ceiling,
-so crossing midnight does not change that cursor's date window.
+so crossing midnight does not change that cursor's date window. The server derives
+the exact seven- or thirty-day Asia/Shanghai window again from that ceiling and
+rejects enlarged, shifted, future-ceiling, or internally inconsistent cursors with
+`400 VALIDATION_ERROR` before running the Mood history query.
 
 Each response reads its entry page and the complete window trend from one short
 repeatable-read database view. Separate pages are not a historical snapshot:
