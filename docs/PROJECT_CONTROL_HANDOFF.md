@@ -36,8 +36,8 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   PR #30, its backend implementation is engineering complete and merged through
   PR #31, and the Batch 4 Audit Read/Persistent AI Turn metadata design is
   accepted; Batch 4A Audit Read backend implementation is merged through PR #33,
-  Batch 4B Persistent AI Turn metadata backend implementation is in review in PR
-  #34, and no Admin UI is included
+  and Batch 4B Persistent AI Turn metadata backend implementation is engineering
+  complete and merged through PR #34; no Admin UI is included
 
 ## Current Production State
 
@@ -88,6 +88,8 @@ safety, or validation for clinical use.
   staff-only Knowledge Management backend
 - [PR #33](https://github.com/yuan672/mental-health-ai/pull/33) — Admin Batch 4A
   bounded Audit Read backend
+- [PR #34](https://github.com/yuan672/mental-health-ai/pull/34) — Admin Batch 4B
+  bounded Persistent AI Turn metadata backend
 
 ## Current Feature Status
 
@@ -146,10 +148,9 @@ safety, or validation for clinical use.
   required access Audit, bounded pagination, and snapshot-ordering tests without a
   Schema change. Review hardening also bounds special unknown failure codes, masks
   the complete detail-route family in operational logs, and establishes one
-  transaction-local observation time after Staff authorization. Its implementation
-  is in review in
-  [PR #34](https://github.com/yuan672/mental-health-ai/pull/34). All Admin UI and
-  production enablement remain outside completed scope.
+  transaction-local observation time after Staff authorization. It is merged
+  through [PR #34](https://github.com/yuan672/mental-health-ai/pull/34). All Admin
+  UI and production enablement remain outside completed scope.
 
 The existing Web is not a design constraint for the replacement frontend. New page,
 style, component, interaction, and Knowledge AI-B reducer work is paused in this
@@ -217,13 +218,13 @@ controls.
 
 ## Immediate Next Step
 
-Review the Phase 6 Batch 4B Persistent AI Turn metadata backend implementation in
-[PR #34](https://github.com/yuan672/mental-health-ai/pull/34) against
-`docs/architecture/phase-6-admin-audit-quality-read-design.md` and
-`docs/api/admin-audit-quality.md`. Knowledge AI-B remains pending for the
-replacement frontend; keep augmentation disabled by default and retain the v2
-reader plus v1 history guard. The three candidate articles remain unverified and
-unpublished, and real-model evaluation remains separate work.
+Use `docs/backend-integration-handoff.md` as the backend capability and protocol
+index for the user-owned replacement frontend. Knowledge AI-B and every Admin UI
+remain pending client work; keep augmentation and Admin HTTP disabled by default,
+and retain the v2 reader plus v1 history guard. No unresolved implementation gap
+has been identified in the accepted, merged backend batches. The three candidate
+articles remain unverified and unpublished, and production policy/content review
+and real-model evaluation remain separate work.
 
 ## Source of Truth
 
