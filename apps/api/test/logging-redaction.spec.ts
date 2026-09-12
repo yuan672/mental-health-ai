@@ -45,6 +45,7 @@ describe('sensitive logging redaction', () => {
       'knowledge-snippet-secret',
       'knowledge-reference-secret',
       'knowledge-source-url-secret',
+      'staff-initial-password-secret',
     ];
     logger.info({
       req: {
@@ -79,6 +80,7 @@ describe('sensitive logging redaction', () => {
       knowledgeSnippet: sensitiveValues[19],
       knowledgeReferences: [{ title: sensitiveValues[20] }],
       sourceUrl: sensitiveValues[21],
+      initialPassword: sensitiveValues[22],
     });
 
     for (const sensitiveValue of [...sensitiveValues, 'sensitive body', 'private-context-id']) {
@@ -109,5 +111,10 @@ describe('sensitive logging redaction', () => {
       expect(safeOperationalPath(unsafePath)).not.toContain(contextId);
     }
     expect(safeOperationalPath('/conversations?cursor=private')).toBe('/conversations');
+    const staffId = '22222222-2222-4222-8222-222222222222';
+    expect(safeOperationalPath(`/admin/staff-principals/${staffId}/roles`)).toBe(
+      '/admin/staff-principals/:id/roles',
+    );
+    expect(safeOperationalPath(`/admin/staff-principals/${staffId}/roles`)).not.toContain(staffId);
   });
 });

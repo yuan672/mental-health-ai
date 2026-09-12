@@ -64,6 +64,13 @@
       "when": 1789129853897,
       "tag": "0008_gorgeous_gladiator",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789172234816,
+      "tag": "0009_flawless_groot",
+      "breakpoints": true
     }
   ]
 }

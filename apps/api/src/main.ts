@@ -10,7 +10,9 @@ async function bootstrap(): Promise<void> {
   app.useLogger(app.get(Logger));
   app.useGlobalFilters(new AppExceptionFilter());
   app.enableCors({
-    origin: env.WEB_ORIGINS,
+    origin: [
+      ...new Set([...env.WEB_ORIGINS, ...(env.ADMIN_AUTH_ENABLED ? env.ADMIN_WEB_ORIGINS : [])]),
+    ],
     credentials: true,
     exposedHeaders: ['X-MH-Knowledge-References'],
   });

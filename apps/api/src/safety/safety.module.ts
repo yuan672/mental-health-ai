@@ -1,4 +1,7 @@
 import { Module } from '@nestjs/common';
+import { AdminModule } from '../admin/admin.module';
+import { DatabaseStaffSafetyReviewerAuthorizer } from '../admin/staff-safety-reviewer-authorizer';
+import { env } from '../config/env';
 import { ConservativeTokenEstimator } from '../ai/context/token-estimator';
 import { IncognitoRuntimeModule } from '../ai/incognito/incognito-runtime.module';
 import { LlmProviderModule } from '../ai/providers/llm-provider.module';
@@ -42,6 +45,7 @@ import { TrustedSafetyTemplateRegistry } from './templates/trusted-safety-templa
 @Module({
   imports: [
     ConversationModule,
+    AdminModule,
     ConsentsModule,
     AuditModule,
     IncognitoRuntimeModule,
@@ -78,7 +82,11 @@ import { TrustedSafetyTemplateRegistry } from './templates/trusted-safety-templa
     { provide: POST_GENERATION_SAFETY_GATE, useExisting: RealPostGenerationSafetyGate },
     {
       provide: SAFETY_REVIEWER_AUTHORIZER,
-      useExisting: DefaultDenySafetyReviewerAuthorizer,
+      inject: [DefaultDenySafetyReviewerAuthorizer, DatabaseStaffSafetyReviewerAuthorizer],
+      useFactory: (
+        fallback: DefaultDenySafetyReviewerAuthorizer,
+        installed: DatabaseStaffSafetyReviewerAuthorizer,
+      ) => (env.ADMIN_AUTH_ENABLED ? installed : fallback),
     },
   ],
   exports: [

@@ -613,12 +613,8 @@ enablement. No batch depends on an Admin UI.
 - with the first create held before commit, a status read may return missing; after
   commit-response loss, the same read returns the current principal, and neither
   observation is described as an immutable create receipt or cancellation proof;
-- concurrent creation using the same ID/email produces one principal, one
-  credential and one creation Audit; a different ID for the same email or a reused
-  ID for another email returns 409 without residue;
-- after a deliberately lost create response, a bounded status read can observe the
-  current row but missing does not prove rollback; a same-snapshot retry never
-  overwrites an existing password hash;
+  a same-ID/email retry returns current state and never overwrites the existing
+  password hash;
 - two concurrent grants of the same role result in one active grant;
 - two different mutations from one revision produce one applied result and one 409;
 - role revoke/disable plus session revocation plus Audit either all commit or all

@@ -5,6 +5,7 @@ export type LoginFailureReason = 'invalid_credentials';
 export type RegistrationFailureReason =
   'age_not_verified' | 'age_provider_unavailable' | 'duplicate_identifier' | 'transaction_failed';
 export type CsrfRejectionReason = 'untrusted_origin' | 'missing_token' | 'token_mismatch';
+export type StaffLoginFailureReason = 'invalid_credentials' | 'disabled' | 'admin_disabled';
 
 @Injectable()
 export class SecurityLoggingService {
@@ -35,5 +36,31 @@ export class SecurityLoggingService {
 
   csrfRejected(reason: CsrfRejectionReason): void {
     this.logger.warn({ event: 'csrf_rejected', reason, eventCategory: 'security' });
+  }
+
+  staffLoginSucceeded(staffPrincipalId: string, sessionId: string): void {
+    this.logger.info({
+      event: 'staff_login_succeeded',
+      staffPrincipalId,
+      sessionId,
+      eventCategory: 'security',
+    });
+  }
+
+  staffLoginFailed(reason: StaffLoginFailureReason): void {
+    this.logger.warn({ event: 'staff_login_failed', reason, eventCategory: 'security' });
+  }
+
+  staffSessionRevoked(staffPrincipalId: string, sessionId: string): void {
+    this.logger.info({
+      event: 'staff_session_revoked',
+      staffPrincipalId,
+      sessionId,
+      eventCategory: 'security',
+    });
+  }
+
+  staffCsrfRejected(reason: CsrfRejectionReason): void {
+    this.logger.warn({ event: 'staff_csrf_rejected', reason, eventCategory: 'security' });
   }
 }

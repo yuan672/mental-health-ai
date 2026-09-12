@@ -33,6 +33,16 @@ const environmentSchema = z
       .default('http://localhost:5173')
       .transform((value) => value.split(',').map((origin) => origin.trim()))
       .pipe(z.array(z.string().url()).min(1)),
+    ADMIN_AUTH_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+    ADMIN_WEB_ORIGINS: z
+      .string()
+      .default('http://localhost:5174')
+      .transform((value) => value.split(',').map((origin) => origin.trim()))
+      .pipe(z.array(z.string().url()).min(1)),
+    STAFF_SESSION_TTL_SECONDS: z.coerce.number().int().min(300).max(86_400).default(28_800),
     SESSION_TTL_SECONDS: z.coerce
       .number()
       .int()
@@ -115,6 +125,14 @@ const environmentSchema = z
       .transform((value) => value === 'true'),
   })
   .superRefine((value, context) => {
+    if (value.ADMIN_AUTH_ENABLED && value.APP_ENV !== 'development' && value.APP_ENV !== 'test') {
+      context.addIssue({
+        code: 'custom',
+        path: ['ADMIN_AUTH_ENABLED'],
+        message:
+          'Admin authentication is restricted to development and test until production prerequisites are approved',
+      });
+    }
     if (
       value.AGE_VERIFICATION_PROVIDER === 'mock' &&
       value.APP_ENV !== 'development' &&

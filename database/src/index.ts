@@ -51,6 +51,11 @@ export {
   riskLevel,
   schema,
   sessions,
+  staffPasswordCredentials,
+  staffPrincipalStatus,
+  staffPrincipals,
+  staffRoleGrants,
+  staffSessions,
   users,
   type AiTurnStatus,
   type ConsentStatus,
@@ -65,4 +70,5 @@ export {
   type KnowledgeContentOrigin,
   type KnowledgePublicationStatus,
   type KnowledgeReviewStatus,
+  type StaffPrincipalStatus,
 } from './schema.js';

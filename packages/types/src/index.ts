@@ -5,6 +5,7 @@ export * from './consents.js';
 export * from './knowledge.js';
 export * from './knowledge-references.js';
 export * from './mood.js';
+export * from './admin.js';
 
 export type AppEnvironment = 'development' | 'staging' | 'production';
 
