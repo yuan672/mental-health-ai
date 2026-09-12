@@ -33,8 +33,10 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   repair is merged through PR #28; Batch 2 metadata-only Risk Event and Human
   Review Queue backend implementation is engineering complete and merged through
   PR #29; Batch 3 staff-only Knowledge Management backend contract is accepted in
-  PR #30, and its backend implementation is delivered in Draft PR #31 but remains
-  unmerged; no Admin UI is included
+  PR #30, its backend implementation is engineering complete and merged through
+  PR #31, and the Batch 4 Audit Read/Persistent AI Turn metadata design is
+  accepted; Batch 4A and 4B implementation have not started, and no Admin UI is
+  included
 
 ## Current Production State
 
@@ -81,6 +83,8 @@ safety, or validation for clinical use.
   output-classification cancellation-test repair
 - [PR #29](https://github.com/yuan672/mental-health-ai/pull/29) — Admin Batch 2
   metadata-only Risk Event and Human Review Queue backend
+- [PR #31](https://github.com/yuan672/mental-health-ai/pull/31) — Admin Batch 3
+  staff-only Knowledge Management backend
 
 ## Current Feature Status
 
@@ -120,17 +124,19 @@ safety, or validation for clinical use.
   snapshot; Staging/Production also reject synthetic historical evidence without
   deleting or rewriting it. No content publication, real-model evaluation, or AI
   enablement is authorized.
-  Admin Batch 1 identity/authorization and Batch 2 metadata-only safety review are
-  engineering complete. Draft PR #31 delivers the Batch 3 Knowledge Management
-  backend implementation for review and remains unmerged. It adds exact-version
+  Admin Batch 1 identity/authorization, Batch 2 metadata-only safety review, and
+  Batch 3 Knowledge Management backend are engineering complete. PR #31 adds
+  exact-version
   curated draft, source-review, publication/retirement, opaque candidate revision,
   Staff HTTP, transaction-bound Audit, and CLI-order compatibility without an
   Admin UI. Its final-readiness fixes make new-target CLI publication honor every
   unresolved predecessor, serialize source review on the exact evidence row,
   return candidate projections from a short consistent database view, and retain
-  legal restricted-CLI reviewer identity on HTTP no-change responses. General
-  Audit Read, AI Quality, all Admin UI, and production enablement remain outside
-  completed scope.
+  legal restricted-CLI reviewer identity on HTTP no-change responses. The accepted
+  Batch 4 design defines a narrowly allowlisted Audit reader and a Persistent AI
+  Turn execution-metadata reader with no message content, scoring, or real-model
+  evaluation. Batch 4A and 4B implementation, all Admin UI, and production
+  enablement remain outside completed scope.
 
 The existing Web is not a design constraint for the replacement frontend. New page,
 style, component, interaction, and Knowledge AI-B reducer work is paused in this
@@ -198,11 +204,10 @@ controls.
 
 ## Immediate Next Step
 
-Review the delivered Phase 6 Batch 3 staff-only Knowledge Management backend
-against `docs/architecture/phase-6-admin-knowledge-management-design.md` and
-`docs/api/admin-knowledge-management.md`. Do not mark it engineering complete until
-its implementation PR is merged and post-merge CI passes. General Audit Read and AI
-Quality batches remain unimplemented. Knowledge AI-B remains pending for the
+Implement Phase 6 Batch 4A Audit Read against the accepted backend contracts in
+`docs/architecture/phase-6-admin-audit-quality-read-design.md` and
+`docs/api/admin-audit-quality.md`. Persistent AI Turn metadata Batch 4B remains
+unimplemented until separately authorized. Knowledge AI-B remains pending for the
 replacement frontend; keep augmentation disabled by default and retain the v2
 reader plus v1 history guard. The three candidate articles remain unverified and
 unpublished, and real-model evaluation remains separate work.
