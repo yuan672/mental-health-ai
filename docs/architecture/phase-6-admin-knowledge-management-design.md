@@ -118,35 +118,46 @@ Version numbers are positive, sequential, and gap-free per article.
 - Once the highest draft is `source_verified`, a next unverified version may be
   created. The immutable reviewed-but-unpublished version remains historical
   evidence rather than being deleted or edited.
-- A publish target must be the highest `source_verified` candidate, must be newer
-  than the current published version, and must still match its expected revision.
-  A higher unverified draft does not block publishing the latest verified
-  candidate. Once a higher candidate is verified, an older unpublished candidate
-  is no longer publication-eligible.
+- Publication advances in version order. A source-verified version is eligible
+  only when every lower version has already been published/withdrawn or explicitly
+  retired. A higher unverified or verified draft does not make the next eligible
+  predecessor disappear, but it cannot publish before that predecessor is
+  resolved.
 - Publishing a newer eligible version withdraws the current older published
   version atomically. A withdrawn version never becomes active again.
+- A publisher can retire an exact unpublished draft without publishing it. The row
+  becomes `withdrawn`, receives a server-owned `withdrawnAt`, retains its immutable
+  candidate/review evidence, and keeps `publishedAt=null`. This is the safe path
+  when a frozen candidate is found to be wrong: retire it, prepare/review the
+  already allocated next version (or create the next version), then publish that
+  successor. The system never requires publishing known-bad content merely to
+  advance the sequence.
 
 This permits editorial work to continue after a candidate is frozen, while making
-the publication order deterministic without adding a fourth lifecycle state.
+the accepted predecessor-before-successor rule deterministic without adding a
+fourth lifecycle state. The implementation migration must relax only the existing
+withdrawn timestamp check: a withdrawn version always has `withdrawnAt`, while
+`publishedAt` is present only if it was once published. Existing published and
+withdrawn evidence is not rewritten.
 
 ## 5. Workflow transitions
 
-| Current state                     | Command                     | Required condition                                                      | Result                                                             |
-| --------------------------------- | --------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| no exact version                  | create version `N`          | `N = highest + 1`; no highest unverified draft                          | `draft/unverified/curated`, current candidate revision             |
-| exact unverified draft            | create same exact candidate | normalized candidate matches                                            | `no_change`; return current state                                  |
-| unverified draft                  | replace candidate           | exact current `expectedDraftRevision`; target is highest editable draft | atomically replace full candidate and advance revision             |
-| unverified draft                  | source verify               | exact current revision; complete valid curated candidate                | `draft/source_verified`; server sets reviewer and time             |
-| source-verified draft             | source verify again         | exact candidate revision is unchanged                                   | `no_change`; preserve original reviewer/time                       |
-| eligible source-verified draft    | publish                     | target is latest verified candidate and newer than current              | `published`; lower current version becomes `withdrawn`             |
-| exact currently published version | publish again               | no later publication has replaced it                                    | `no_change`; preserve original publish/review evidence             |
-| published version                 | withdraw                    | exact version is current published target                               | `withdrawn`; set server time once                                  |
-| already withdrawn version         | withdraw again              | exact target still exists                                               | `no_change`; preserve original withdrawal time and current version |
+| Current state                       | Command                     | Required condition                                                      | Result                                                             |
+| ----------------------------------- | --------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| no exact version                    | create version `N`          | `N = highest + 1`; no highest unverified draft                          | `draft/unverified/curated`, current candidate revision             |
+| exact existing version              | create same exact candidate | normalized candidate matches                                            | `no_change`; return current state without reversing later state    |
+| unverified draft                    | replace candidate           | exact current `expectedDraftRevision`; target is highest editable draft | atomically replace full candidate and advance revision             |
+| unverified draft                    | source verify               | exact current revision; complete valid curated candidate                | `draft/source_verified`; server sets reviewer and time             |
+| any frozen source-verified version  | source verify again         | exact candidate revision is unchanged                                   | `no_change`; preserve original reviewer/time                       |
+| next eligible source-verified draft | publish                     | all lower versions are resolved; exact revision                         | `published`; lower current version becomes `withdrawn`             |
+| exact currently published version   | publish again               | no later publication has replaced it                                    | `no_change`; preserve original publish/review evidence             |
+| draft or published version          | withdraw/retire             | exact version and current revision                                      | `withdrawn`; set server time once                                  |
+| already withdrawn version           | withdraw again              | exact target and revision still match                                   | `no_change`; preserve original withdrawal time and current version |
 
 All other transitions return a typed conflict. A create retry with changed body or
 sources, an edit against a stale revision, review after editing, publication of a
-stale/older candidate, publication of synthetic content, and reactivation of a
-withdrawn version are rejected.
+stale or out-of-sequence candidate, publication of synthetic content, and
+reactivation of a withdrawn version are rejected.
 
 `professional_reviewed` remains unsupported by this batch. Staff source review can
 produce only `source_verified`, whose meaning remains the narrow ADR-018 source
@@ -162,6 +173,7 @@ The exact request and response shapes are specified in
 | `GET`  | `/admin/knowledge/articles?limit=&cursor=`                                  | bounded workflow directory               |
 | `GET`  | `/admin/knowledge/articles/:articleKey/versions/:version/status`            | authoritative exact-version state        |
 | `POST` | `/admin/knowledge/articles/:articleKey/versions/:version`                   | create the exact next draft candidate    |
+| `GET`  | `/admin/knowledge/articles/:articleKey/versions/:version/draft`             | exact editable draft                     |
 | `PUT`  | `/admin/knowledge/articles/:articleKey/versions/:version/draft`             | atomically replace an editable candidate |
 | `GET`  | `/admin/knowledge/articles/:articleKey/versions/:version/review-candidate`  | exact reviewer candidate                 |
 | `POST` | `/admin/knowledge/articles/:articleKey/versions/:version/source-review`     | verify exact revision                    |
@@ -180,16 +192,20 @@ authenticated Staff context and server clock.
 
 ## 7. Transaction contracts
 
-Authorization is rechecked at the application-service boundary and inside the
-same request before database work. Controllers do not call repositories directly.
+Controller guards perform an early Staff Session check, and every Admin route,
+including GET, first requires an exact trusted `ADMIN_WEB_ORIGINS` Origin. That is
+not the authoritative data authorization. Every protected application service
+opens its own short database transaction and calls the database-backed Staff
+authorizer **inside that transaction** before reading or mutating the protected
+resource. Controllers do not call repositories directly.
 
 ### 7.1 Directory and sensitive candidate reads
 
 ```text
 validate request
-authenticate current Staff Session and current authorization revision
-authorize exact Knowledge permission(s)
+controller performs preliminary Staff Session + trusted Admin Origin checks
 BEGIN short repeatable-read transaction
+  authorize current Staff principal/session/revision and exact permission(s)
   read bounded projection
   append allowlisted read Audit
 COMMIT
@@ -202,13 +218,15 @@ If Audit fails, no candidate/body/source response is returned.
 
 ```text
 validate exact path and full bounded candidate
-authenticate + authorize knowledge:draft_write
+controller performs preliminary Staff Session + Origin + Staff CSRF checks
 BEGIN
+  authorizeWithinTransaction knowledge:draft_write
   lock article identity (create then lock for first version)
   load versions and exact target
-  enforce origin, next-version, editable-draft, and expected-revision rules
-  if exact normalized state already exists: derive no_change
-  else insert or atomically replace body plus complete ordered sources
+  create: compare an existing exact target first; otherwise enforce next-version rules
+  replace: enforce editable state and expected revision before payload comparison
+  derive no_change only under the command-specific ordering above
+  otherwise insert or atomically replace body plus complete ordered sources
   read resulting opaque revision and authoritative state
   append allowlisted staff Audit
 COMMIT
@@ -218,8 +236,9 @@ return current state
 ### 7.3 Verify sources
 
 ```text
-authenticate + authorize knowledge:source_review
+controller performs preliminary Staff Session + Origin + Staff CSRF checks
 BEGIN
+  authorizeWithinTransaction knowledge:source_review
   lock article then exact version
   require curated + draft + unverified + exact expected revision
   load body and ordered sources in the same transaction
@@ -237,8 +256,9 @@ does not assert that the retrying principal performed the original review.
 ### 7.4 Publish or withdraw
 
 ```text
-authenticate + authorize knowledge:publish
+controller performs preliminary Staff Session + Origin + Staff CSRF checks
 BEGIN
+  authorizeWithinTransaction knowledge:publish
   lock article then exact version
   hydrate exact review/source state and enforce sequence/currentness
   apply exact publish or withdrawal transition, or derive no_change
@@ -264,14 +284,31 @@ edit, re-review, or relabel a version already created and verified by the CLI.
 There is no state where publication commits but the required HTTP Audit rolls back,
 or Audit commits while publication rolls back.
 
+The authorization check, protected data operation, and Audit are one short
+transaction. If revocation/disablement commits before the transaction's
+authoritative authorization read, the request is rejected. If the request has
+already completed that authoritative check and a concurrent revocation commits
+afterward, the bounded in-flight transaction may finish under the existing
+ADR-020 boundary. No database lock is held for a browser interaction, and this
+design adds no cross-instance cancellation or whole-request authorization lock.
+
+The directory/status disjunction uses one bounded
+`authorizeAnyWithinTransaction()` check over the three existing Knowledge
+permissions. It loads current Staff state once inside the transaction; it does not
+try three out-of-transaction guards or create a new broad read permission.
+
 ## 8. Retry, conflict, and unknown results
 
 This batch intentionally adds no permanent operation ledger, candidate snapshot,
 content fingerprint, or generic workflow engine.
 
-- Exact same create or replacement against a still matching current candidate can
-  return `no_change`, even if that exact candidate has since been reviewed or
-  published; changed input never overwrites first/current state silently.
+- An exact create retry first checks whether the exact version already exists. If
+  its normalized full candidate matches, it returns current state as `no_change`
+  without reversing later review/publication. A mismatch conflicts.
+- Candidate replacement uses strict optimistic concurrency: require an editable
+  unverified draft and exact current `expectedDraftRevision` before comparing the
+  normalized replacement. Same content at that current revision is `no_change`;
+  any stale revision is 409 even if the current content happens to be identical.
 - A no-change response is current state, not an immutable receipt proving which
   request originally created it.
 - Review, publish, and withdraw retries preserve the original reviewer, review
@@ -294,7 +331,71 @@ No automatic retry follows a 409. Reads may be retried with normal bounded netwo
 policy; mutations are retried only as the same exact target and payload after a
 human chooses to resolve an uncertain result.
 
-## 9. Audit contract
+For example, if `PUT` at revision 5 commits and produces revision 7 but its response
+is lost, retrying the original revision-5 request returns 409. The caller reads the
+exact draft/status and presents current state; it does not receive a fabricated
+receipt for the first request. A deliberate no-op at current revision 7 can return
+`no_change`. If another editor has produced different revision-7 content, the old
+payload is never applied. If review or publication has frozen the candidate, the
+old `PUT` also conflicts even when its payload matches.
+
+The other commands have narrow state-specific retry exceptions:
+
+- create checks exact candidate identity before normal new-version eligibility;
+- source review returns `no_change` only when the stored frozen revision matches
+  `expectedDraftRevision`, preserving the first reviewer/time;
+- publish returns `no_change` only while that exact target is currently published
+  at the requested revision; an already withdrawn target conflicts; and
+- withdraw/retire returns `no_change` for the exact already-withdrawn target and
+  matching revision, preserving the first withdrawal time.
+
+These responses report authoritative current state, not immutable operation
+receipts.
+
+## 9. CLI and HTTP publication compatibility
+
+The accepted ADR-018 version sequence is authoritative: later versions cannot win
+before an unresolved predecessor. Current `publishExisting()` additionally rejects
+an exact target whenever **any** higher version exists. Admin drafts make that
+blanket check too strict because a higher draft must not prevent resolving the
+predecessor. Batch 3 therefore requires a narrow CLI implementation change: replace
+the blanket-higher-version conflict with the same predecessor-resolution rule used
+by HTTP. This aligns the CLI with ADR-018; it does not change manifest trust,
+withdrawn non-reactivation, exact evidence matching, or one-current-version rules.
+
+| Stored state                                 | Exact target         | HTTP result                                                                                       | CLI result after shared-policy refactor                                         |
+| -------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| v1 verified draft; v2 unverified draft       | publish v1           | allowed; v1 is the unresolved predecessor                                                         | allowed only for an exact v1 manifest including matching stored review evidence |
+| same                                         | publish v2           | 409; unverified and out of sequence                                                               | rejected by curated manifest/exact-state rules                                  |
+| v1 and v2 verified drafts; nothing published | publish v1           | allowed; v1 must resolve first                                                                    | same exact-manifest result                                                      |
+| same                                         | publish v2           | 409 until v1 is published or explicitly retired                                                   | same sequence conflict                                                          |
+| v1 published; v2 verified; v3 unverified     | publish v2           | atomically withdraw v1 and publish v2                                                             | same; v3 does not block resolving v2                                            |
+| same                                         | retry publish v1     | `no_change` only while v1 remains current                                                         | existing CLI behavior also returns current v1 before checking higher rows       |
+| a higher version is now published            | retry old publish    | conflict; old target is withdrawn and cannot reactivate                                           | same                                                                            |
+| a higher version is now published            | retry old withdraw   | `no_change` on exact old target; newer current untouched                                          | same                                                                            |
+| CLI and HTTP race on one article             | either exact command | article lock orders them; the second observes the first and applies the same state/identity rules | same shared lock and policy                                                     |
+
+Version allocation remains gap-free (`highest + 1`). First publication/replacement
+eligibility is based on resolved predecessors. Completed-operation retries are
+checked only under the narrow state exceptions above. The CLI still accepts review
+identity/time only from its restricted, schema-validated manifest trust boundary;
+HTTP never accepts those fields.
+
+The current CLI has no Staff Session and emits only a fixed success/failure command
+result; it does not append a Staff Audit row or authenticate a release operator.
+Batch 3 does not silently fabricate a Staff actor for it. Mandatory database Audit
+for future CLI invocations would require a separately approved system/release actor
+identity and credential boundary. That production-operational choice does not
+weaken the Admin HTTP rule: every HTTP read/change/no-change remains transactionally
+audited before its result is returned.
+
+If a frozen predecessor is wrong, `knowledge:publish` retires that exact draft
+without publication. Its body, sources, reviewer evidence, and version remain
+immutable. The correct successor can then pass review and advance normally. This
+uses the existing `withdrawn` lifecycle meaning and needs the timestamp-constraint
+adjustment described in section 4.2, but it does not supersede ADR-018.
+
+## 10. Audit contract
 
 Audit action/resource codes stay application/Zod allowlists rather than PostgreSQL
 enums. Implementation adds only:
@@ -341,7 +442,7 @@ most one applied lifecycle action. Read and `no_change` attempts use a fresh ran
 request-scoped Audit key so the access/retry itself is recorded. No Audit key
 contains article text, source text/URL, a content hash, or a request-body hash.
 
-## 10. Synthetic and environment boundary
+## 11. Synthetic and environment boundary
 
 The Admin HTTP workflow cannot create, edit, verify, publish, or promote
 `synthetic_fixture` content. Development/Test synthetic records continue to use
@@ -356,7 +457,7 @@ environment-isolation rules remain in force even when augmentation is disabled.
 The three candidate articles are still unverified, unpublished files outside the
 runtime database. This batch neither approves nor imports them.
 
-## 11. Public reader and Knowledge AI compatibility
+## 12. Public reader and Knowledge AI compatibility
 
 - Public list/detail response schemas and visibility rules do not change.
 - Draft/review Admin reads never use the public presenter and cannot become public
@@ -370,25 +471,29 @@ runtime database. This batch neither approves nor imports them.
 - `AI_KNOWLEDGE_ENABLED` remains `false` by default, and Production AI remains
   disabled.
 
-## 12. Minimum migration and repository plan
+## 13. Minimum migration and repository plan
 
 The implementation batch should:
 
 1. add `draft_revision` in the actual next forward-only migration;
 2. backfill existing rows to `1` without touching evidence or timestamps;
-3. add the positive check and revise candidate/source triggers to advance the
+3. allow an unpublished retired version to have `withdrawnAt` with
+   `publishedAt=null`, while preserving the timestamp ordering for previously
+   published versions;
+4. add the positive check and revise candidate/source triggers to advance the
    opaque token before freeze while preserving all existing freeze protections;
-4. leave Migrations 0000 through the current migration unchanged;
-5. add shared within-transaction article/version locks and candidate replacement;
-6. keep the CLI and HTTP facades separate while sharing those primitives; and
-7. extend application Audit allowlists with exact metadata schemas.
+5. leave Migrations 0000 through the current migration unchanged;
+6. add shared within-transaction authorization, article/version locks, predecessor
+   eligibility, draft retirement, and candidate replacement;
+7. keep the CLI and HTTP facades separate while sharing those primitives; and
+8. extend application Audit allowlists with exact metadata schemas.
 
 Migration tests must cover empty database application, non-empty upgrade with
 published/withdrawn/unverified/synthetic fixtures, evidence preservation, invalid
 legacy state atomic rejection, trigger behavior, and no half-applied migration.
 Only protected `_test` databases may be used.
 
-## 13. Acceptance matrix
+## 14. Acceptance matrix
 
 ### Authorization and disclosure
 
@@ -396,6 +501,11 @@ Only protected `_test` databases may be used.
 - each Knowledge role can perform only its matrix operations;
 - combined roles still exercise endpoint-specific checks;
 - revoked/disabled/stale Staff Sessions fail before data return;
+- revocation committed before transaction authorization rejects, while a request
+  authorized first follows the bounded in-flight completion rule;
+- every Admin GET rejects a missing/untrusted Admin Origin, while GET does not
+  require a CSRF header;
+- every mutation requires the actual `x-staff-csrf-token` boundary;
 - candidate read is withheld when Audit fails;
 - logs and Audit contain no body, source URL, email, or arbitrary errors; and
 - synthetic content is rejected by Admin HTTP in every environment and not exposed
@@ -409,6 +519,8 @@ Only protected `_test` databases may be used.
 - different concurrent candidates for one version never merge or overwrite;
 - full replacement changes body and ordered sources atomically;
 - title/body/source-only changes all advance the opaque revision;
+- a lost revision-5 update response followed by the same old request gets 409 and
+  recovers through an exact read; current-revision same content gets `no_change`;
 - reviewer opens revision A, editor commits B, late review of A returns 409;
 - review locks first, then a competing edit cannot alter verified evidence;
 - Audit failure rolls back create, edit, and review; and
@@ -416,10 +528,14 @@ Only protected `_test` databases may be used.
 
 ### Publication ordering and retry
 
-- exact verified candidate publishes once and exact retry preserves evidence/time;
-- unverified, synthetic, stale-revision, older-reviewed, or withdrawn targets fail;
-- two concurrently verified candidates resolve by the defined highest-reviewed
-  ordering, not merely the one-published unique index;
+- exact next verified candidate publishes once and exact retry preserves
+  evidence/time;
+- unverified, synthetic, stale-revision, out-of-sequence, or withdrawn targets
+  fail;
+- two verified candidates resolve in predecessor order, not merely by the
+  one-published unique index;
+- a wrong frozen predecessor can be retired without publication and its successor
+  can then advance;
 - publishing a newer version atomically withdraws the old current version;
 - retrying an old publish cannot reactivate or replace the new version;
 - retrying an old withdrawal cannot affect a newer current version;
@@ -437,7 +553,7 @@ Only protected `_test` databases may be used.
   publish/withdraw; and
 - no AI, Conversation, Consent, Incognito, Mood, Quota, or Safety regression.
 
-## 14. Implementation split and rollback boundary
+## 15. Implementation split and rollback boundary
 
 ### Batch 3A — schema, repositories, and services
 
@@ -460,16 +576,17 @@ These may be delivered in one implementation PR if it never exposes a partial
 HTTP mutation path that lacks Audit, exact revision checks, or CLI serialization.
 There is no Admin Web batch in this task.
 
-## 15. Decisions required before implementation
+## 16. Decisions required before implementation
 
 No product decision blocks the minimum implementation. The following engineering
 choices are fixed by this proposal and should be accepted or rejected together:
 
 1. `draft_revision` is an opaque monotonic integer covering the entire candidate;
-2. only the highest unverified draft is editable, while a reviewed unpublished
-   candidate may coexist with a higher unverified draft;
-3. publication selects the highest verified candidate, while a higher unverified
-   draft does not block it; and
+2. only the highest unverified draft is editable, while reviewed unpublished
+   candidates may coexist with a higher unverified draft;
+3. publication advances in predecessor order; a wrong frozen draft can be retired
+   without publication, and a higher draft does not block resolving its eligible
+   predecessor; and
 4. the restricted CLI retains its existing reviewed-manifest trust model while
    Admin HTTP derives reviewer identity/time and both share state primitives.
 

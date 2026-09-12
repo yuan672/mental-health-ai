@@ -13,10 +13,13 @@ This contract is for backend review. No Admin page is included.
 
 - `mh_staff_session` authenticates the request. Ordinary `mh_session` is never
   accepted.
-- Mutations require trusted Admin Origin plus `mh_staff_csrf` /
-  `x-csrf-token`. GET requests do not require a CSRF header.
-- The application service rechecks the current authorization revision and exact
-  permission. Controllers cannot supply a Staff principal ID.
+- Every route, including GET, requires an exact trusted Admin Origin. Mutations
+  additionally require `mh_staff_csrf` / `x-staff-csrf-token`; GET requests do not
+  require a CSRF header.
+- Controller guards perform a preliminary session check. The application service
+  then opens its short database transaction and calls the database Staff
+  authorizer inside it before the protected read/change and Audit append.
+  Controllers cannot supply a Staff principal ID.
 - All route/query/body and response shapes are strict Zod schemas.
 - `articleKey` is 1–100 lowercase ASCII letters/digits separated by single hyphens.
 - `version`, `draftRevision`, and `expectedDraftRevision` are positive integers.
@@ -170,11 +173,11 @@ Response:
 }
 ```
 
-An exact retry may return `disposition: "no_change"` and current state, including
-when the exact same candidate has since advanced to reviewed or published. It does
-not mutate or reverse that later state. If the version exists with different
-normalized content/sources, it returns 409. The response is not an immutable
-operation receipt.
+An exact create retry first compares the normalized complete candidate. It may
+return `disposition: "no_change"` and current state, including when that exact
+candidate has since advanced to reviewed or published; it never reverses later
+state. If the existing candidate differs, it returns 409. The response is not an
+immutable operation receipt.
 
 ### Read editable draft
 
@@ -214,8 +217,12 @@ Permission: `knowledge:draft_write`.
 ```
 
 Replacement is all-or-nothing. There is no block, field, reorder, or source-row
-mutation endpoint. A material replacement returns a new opaque revision; exact
-same state returns `no_change` without advancing it.
+mutation endpoint. The service first requires an editable unverified draft and an
+exact current `expectedDraftRevision`. A material replacement returns a new opaque
+revision; exact same state at the current revision returns `no_change` without
+advancing it. A stale revision always returns 409, even if current content happens
+to match. A stale retry after review or publication also returns 409 and recovers
+through an exact GET; it cannot be treated as an original immutable receipt.
 
 ## 5. Source reviewer contract
 
@@ -260,8 +267,9 @@ ID and clock only after reloading the exact candidate at revision 7 under lock.
 ```
 
 `reviewedBy` is the opaque Staff principal ID, not an email or a professional
-credential claim. An already verified exact revision returns `no_change` with the
-original evidence; it does not replace or add the caller as reviewer.
+credential claim. An already frozen source-verified version at the exact requested
+revision returns `no_change` with the original evidence, including after
+publication or withdrawal; it does not replace or add the caller as reviewer.
 
 ## 6. Publisher contract
 
@@ -287,40 +295,60 @@ Permission: `knowledge:publish`.
 ```
 
 The service rechecks curated origin, complete source evidence, exact review state,
-revision, latest-verified ordering, and current published version under the article
-lock. Response disposition is `applied` or `no_change`; original `reviewedAt` and
-`publishedAt` are never overwritten by a retry.
+revision, unresolved predecessors, and current published version under the article
+lock. A higher draft does not block publishing the next eligible predecessor, but
+it cannot publish before that predecessor is published or explicitly retired.
+Response disposition is `applied` or `no_change`; `no_change` applies only while
+the exact target remains current published at that revision. Original `reviewedAt`
+and `publishedAt` are never overwritten by a retry. An already withdrawn target
+conflicts and cannot reactivate.
 
-### Withdraw exact version
+### Withdraw or retire exact version
 
 `POST /admin/knowledge/articles/:articleKey/versions/:version/withdraw`
 
-Permission: `knowledge:publish`. Body is an empty strict object: `{}`.
+Permission: `knowledge:publish`.
 
-The exact published target becomes withdrawn. An exact already-withdrawn target
-returns `no_change` and its original time. A draft target conflicts. An old
-withdraw retry never changes a newer published version.
+```json
+{ "expectedDraftRevision": 7 }
+```
+
+The exact published target becomes withdrawn. An unpublished draft may also be
+retired without ever being exposed; it keeps `publishedAt=null`, gains one
+server-owned `withdrawnAt`, and its candidate/review evidence remains immutable.
+An exact already-withdrawn target with matching revision returns `no_change` and
+its original time. An old withdraw retry never changes a newer published version.
+
+This retirement is how a wrong frozen candidate is skipped safely. After all lower
+versions are published/withdrawn or retired, the next verified successor becomes
+eligible. The service never requires publishing the wrong candidate.
 
 ## 7. Error contract
 
 Errors use the existing envelope. Message text is safe and not a stable client
 contract.
 
-| HTTP | Code                              | Meaning                                                                                             |
-| ---- | --------------------------------- | --------------------------------------------------------------------------------------------------- |
-| 400  | `VALIDATION_ERROR`                | path, query, cursor, body, bounds, or strict-union failure                                          |
-| 401  | `UNAUTHENTICATED`                 | missing, expired, revoked, disabled, or stale Staff Session                                         |
-| 403  | `FORBIDDEN`                       | valid Staff principal lacks the exact permission                                                    |
-| 403  | `KNOWLEDGE_PUBLICATION_FORBIDDEN` | a disclosed target fails a bounded publication policy that the caller cannot override               |
-| 404  | `KNOWLEDGE_ARTICLE_NOT_FOUND`     | exact Admin-visible article/version is unavailable                                                  |
-| 409  | `KNOWLEDGE_PUBLICATION_CONFLICT`  | stale revision, changed candidate, invalid transition/order, gap, or withdrawn reactivation attempt |
-| 503  | `ADMIN_KNOWLEDGE_RESULT_UNKNOWN`  | commit outcome could not be confirmed; read exact current state                                     |
-| 500  | existing safe storage error       | confirmed internal/storage failure without payload details                                          |
+| HTTP | Code                              | Meaning                                                                                                                     |
+| ---- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| 400  | `VALIDATION_ERROR`                | path, query, cursor, body, bounds, or strict-union failure                                                                  |
+| 401  | `UNAUTHENTICATED`                 | missing, expired, revoked, disabled, or stale Staff Session                                                                 |
+| 403  | `FORBIDDEN`                       | valid Staff principal lacks the exact permission                                                                            |
+| 403  | `KNOWLEDGE_PUBLICATION_FORBIDDEN` | a disclosed target fails a bounded publication policy that the caller cannot override                                       |
+| 404  | `KNOWLEDGE_ARTICLE_NOT_FOUND`     | exact Admin-visible article/version is unavailable                                                                          |
+| 409  | `KNOWLEDGE_PUBLICATION_CONFLICT`  | stale revision, changed candidate, unresolved predecessor, invalid transition/order, gap, or withdrawn reactivation attempt |
+| 503  | `ADMIN_KNOWLEDGE_RESULT_UNKNOWN`  | commit outcome could not be confirmed; read exact current state                                                             |
+| 500  | existing safe storage error       | confirmed internal/storage failure without payload details                                                                  |
 
 A 404 after an uncertain create is only the result of that read. It does not prove
 the earlier request rolled back or will never commit. A 409 requires a fresh read
 and a new explicit human decision; the client must not auto-apply a different
 candidate or revision.
+
+For replacement specifically, a committed revision-5 update may result in
+revision 7 if source trigger increments are involved. If its response is lost, the
+original revision-5 retry receives 409 even when the payload now matches. The
+caller reads the exact draft/status; only a deliberate request using current
+revision 7 can receive current-state `no_change` or apply another edit.
 
 Synthetic exact targets receive the same 404 unavailable response for Admin reads
 and mutations in every environment. Staging/Production therefore do not reveal
