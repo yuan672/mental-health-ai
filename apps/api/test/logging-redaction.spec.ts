@@ -132,5 +132,17 @@ describe('sensitive logging redaction', () => {
       '/admin/staff-principals/:id/roles',
     );
     expect(safeOperationalPath(`/admin/staff-principals/${staffId}/roles`)).not.toContain(staffId);
+    const turnId = '33333333-3333-4333-8333-333333333333';
+    for (const unsafePath of [
+      `/admin/ai-quality/turns/${turnId}`,
+      `/admin/ai-quality/turns/${turnId}/`,
+      `/admin/ai-quality/turns/${turnId}/unexpected`,
+      `/admin/ai-quality/turns/${turnId}?status=failed`,
+    ]) {
+      expect(safeOperationalPath(unsafePath)).not.toContain(turnId);
+    }
+    expect(safeOperationalPath(`/admin/ai-quality/turns/${turnId}`)).toBe(
+      '/admin/ai-quality/turns/:turnId',
+    );
   });
 });

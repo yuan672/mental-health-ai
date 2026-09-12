@@ -35,8 +35,9 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   PR #29; Batch 3 staff-only Knowledge Management backend contract is accepted in
   PR #30, its backend implementation is engineering complete and merged through
   PR #31, and the Batch 4 Audit Read/Persistent AI Turn metadata design is
-  accepted; Batch 4A Audit Read backend implementation is in review in PR #33,
-  Batch 4B has not started, and no Admin UI is included
+  accepted; Batch 4A Audit Read backend implementation is merged through PR #33,
+  Batch 4B Persistent AI Turn metadata backend implementation is in review, and
+  no Admin UI is included
 
 ## Current Production State
 
@@ -85,6 +86,8 @@ safety, or validation for clinical use.
   metadata-only Risk Event and Human Review Queue backend
 - [PR #31](https://github.com/yuan672/mental-health-ai/pull/31) — Admin Batch 3
   staff-only Knowledge Management backend
+- [PR #33](https://github.com/yuan672/mental-health-ai/pull/33) — Admin Batch 4A
+  bounded Audit Read backend
 
 ## Current Feature Status
 
@@ -137,10 +140,12 @@ safety, or validation for clinical use.
   Turn execution-metadata reader with no message content, scoring, or real-model
   evaluation. Batch 4A implements the strict Audit projection, database
   reauthorization, required access Audit, bounded opaque cursor, retention filter,
-  and short repeatable-read snapshot without a Schema change; it remains in review
-  in [PR #33](https://github.com/yuan672/mental-health-ai/pull/33).
-  Batch 4B implementation, all Admin UI, and production enablement remain outside
-  completed scope.
+  and short repeatable-read snapshot without a Schema change; it is merged through
+  [PR #33](https://github.com/yuan672/mental-health-ai/pull/33). Batch 4B adds the
+  strict Persistent AI Turn lifecycle projection, parent-Conversation visibility,
+  required access Audit, bounded pagination, and snapshot-ordering tests without a
+  Schema change; its implementation is in review. All Admin UI and production
+  enablement remain outside completed scope.
 
 The existing Web is not a design constraint for the replacement frontend. New page,
 style, component, interaction, and Knowledge AI-B reducer work is paused in this
@@ -208,11 +213,9 @@ controls.
 
 ## Immediate Next Step
 
-Review the Phase 6 Batch 4A Audit Read Draft implementation in
-[PR #33](https://github.com/yuan672/mental-health-ai/pull/33) against
-`docs/architecture/phase-6-admin-audit-quality-read-design.md` and
-`docs/api/admin-audit-quality.md`. Persistent AI Turn metadata Batch 4B remains
-unimplemented until separately authorized. Knowledge AI-B remains pending for the
+Review the Phase 6 Batch 4B Persistent AI Turn metadata backend implementation
+against `docs/architecture/phase-6-admin-audit-quality-read-design.md` and
+`docs/api/admin-audit-quality.md`. Knowledge AI-B remains pending for the
 replacement frontend; keep augmentation disabled by default and retain the v2
 reader plus v1 history guard. The three candidate articles remain unverified and
 unpublished, and real-model evaluation remains separate work.

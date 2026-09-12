@@ -1,7 +1,7 @@
 # Admin Audit Read and AI Turn Metadata API Draft
 
-- Status: Accepted engineering contract; Batch 4A Audit Read implementation in
-  review in PR #33, Batch 4B AI Turn metadata implementation pending
+- Status: Accepted engineering contract; Batch 4A Audit Read implementation
+  merged in PR #33, Batch 4B AI Turn metadata implementation in review
 - Base paths: `/admin/audit-logs` and `/admin/ai-quality`
 - Authentication: current Staff Session only
 - Transport: JSON over HTTPS with `Cache-Control: private, no-store`
@@ -353,7 +353,26 @@ production performance guarantee; no index Migration is justified for this
 local learning/demo batch. Production query-plan and workload validation remains
 separate readiness work.
 
-## 7. Preserved state
+## 7. Batch 4B implementation evidence
+
+The Batch 4B implementation provides `GET /admin/ai-quality/turns` and
+`GET /admin/ai-quality/turns/:turnId` with the strict metadata-only projection,
+transaction-bound database reauthorization, required access Audit, bounded
+time/cursor validation, parent-Conversation visibility rule, and PostgreSQL
+snapshot ordering described above. It adds no Schema or Migration.
+
+A local `_test`-database plan review temporarily added 30,000 synthetic
+Conversations and AI Turns inside one transaction, analyzed the resulting tables,
+and then rolled the transaction back. The maximum list read (`limit + 1 = 51`)
+completed in approximately 18.4 ms without a status filter, 8.4 ms with a status
+filter, and 15.1 ms for a continuation query; the detail lookup completed in
+approximately 0.06 ms. This is bounded local learning/demo evidence, not a
+production performance guarantee. The unfiltered list plans use sequential scans
+and a top-N sort, but the measured bounded workload does not justify a speculative
+index Migration in this batch. Production query-plan and workload validation
+remains separate readiness work.
+
+## 8. Preserved state
 
 - `ADMIN_AUTH_ENABLED=false` by default.
 - `AI_KNOWLEDGE_ENABLED=false` by default.
