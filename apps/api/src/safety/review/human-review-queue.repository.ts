@@ -4,6 +4,7 @@ import {
   eq,
   humanReviewQueueItems,
   riskEvents,
+  type AppTransaction,
   type ReviewPriority,
   type ReviewState,
 } from '@mental-health/database';
@@ -82,13 +83,7 @@ export class HumanReviewQueueRepository {
   ): Promise<HumanReviewQueueRecord | null> {
     return this.database.database.transaction(async (transaction) => {
       await authorize?.(transaction);
-      const [item] = await transaction
-        .update(humanReviewQueueItems)
-        .set({ state: 'in_review', assignedReviewerId: reviewerId, startedAt: now })
-        .where(
-          and(eq(humanReviewQueueItems.id, itemId), eq(humanReviewQueueItems.state, 'pending')),
-        )
-        .returning();
+      const item = await this.claimWithinTransaction(transaction, itemId, reviewerId, now);
       if (!item) return null;
       await this.audits.appendWithinTransaction(transaction, {
         actorType: 'human_reviewer',
@@ -104,6 +99,20 @@ export class HumanReviewQueueRepository {
     });
   }
 
+  async claimWithinTransaction(
+    transaction: AppTransaction,
+    itemId: string,
+    reviewerId: string,
+    now: Date,
+  ): Promise<HumanReviewQueueRecord | null> {
+    const [item] = await transaction
+      .update(humanReviewQueueItems)
+      .set({ state: 'in_review', assignedReviewerId: reviewerId, startedAt: now })
+      .where(and(eq(humanReviewQueueItems.id, itemId), eq(humanReviewQueueItems.state, 'pending')))
+      .returning();
+    return item ?? null;
+  }
+
   async resolve(
     itemId: string,
     reviewerId: string,
@@ -113,17 +122,13 @@ export class HumanReviewQueueRepository {
   ): Promise<HumanReviewQueueRecord | null> {
     return this.database.database.transaction(async (transaction) => {
       await authorize?.(transaction);
-      const [item] = await transaction
-        .update(humanReviewQueueItems)
-        .set({ state: 'resolved', reviewedAt: now, resolutionCode })
-        .where(
-          and(
-            eq(humanReviewQueueItems.id, itemId),
-            eq(humanReviewQueueItems.state, 'in_review'),
-            eq(humanReviewQueueItems.assignedReviewerId, reviewerId),
-          ),
-        )
-        .returning();
+      const item = await this.resolveWithinTransaction(
+        transaction,
+        itemId,
+        reviewerId,
+        resolutionCode,
+        now,
+      );
       if (!item) return null;
       await this.audits.appendWithinTransaction(transaction, {
         actorType: 'human_reviewer',
@@ -137,5 +142,26 @@ export class HumanReviewQueueRepository {
       });
       return item;
     });
+  }
+
+  async resolveWithinTransaction(
+    transaction: AppTransaction,
+    itemId: string,
+    reviewerId: string,
+    resolutionCode: string,
+    now: Date,
+  ): Promise<HumanReviewQueueRecord | null> {
+    const [item] = await transaction
+      .update(humanReviewQueueItems)
+      .set({ state: 'resolved', reviewedAt: now, resolutionCode })
+      .where(
+        and(
+          eq(humanReviewQueueItems.id, itemId),
+          eq(humanReviewQueueItems.state, 'in_review'),
+          eq(humanReviewQueueItems.assignedReviewerId, reviewerId),
+        ),
+      )
+      .returning();
+    return item ?? null;
   }
 }

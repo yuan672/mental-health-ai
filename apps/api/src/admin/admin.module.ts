@@ -1,9 +1,12 @@
 import { Module } from '@nestjs/common';
 import { PasswordHasherService } from '../auth/password-hasher.service';
 import { AuditModule } from '../safety/audit/audit.module';
+import { HumanReviewQueueRepository } from '../safety/review/human-review-queue.repository';
 import { AdminAuthEnabledGuard } from './admin-auth-enabled.guard';
 import { AdminNoStoreInterceptor } from './admin-no-store.interceptor';
 import { AdminController } from './admin.controller';
+import { AdminSafetyReviewRepository } from './admin-safety-review.repository';
+import { AdminSafetyReviewService } from './admin-safety-review.service';
 import { StaffAccessService } from './staff-access.service';
 import { StaffAuthService } from './staff-auth.service';
 import { DatabaseStaffAuthorizer } from './staff-authorizer.service';
@@ -20,6 +23,8 @@ import { StaffTrustedOriginGuard } from './staff-trusted-origin.guard';
   providers: [
     AdminAuthEnabledGuard,
     AdminNoStoreInterceptor,
+    AdminSafetyReviewRepository,
+    AdminSafetyReviewService,
     DatabaseStaffAuthorizer,
     DatabaseStaffSafetyReviewerAuthorizer,
     PasswordHasherService,
@@ -30,6 +35,7 @@ import { StaffTrustedOriginGuard } from './staff-trusted-origin.guard';
     StaffRepository,
     StaffSessionGuard,
     StaffTrustedOriginGuard,
+    HumanReviewQueueRepository,
   ],
   exports: [
     DatabaseStaffAuthorizer,

@@ -19,6 +19,7 @@ import { AdminAuthEnabledGuard } from './admin-auth-enabled.guard';
 import { AdminNoStoreInterceptor } from './admin-no-store.interceptor';
 import type { StaffAuthenticatedRequest, StaffSessionView } from './staff-authenticated-request';
 import { StaffAccessService } from './staff-access.service';
+import { AdminSafetyReviewService } from './admin-safety-review.service';
 import { StaffAuthService } from './staff-auth.service';
 import { clearStaffCookies, setStaffCookies } from './staff-cookies';
 import { StaffCsrfGuard } from './staff-csrf.guard';
@@ -38,6 +39,20 @@ import {
   type StaffLoginRequest,
 } from './staff.schemas';
 import type { StaffPrincipalState } from './staff.repository';
+import {
+  adminResourceIdSchema,
+  adminReviewQueueClaimSchema,
+  adminReviewQueueListDataSchema,
+  adminReviewQueueListQuerySchema,
+  adminReviewQueueMutationDataSchema,
+  adminReviewQueueResolveSchema,
+  adminRiskEventDetailDataSchema,
+  adminRiskEventListDataSchema,
+  adminRiskEventListQuerySchema,
+  type AdminReviewQueueListQuery,
+  type AdminReviewQueueResolveRequest,
+  type AdminRiskEventListQuery,
+} from './admin-safety-review.schemas';
 
 function principalView(principal: StaffPrincipalState) {
   return staffPrincipalViewSchema.parse({
@@ -69,6 +84,7 @@ export class AdminController {
   constructor(
     private readonly auth: StaffAuthService,
     private readonly access: StaffAccessService,
+    private readonly safetyReview: AdminSafetyReviewService,
   ) {}
 
   @Post('auth/login')
@@ -206,5 +222,79 @@ export class AdminController {
       body.expectedAuthorizationRevision,
     );
     return { success: true, data: { ...result, principal: principalView(result.principal) } };
+  }
+
+  @Get('risk-events')
+  @UseGuards(StaffSessionGuard)
+  async listRiskEvents(
+    @Req() request: StaffAuthenticatedRequest,
+    @Query(new ZodValidationPipe(adminRiskEventListQuerySchema)) query: AdminRiskEventListQuery,
+  ) {
+    return {
+      success: true,
+      data: adminRiskEventListDataSchema.parse(
+        await this.safetyReview.listRiskEvents(request.staffSession, query),
+      ),
+    };
+  }
+
+  @Get('risk-events/:id')
+  @UseGuards(StaffSessionGuard)
+  async getRiskEvent(
+    @Req() request: StaffAuthenticatedRequest,
+    @Param('id', new ZodValidationPipe(adminResourceIdSchema)) id: string,
+  ) {
+    return {
+      success: true,
+      data: adminRiskEventDetailDataSchema.parse(
+        await this.safetyReview.getRiskEvent(request.staffSession, id),
+      ),
+    };
+  }
+
+  @Get('review-queue')
+  @UseGuards(StaffSessionGuard)
+  async listReviewQueue(
+    @Req() request: StaffAuthenticatedRequest,
+    @Query(new ZodValidationPipe(adminReviewQueueListQuerySchema)) query: AdminReviewQueueListQuery,
+  ) {
+    return {
+      success: true,
+      data: adminReviewQueueListDataSchema.parse(
+        await this.safetyReview.listReviewQueue(request.staffSession, query),
+      ),
+    };
+  }
+
+  @Post('review-queue/:id/claim')
+  @UseGuards(StaffSessionGuard, StaffCsrfGuard)
+  async claimReviewQueueItem(
+    @Req() request: StaffAuthenticatedRequest,
+    @Param('id', new ZodValidationPipe(adminResourceIdSchema)) id: string,
+    @Body(new ZodValidationPipe(adminReviewQueueClaimSchema)) body: Record<string, never>,
+  ) {
+    void body;
+    return {
+      success: true,
+      data: adminReviewQueueMutationDataSchema.parse(
+        await this.safetyReview.claim(request.staffSession, id),
+      ),
+    };
+  }
+
+  @Post('review-queue/:id/resolve')
+  @UseGuards(StaffSessionGuard, StaffCsrfGuard)
+  async resolveReviewQueueItem(
+    @Req() request: StaffAuthenticatedRequest,
+    @Param('id', new ZodValidationPipe(adminResourceIdSchema)) id: string,
+    @Body(new ZodValidationPipe(adminReviewQueueResolveSchema))
+    body: AdminReviewQueueResolveRequest,
+  ) {
+    return {
+      success: true,
+      data: adminReviewQueueMutationDataSchema.parse(
+        await this.safetyReview.resolve(request.staffSession, id, body.resolutionCode),
+      ),
+    };
   }
 }

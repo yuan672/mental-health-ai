@@ -13,6 +13,8 @@ export const auditResourceTypeSchema = z.enum([
   'mood_history',
   'staff_principal',
   'staff_principal_query',
+  'risk_event_query',
+  'review_queue_query',
 ]);
 export const auditActionSchema = z.enum([
   'conversation_deleted',
@@ -35,6 +37,8 @@ export const auditActionSchema = z.enum([
   'staff_principal_disabled',
   'staff_sessions_revoked',
   'staff_directory_accessed',
+  'risk_event_list_accessed',
+  'review_queue_list_accessed',
 ]);
 
 export type AuditActorType = z.infer<typeof auditActorTypeSchema>;
@@ -108,6 +112,18 @@ const staffDirectoryMetadataSchema = z
     returnedCount: z.number().int().nonnegative(),
   })
   .strict();
+const riskEventListMetadataSchema = z
+  .object({
+    filterCategory: z.enum(['all', 'level', 'incognito', 'level_and_incognito']),
+    returnedCount: z.number().int().nonnegative(),
+  })
+  .strict();
+const reviewQueueListMetadataSchema = z
+  .object({
+    filterCategory: z.enum(['all', 'state', 'priority', 'state_and_priority']),
+    returnedCount: z.number().int().nonnegative(),
+  })
+  .strict();
 
 export function parseAuditMetadata(
   action: AuditAction,
@@ -145,6 +161,12 @@ export function parseAuditMetadata(
   }
   if (action === 'staff_directory_accessed') {
     return staffDirectoryMetadataSchema.parse(metadata);
+  }
+  if (action === 'risk_event_list_accessed') {
+    return riskEventListMetadataSchema.parse(metadata);
+  }
+  if (action === 'review_queue_list_accessed') {
+    return reviewQueueListMetadataSchema.parse(metadata);
   }
   return emptyMetadataSchema.parse(metadata);
 }

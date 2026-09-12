@@ -12,7 +12,7 @@ import {
   type HumanReviewQueueRecord,
 } from './human-review-queue.repository';
 
-const resolutionCodeSchema = z.enum([
+export const reviewResolutionCodeSchema = z.enum([
   'confirmed_risk',
   'false_positive',
   'unable_to_determine',
@@ -86,7 +86,7 @@ export class HumanReviewQueueService {
       : undefined;
     if (!transactionAuthorization)
       await this.authorizer.authorize(principal, 'review_queue:resolve');
-    const parsedResolution = resolutionCodeSchema.parse(resolutionCode);
+    const parsedResolution = reviewResolutionCodeSchema.parse(resolutionCode);
     try {
       const item = await this.repository.resolve(
         itemId,
