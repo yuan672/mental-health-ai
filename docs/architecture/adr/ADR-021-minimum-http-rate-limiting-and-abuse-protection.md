@@ -1,7 +1,11 @@
 # ADR-021: Minimum HTTP Rate Limiting and Abuse Protection
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-12
+- Accepted scope: bounded single-process HTTP admission for Development/Test,
+  partitioned standard/control/mixed capacity, and non-queued HTTP Argon2 work
+  admission; production thresholds, proxy trust, cross-instance enforcement, and
+  production enablement remain unapproved
 - Related: ADR-007, ADR-009, ADR-011 through ADR-020
 - Supersedes: None
 
