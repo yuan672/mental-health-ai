@@ -111,10 +111,11 @@ the surrounding transaction fails.
 
 Version numbers are positive, sequential, and gap-free per article.
 
-- An article has at most one **editable** unverified draft, always at the highest
+- An article has at most one **active editable draft**, defined exactly as
+  `publicationStatus=draft && reviewStatus=unverified`; it is always at the highest
   allocated version.
-- A next version cannot be created while that highest version remains unverified;
-  the editor can atomically replace that draft instead.
+- A next version cannot be created while that highest version remains an active
+  editable draft; the editor can atomically replace its full candidate instead.
 - Once the highest draft is `source_verified`, a next unverified version may be
   created. The immutable reviewed-but-unpublished version remains historical
   evidence rather than being deleted or edited.
@@ -125,20 +126,24 @@ Version numbers are positive, sequential, and gap-free per article.
   resolved.
 - Publishing a newer eligible version withdraws the current older published
   version atomically. A withdrawn version never becomes active again.
-- A publisher can retire an exact unpublished draft without publishing it. The row
+- A publisher can retire an exact unpublished
+  `curated + draft + source_verified` candidate without publishing it. The row
   becomes `withdrawn`, receives a server-owned `withdrawnAt`, retains its immutable
-  candidate/review evidence, and keeps `publishedAt=null`. This is the safe path
-  when a frozen candidate is found to be wrong: retire it, prepare/review the
-  already allocated next version (or create the next version), then publish that
-  successor. The system never requires publishing known-bad content merely to
-  advance the sequence.
+  candidate/review evidence, and keeps `publishedAt=null`. An unverified draft
+  cannot be retired; it remains editable and must be corrected through the atomic
+  full-candidate replacement. This is the safe path when a frozen candidate is
+  found to be wrong: retire it, prepare/review the already allocated next version
+  (or create the next version), then publish that successor. The system never
+  requires publishing known-bad content merely to advance the sequence.
 
 This permits editorial work to continue after a candidate is frozen, while making
 the accepted predecessor-before-successor rule deterministic without adding a
 fourth lifecycle state. The implementation migration must relax only the existing
-withdrawn timestamp check: a withdrawn version always has `withdrawnAt`, while
-`publishedAt` is present only if it was once published. Existing published and
-withdrawn evidence is not rewritten.
+withdrawn timestamp combination for a curated source-verified version that was
+never published: it has `withdrawnAt` and `publishedAt=null`. A previously
+published withdrawn version retains both timestamps in their existing order. The
+existing curated-review constraint remains in force, so an unverified curated
+draft still cannot transition to withdrawn. Existing evidence is not rewritten.
 
 ## 5. Workflow transitions
 
@@ -151,13 +156,16 @@ withdrawn evidence is not rewritten.
 | any frozen source-verified version  | source verify again         | exact candidate revision is unchanged                                   | `no_change`; preserve original reviewer/time                       |
 | next eligible source-verified draft | publish                     | all lower versions are resolved; exact revision                         | `published`; lower current version becomes `withdrawn`             |
 | exact currently published version   | publish again               | no later publication has replaced it                                    | `no_change`; preserve original publish/review evidence             |
-| draft or published version          | withdraw/retire             | exact version and current revision                                      | `withdrawn`; set server time once                                  |
+| curated source-verified draft       | retire                      | exact current revision                                                  | `withdrawn`; `publishedAt=null`; set server time once              |
+| unverified draft                    | retire                      | none                                                                    | conflict; remains editable and unchanged                           |
+| published version                   | withdraw                    | exact version and current revision                                      | `withdrawn`; preserve `publishedAt`; set server time once          |
 | already withdrawn version           | withdraw again              | exact target and revision still match                                   | `no_change`; preserve original withdrawal time and current version |
 
 All other transitions return a typed conflict. A create retry with changed body or
 sources, an edit against a stale revision, review after editing, publication of a
 stale or out-of-sequence candidate, publication of synthetic content, and
-reactivation of a withdrawn version are rejected.
+reactivation of a withdrawn version are rejected. Retirement of an unverified or
+synthetic draft is also rejected.
 
 `professional_reviewed` remains unsupported by this batch. Staff source review can
 produce only `source_verified`, whose meaning remains the narrow ADR-018 source
@@ -168,18 +176,18 @@ check and not professional, clinical, legal, or product approval.
 The exact request and response shapes are specified in
 `docs/api/admin-knowledge-management.md`. The minimum routes are:
 
-| Method | Path                                                                        | Purpose                                  |
-| ------ | --------------------------------------------------------------------------- | ---------------------------------------- |
-| `GET`  | `/admin/knowledge/articles?limit=&cursor=`                                  | bounded workflow directory               |
-| `GET`  | `/admin/knowledge/articles/:articleKey/versions/:version/status`            | authoritative exact-version state        |
-| `POST` | `/admin/knowledge/articles/:articleKey/versions/:version`                   | create the exact next draft candidate    |
-| `GET`  | `/admin/knowledge/articles/:articleKey/versions/:version/draft`             | exact editable draft                     |
-| `PUT`  | `/admin/knowledge/articles/:articleKey/versions/:version/draft`             | atomically replace an editable candidate |
-| `GET`  | `/admin/knowledge/articles/:articleKey/versions/:version/review-candidate`  | exact reviewer candidate                 |
-| `POST` | `/admin/knowledge/articles/:articleKey/versions/:version/source-review`     | verify exact revision                    |
-| `GET`  | `/admin/knowledge/articles/:articleKey/versions/:version/publication-state` | publisher projection                     |
-| `POST` | `/admin/knowledge/articles/:articleKey/versions/:version/publish`           | publish exact frozen version             |
-| `POST` | `/admin/knowledge/articles/:articleKey/versions/:version/withdraw`          | withdraw exact published version         |
+| Method | Path                                                                        | Purpose                                     |
+| ------ | --------------------------------------------------------------------------- | ------------------------------------------- |
+| `GET`  | `/admin/knowledge/articles?limit=&cursor=`                                  | bounded workflow directory                  |
+| `GET`  | `/admin/knowledge/articles/:articleKey/versions/:version/status`            | authoritative exact-version state           |
+| `POST` | `/admin/knowledge/articles/:articleKey/versions/:version`                   | create the exact next draft candidate       |
+| `GET`  | `/admin/knowledge/articles/:articleKey/versions/:version/draft`             | exact editable draft                        |
+| `PUT`  | `/admin/knowledge/articles/:articleKey/versions/:version/draft`             | atomically replace an editable candidate    |
+| `GET`  | `/admin/knowledge/articles/:articleKey/versions/:version/review-candidate`  | exact reviewer candidate                    |
+| `POST` | `/admin/knowledge/articles/:articleKey/versions/:version/source-review`     | verify exact revision                       |
+| `GET`  | `/admin/knowledge/articles/:articleKey/versions/:version/publication-state` | publisher projection                        |
+| `POST` | `/admin/knowledge/articles/:articleKey/versions/:version/publish`           | publish exact frozen version                |
+| `POST` | `/admin/knowledge/articles/:articleKey/versions/:version/withdraw`          | withdraw published or retire verified draft |
 
 `articleKey` and `version` are always explicit. There is no “publish latest” or
 “withdraw current” mutation, because those phrases can target a different version
@@ -347,7 +355,8 @@ The other commands have narrow state-specific retry exceptions:
 - publish returns `no_change` only while that exact target is currently published
   at the requested revision; an already withdrawn target conflicts; and
 - withdraw/retire returns `no_change` for the exact already-withdrawn target and
-  matching revision, preserving the first withdrawal time.
+  matching revision, preserving the first withdrawal time. A new transition from
+  draft is allowed only for a curated source-verified candidate.
 
 These responses report authoritative current state, not immutable operation
 receipts.
@@ -374,12 +383,20 @@ withdrawn non-reactivation, exact evidence matching, or one-current-version rule
 | a higher version is now published            | retry old publish    | conflict; old target is withdrawn and cannot reactivate                                           | same                                                                            |
 | a higher version is now published            | retry old withdraw   | `no_change` on exact old target; newer current untouched                                          | same                                                                            |
 | CLI and HTTP race on one article             | either exact command | article lock orders them; the second observes the first and applies the same state/identity rules | same shared lock and policy                                                     |
+| curated source-verified draft is known wrong | retire exact draft   | allowed with `knowledge:publish`, exact revision, and transactional Audit                         | existing CLI withdraw continues to reject every draft                           |
 
 Version allocation remains gap-free (`highest + 1`). First publication/replacement
 eligibility is based on resolved predecessors. Completed-operation retries are
 checked only under the narrow state exceptions above. The CLI still accepts review
 identity/time only from its restricted, schema-validated manifest trust boundary;
 HTTP never accepts those fields.
+
+CLI and HTTP therefore share publication ordering, article locks, immutable
+evidence, and published-version withdrawal rules, but not every entry point. The
+existing CLI `withdraw` command continues to reject all drafts. Unpublished frozen
+candidate retirement is an authenticated, transactionally audited Staff HTTP
+operation only; this does not fabricate a CLI Staff/system actor or silently widen
+the CLI trust boundary.
 
 The current CLI has no Staff Session and emits only a fixed success/failure command
 result; it does not append a Staff Audit row or authenticate a release operator.
@@ -389,10 +406,12 @@ identity and credential boundary. That production-operational choice does not
 weaken the Admin HTTP rule: every HTTP read/change/no-change remains transactionally
 audited before its result is returned.
 
-If a frozen predecessor is wrong, `knowledge:publish` retires that exact draft
-without publication. Its body, sources, reviewer evidence, and version remain
-immutable. The correct successor can then pass review and advance normally. This
-uses the existing `withdrawn` lifecycle meaning and needs the timestamp-constraint
+If a frozen source-verified predecessor is wrong, `knowledge:publish` retires that
+exact draft without publication. Its body, sources, reviewer evidence, and version
+remain immutable. The correct successor can then pass review and advance normally.
+An unverified error is corrected in place through the editor's full-candidate
+replacement and never needs false verification merely to be retired. This uses the
+existing `withdrawn` lifecycle meaning and needs the narrow timestamp-constraint
 adjustment described in section 4.2, but it does not supersede ADR-018.
 
 ## 10. Audit contract
@@ -477,9 +496,9 @@ The implementation batch should:
 
 1. add `draft_revision` in the actual next forward-only migration;
 2. backfill existing rows to `1` without touching evidence or timestamps;
-3. allow an unpublished retired version to have `withdrawnAt` with
-   `publishedAt=null`, while preserving the timestamp ordering for previously
-   published versions;
+3. allow only a curated source-verified unpublished version to have `withdrawnAt`
+   with `publishedAt=null`, while preserving the existing curated review
+   constraint and timestamp ordering for previously published versions;
 4. add the positive check and revise candidate/source triggers to advance the
    opaque token before freeze while preserving all existing freeze protections;
 5. leave Migrations 0000 through the current migration unchanged;
@@ -534,8 +553,12 @@ Only protected `_test` databases may be used.
   fail;
 - two verified candidates resolve in predecessor order, not merely by the
   one-published unique index;
-- a wrong frozen predecessor can be retired without publication and its successor
-  can then advance;
+- unverified retirement conflicts without changing data;
+- a wrong source-verified frozen predecessor can be retired with
+  `publishedAt=null`, and its correct successor can then advance;
+- retiring an unrelated candidate does not change the current published version;
+- draft retirement competing with review/publish/edit serializes on the existing
+  article/version locks;
 - publishing a newer version atomically withdraws the old current version;
 - retrying an old publish cannot reactivate or replace the new version;
 - retrying an old withdrawal cannot affect a newer current version;
@@ -584,9 +607,9 @@ choices are fixed by this proposal and should be accepted or rejected together:
 1. `draft_revision` is an opaque monotonic integer covering the entire candidate;
 2. only the highest unverified draft is editable, while reviewed unpublished
    candidates may coexist with a higher unverified draft;
-3. publication advances in predecessor order; a wrong frozen draft can be retired
-   without publication, and a higher draft does not block resolving its eligible
-   predecessor; and
+3. publication advances in predecessor order; a wrong curated source-verified
+   draft can be retired without publication, an unverified draft remains editable,
+   and a higher draft does not block resolving its eligible predecessor; and
 4. the restricted CLI retains its existing reviewed-manifest trust model while
    Admin HTTP derives reviewer identity/time and both share state primitives.
 

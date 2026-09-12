@@ -313,15 +313,18 @@ Permission: `knowledge:publish`.
 { "expectedDraftRevision": 7 }
 ```
 
-The exact published target becomes withdrawn. An unpublished draft may also be
-retired without ever being exposed; it keeps `publishedAt=null`, gains one
-server-owned `withdrawnAt`, and its candidate/review evidence remains immutable.
-An exact already-withdrawn target with matching revision returns `no_change` and
-its original time. An old withdraw retry never changes a newer published version.
+The exact published target becomes withdrawn. Only an exact
+`curated + draft + source_verified` candidate may be retired without ever being
+exposed; it keeps `publishedAt=null`, gains one server-owned `withdrawnAt`, and its
+candidate/review evidence remains immutable. An unverified draft returns 409 and
+remains editable through the full replacement endpoint. An exact
+already-withdrawn target with matching revision returns `no_change` and its
+original time. An old withdraw retry never changes a newer published version.
 
-This retirement is how a wrong frozen candidate is skipped safely. After all lower
-versions are published/withdrawn or retired, the next verified successor becomes
-eligible. The service never requires publishing the wrong candidate.
+This retirement is how a wrong frozen, already source-verified candidate is skipped
+safely. After all lower versions are published/withdrawn or retired, the next
+verified successor becomes eligible. An unverified error is corrected atomically
+in place; the service never requires falsely verifying or publishing it.
 
 ## 7. Error contract
 
