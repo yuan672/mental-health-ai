@@ -16,6 +16,7 @@ import { ProfileModule } from './profile/profile.module';
 import { QuotaModule } from './quota/quota.module';
 import { SecurityModule } from './security/security.module';
 import { safeOperationalPath } from './common/http/safe-request-path';
+import { AdminModule } from './admin/admin.module';
 
 export const LOG_REDACT_PATHS = [
   'req.headers.authorization',
@@ -31,6 +32,7 @@ export const LOG_REDACT_PATHS = [
   'res.headers["set-cookie"]',
   'email',
   'password',
+  'initialPassword',
   'token',
   'rawToken',
   'csrfToken',
@@ -39,6 +41,7 @@ export const LOG_REDACT_PATHS = [
   'api_key',
   '*.email',
   '*.password',
+  '*.initialPassword',
   '*.token',
   '*.rawToken',
   '*.csrfToken',
@@ -107,6 +110,7 @@ export const LOG_REDACT_PATHS = [
       },
     }),
     DatabaseModule,
+    AdminModule,
     SecurityModule,
     HealthModule,
     AuthModule,

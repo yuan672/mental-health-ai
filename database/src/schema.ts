@@ -44,6 +44,7 @@ export const knowledgeContentOrigin = pgEnum('knowledge_content_origin', [
   'curated',
   'synthetic_fixture',
 ]);
+export const staffPrincipalStatus = pgEnum('staff_principal_status', ['active', 'disabled']);
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey(),
@@ -79,6 +80,103 @@ export const sessions = pgTable(
     uniqueIndex('sessions_token_hash_unique').on(table.tokenHash),
     index('sessions_user_id_idx').on(table.userId),
     index('sessions_expires_at_idx').on(table.expiresAt),
+  ],
+);
+
+export const staffPrincipals = pgTable(
+  'staff_principals',
+  {
+    id: uuid('id').primaryKey(),
+    status: staffPrincipalStatus('status').notNull().default('active'),
+    authorizationRevision: integer('authorization_revision').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    disabledAt: timestamp('disabled_at', { withTimezone: true, mode: 'date' }),
+  },
+  (table) => [
+    check('staff_principals_revision_positive', sql`${table.authorizationRevision} > 0`),
+    check(
+      'staff_principals_status_timestamp_check',
+      sql`(${table.status} = 'active' AND ${table.disabledAt} IS NULL) OR (${table.status} = 'disabled' AND ${table.disabledAt} IS NOT NULL)`,
+    ),
+  ],
+);
+
+export const staffPasswordCredentials = pgTable(
+  'staff_password_credentials',
+  {
+    staffPrincipalId: uuid('staff_principal_id')
+      .primaryKey()
+      .references(() => staffPrincipals.id, { onDelete: 'cascade' }),
+    email: varchar('email', { length: 320 }).notNull(),
+    passwordHash: varchar('password_hash', { length: 512 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex('staff_password_credentials_email_unique').on(table.email)],
+);
+
+export const staffSessions = pgTable(
+  'staff_sessions',
+  {
+    id: uuid('id').primaryKey(),
+    staffPrincipalId: uuid('staff_principal_id')
+      .notNull()
+      .references(() => staffPrincipals.id, { onDelete: 'cascade' }),
+    tokenHash: char('token_hash', { length: 64 }).notNull(),
+    issuedAuthorizationRevision: integer('issued_authorization_revision').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true, mode: 'date' }),
+  },
+  (table) => [
+    uniqueIndex('staff_sessions_token_hash_unique').on(table.tokenHash),
+    index('staff_sessions_principal_idx').on(table.staffPrincipalId),
+    index('staff_sessions_expires_at_idx').on(table.expiresAt),
+    check('staff_sessions_revision_positive', sql`${table.issuedAuthorizationRevision} > 0`),
+  ],
+);
+
+export const staffRoleGrants = pgTable(
+  'staff_role_grants',
+  {
+    id: uuid('id').primaryKey(),
+    staffPrincipalId: uuid('staff_principal_id')
+      .notNull()
+      .references(() => staffPrincipals.id, { onDelete: 'cascade' }),
+    roleKey: varchar('role_key', { length: 64 }).notNull(),
+    grantSource: varchar('grant_source', { length: 16 }).notNull(),
+    grantedByPrincipalId: uuid('granted_by_principal_id'),
+    grantedAt: timestamp('granted_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    revokedByPrincipalId: uuid('revoked_by_principal_id'),
+    revokedAt: timestamp('revoked_at', { withTimezone: true, mode: 'date' }),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.grantedByPrincipalId],
+      foreignColumns: [staffPrincipals.id],
+      name: 'staff_role_grants_granted_by_fk',
+    }).onDelete('set null'),
+    foreignKey({
+      columns: [table.revokedByPrincipalId],
+      foreignColumns: [staffPrincipals.id],
+      name: 'staff_role_grants_revoked_by_fk',
+    }).onDelete('set null'),
+    uniqueIndex('staff_role_grants_active_unique')
+      .on(table.staffPrincipalId, table.roleKey)
+      .where(sql`${table.revokedAt} IS NULL`),
+    uniqueIndex('staff_role_grants_bootstrap_unique')
+      .on(table.grantSource)
+      .where(sql`${table.grantSource} = 'bootstrap'`),
+    index('staff_role_grants_principal_idx').on(table.staffPrincipalId, table.grantedAt),
+    check('staff_role_grants_source_check', sql`${table.grantSource} IN ('bootstrap', 'staff')`),
+    check(
+      'staff_role_grants_bootstrap_check',
+      sql`${table.grantSource} <> 'bootstrap' OR (${table.roleKey} = 'access_administrator' AND ${table.grantedByPrincipalId} IS NULL)`,
+    ),
+    check(
+      'staff_role_grants_revocation_check',
+      sql`(${table.revokedAt} IS NULL AND ${table.revokedByPrincipalId} IS NULL) OR ${table.revokedAt} IS NOT NULL`,
+    ),
   ],
 );
 
@@ -616,6 +714,10 @@ export const schema = {
   knowledgeArticleVersions,
   riskEvents,
   sessions,
+  staffPasswordCredentials,
+  staffPrincipals,
+  staffRoleGrants,
+  staffSessions,
   users,
 };
 
@@ -631,3 +733,4 @@ export type ReviewPriority = (typeof reviewPriority.enumValues)[number];
 export type KnowledgePublicationStatus = (typeof knowledgePublicationStatus.enumValues)[number];
 export type KnowledgeReviewStatus = (typeof knowledgeReviewStatus.enumValues)[number];
 export type KnowledgeContentOrigin = (typeof knowledgeContentOrigin.enumValues)[number];
+export type StaffPrincipalStatus = (typeof staffPrincipalStatus.enumValues)[number];

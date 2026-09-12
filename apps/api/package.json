@@ -16,7 +16,9 @@
     "knowledge:validate-manifest": "pnpm run build && node dist/src/commands/validate-knowledge-manifest.js",
     "knowledge:publish": "pnpm run build && node dist/src/commands/publish-knowledge.js",
     "knowledge:withdraw": "pnpm run build && node dist/src/commands/withdraw-knowledge.js",
-    "knowledge:seed-fixture": "pnpm run build && node dist/src/commands/seed-knowledge-fixture.js"
+    "knowledge:seed-fixture": "pnpm run build && node dist/src/commands/seed-knowledge-fixture.js",
+    "admin:bootstrap": "pnpm --filter @mental-health/database build && pnpm run build && node dist/src/commands/bootstrap-staff.js",
+    "admin:seed-fixture": "pnpm --filter @mental-health/database build && pnpm run build && node dist/src/commands/seed-admin-fixture.js"
   },
   "dependencies": {
     "@mental-health/database": "workspace:*",

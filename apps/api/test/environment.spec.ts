@@ -78,6 +78,28 @@ describe('identity environment validation', () => {
     ).toThrow('SESSION_TTL_SECONDS must be 604800');
   });
 
+  it.each(['staging', 'production'] as const)(
+    'keeps Admin authentication fail-closed in %s until production prerequisites exist',
+    (appEnvironment) => {
+      expect(() =>
+        parseEnvironment({
+          ...baseEnvironment,
+          APP_ENV: appEnvironment,
+          AGE_VERIFICATION_PROVIDER: 'unconfigured',
+          ADMIN_AUTH_ENABLED: 'true',
+        }),
+      ).toThrow('Admin authentication is restricted to development and test');
+      expect(
+        parseEnvironment({
+          ...baseEnvironment,
+          APP_ENV: appEnvironment,
+          AGE_VERIFICATION_PROVIDER: 'unconfigured',
+          ADMIN_AUTH_ENABLED: 'false',
+        }).ADMIN_AUTH_ENABLED,
+      ).toBe(false);
+    },
+  );
+
   it('requires a positive configured daily AI limit', () => {
     expect(() =>
       parseEnvironment({

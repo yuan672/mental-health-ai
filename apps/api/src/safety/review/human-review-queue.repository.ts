@@ -49,8 +49,10 @@ export class HumanReviewQueueRepository {
     riskEventId: string,
     reviewerId: string,
     now: Date,
+    authorize?: (transaction: import('@mental-health/database').AppTransaction) => Promise<void>,
   ): Promise<HumanReviewContext | null> {
     return this.database.database.transaction(async (transaction) => {
+      await authorize?.(transaction);
       const [context] = await transaction
         .select({ queueItem: humanReviewQueueItems, riskEvent: riskEvents })
         .from(humanReviewQueueItems)
@@ -76,8 +78,10 @@ export class HumanReviewQueueRepository {
     itemId: string,
     reviewerId: string,
     now: Date,
+    authorize?: (transaction: import('@mental-health/database').AppTransaction) => Promise<void>,
   ): Promise<HumanReviewQueueRecord | null> {
     return this.database.database.transaction(async (transaction) => {
+      await authorize?.(transaction);
       const [item] = await transaction
         .update(humanReviewQueueItems)
         .set({ state: 'in_review', assignedReviewerId: reviewerId, startedAt: now })
@@ -105,8 +109,10 @@ export class HumanReviewQueueRepository {
     reviewerId: string,
     resolutionCode: string,
     now: Date,
+    authorize?: (transaction: import('@mental-health/database').AppTransaction) => Promise<void>,
   ): Promise<HumanReviewQueueRecord | null> {
     return this.database.database.transaction(async (transaction) => {
+      await authorize?.(transaction);
       const [item] = await transaction
         .update(humanReviewQueueItems)
         .set({ state: 'resolved', reviewedAt: now, resolutionCode })

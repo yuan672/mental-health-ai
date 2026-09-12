@@ -28,8 +28,9 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   with its former Web implementation direction paused for a replacement frontend,
   so Phase 5E is not phase-complete
 - Phase 6 — Admin and operations features: ADR-020 staff-identity and
-  least-privilege backend design accepted; Batch 1 implementation authorized but
-  not yet delivered; no Admin UI is authorized
+  least-privilege backend design accepted; Batch 1 identity/session/authorization
+  implementation is delivered for review in Draft PR #27; no Admin UI or later
+  domain Admin API is authorized
 
 ## Current Production State
 
@@ -177,13 +178,13 @@ controls.
 
 ## Immediate Next Step
 
-Implement the accepted ADR-020 Batch 1 backend for separate staff identity, staff
-sessions, finite permissions, access lifecycle, and auditing in an independent
-Draft PR. Do not implement an Admin UI or later Risk/Queue, Knowledge Management,
-Audit Read, or AI Quality APIs in that batch. Knowledge AI-B remains pending for
-the replacement frontend; keep augmentation disabled by default and retain the v2
-reader plus v1 history guard. Curated content publication and real-model evaluation
-remain separate work.
+Review ADR-020 Batch 1 Draft PR #27 for separate staff identity,
+sessions, finite permissions, access lifecycle, auditing, Migration 0009, and the
+database-backed reviewer authorization adapter. Do not implement an Admin UI or
+later Risk/Queue, Knowledge Management, Audit Read, or AI Quality APIs in that
+batch. Knowledge AI-B remains pending for the replacement frontend; keep
+augmentation disabled by default and retain the v2 reader plus v1 history guard.
+Curated content publication and real-model evaluation remain separate work.
 
 ## Source of Truth
 

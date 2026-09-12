@@ -163,6 +163,18 @@ export class ClientCapabilityRequiredError extends AppError {
   }
 }
 
+export class AdminAuthDisabledError extends AppError {
+  constructor(message = '管理访问当前未启用') {
+    super(ERROR_CODES.ADMIN_AUTH_DISABLED, 503, message);
+  }
+}
+
+export class StaffAuthorizationChangedError extends AppError {
+  constructor(message = '管理权限状态已发生变化，请重新登录后重试') {
+    super(ERROR_CODES.STAFF_AUTHORIZATION_CHANGED, 409, message);
+  }
+}
+
 export class DatabaseError extends AppError {
   constructor(message = '数据服务暂时不可用') {
     super(ERROR_CODES.DATABASE_ERROR, 500, message);

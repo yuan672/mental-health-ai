@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { ConflictError, DatabaseError } from '../../common/errors';
+import { AuthorizationError, ConflictError, DatabaseError } from '../../common/errors';
 import { z } from 'zod';
 import {
   SAFETY_REVIEWER_AUTHORIZER,
@@ -32,14 +32,20 @@ export class HumanReviewQueueService {
     riskEventId: string,
     now = new Date(),
   ): Promise<HumanReviewContext | null> {
-    await this.authorizer.authorize(principal, 'risk_event:read');
+    const transactionAuthorization = this.authorizer.authorizeWithinTransaction
+      ? (transaction: import('@mental-health/database').AppTransaction) =>
+          this.authorizer.authorizeWithinTransaction!(transaction, principal, 'risk_event:read')
+      : undefined;
+    if (!transactionAuthorization) await this.authorizer.authorize(principal, 'risk_event:read');
     try {
       return await this.repository.findContextByRiskEventIdForReviewer(
         riskEventId,
         principal.id,
         now,
+        transactionAuthorization,
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof AuthorizationError) throw error;
       throw new DatabaseError();
     }
   }
@@ -49,13 +55,17 @@ export class HumanReviewQueueService {
     itemId: string,
     now = new Date(),
   ): Promise<HumanReviewQueueRecord> {
-    await this.authorizer.authorize(principal, 'review_queue:claim');
+    const transactionAuthorization = this.authorizer.authorizeWithinTransaction
+      ? (transaction: import('@mental-health/database').AppTransaction) =>
+          this.authorizer.authorizeWithinTransaction!(transaction, principal, 'review_queue:claim')
+      : undefined;
+    if (!transactionAuthorization) await this.authorizer.authorize(principal, 'review_queue:claim');
     try {
-      const item = await this.repository.claim(itemId, principal.id, now);
+      const item = await this.repository.claim(itemId, principal.id, now, transactionAuthorization);
       if (!item) throw new ConflictError('审核项当前无法认领');
       return item;
     } catch (error) {
-      if (error instanceof ConflictError) throw error;
+      if (error instanceof AuthorizationError || error instanceof ConflictError) throw error;
       throw new DatabaseError();
     }
   }
@@ -66,14 +76,29 @@ export class HumanReviewQueueService {
     resolutionCode: string,
     now = new Date(),
   ): Promise<HumanReviewQueueRecord> {
-    await this.authorizer.authorize(principal, 'review_queue:resolve');
+    const transactionAuthorization = this.authorizer.authorizeWithinTransaction
+      ? (transaction: import('@mental-health/database').AppTransaction) =>
+          this.authorizer.authorizeWithinTransaction!(
+            transaction,
+            principal,
+            'review_queue:resolve',
+          )
+      : undefined;
+    if (!transactionAuthorization)
+      await this.authorizer.authorize(principal, 'review_queue:resolve');
     const parsedResolution = resolutionCodeSchema.parse(resolutionCode);
     try {
-      const item = await this.repository.resolve(itemId, principal.id, parsedResolution, now);
+      const item = await this.repository.resolve(
+        itemId,
+        principal.id,
+        parsedResolution,
+        now,
+        transactionAuthorization,
+      );
       if (!item) throw new ConflictError('审核项当前无法完成');
       return item;
     } catch (error) {
-      if (error instanceof ConflictError) throw error;
+      if (error instanceof AuthorizationError || error instanceof ConflictError) throw error;
       throw new DatabaseError();
     }
   }

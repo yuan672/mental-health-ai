@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { trustedTemplateKeySchema } from '../templates/trusted-safety-template.registry';
 
-export const auditActorTypeSchema = z.enum(['system', 'user', 'human_reviewer']);
+export const auditActorTypeSchema = z.enum(['system', 'user', 'human_reviewer', 'staff']);
 export const auditResourceTypeSchema = z.enum([
   'ai_turn',
   'ai_generation',
@@ -11,6 +11,8 @@ export const auditResourceTypeSchema = z.enum([
   'review_queue_item',
   'mood_entry',
   'mood_history',
+  'staff_principal',
+  'staff_principal_query',
 ]);
 export const auditActionSchema = z.enum([
   'conversation_deleted',
@@ -26,6 +28,13 @@ export const auditActionSchema = z.enum([
   'trusted_safety_response_created',
   'mood_entry_deleted',
   'mood_history_deleted',
+  'staff_principal_bootstrapped',
+  'staff_principal_created',
+  'staff_role_granted',
+  'staff_role_revoked',
+  'staff_principal_disabled',
+  'staff_sessions_revoked',
+  'staff_directory_accessed',
 ]);
 
 export type AuditActorType = z.infer<typeof auditActorTypeSchema>;
@@ -68,6 +77,37 @@ const conversationHistoryDeletedMetadataSchema = z
 const moodHistoryDeletedMetadataSchema = z
   .object({ entryCount: z.number().int().positive() })
   .strict();
+const staffBootstrapMetadataSchema = z
+  .object({ roleKey: z.literal('access_administrator') })
+  .strict();
+const staffRoleMetadataSchema = z
+  .object({
+    roleKey: z.enum([
+      'access_administrator',
+      'safety_reviewer',
+      'knowledge_editor',
+      'knowledge_source_reviewer',
+      'knowledge_publisher',
+      'audit_reader',
+      'ai_quality_reviewer',
+    ]),
+    resultingAuthorizationRevision: z.number().int().positive(),
+  })
+  .strict();
+const staffRevisionMetadataSchema = z
+  .object({ resultingAuthorizationRevision: z.number().int().positive() })
+  .strict();
+const staffSessionsRevokedMetadataSchema = z
+  .object({
+    sessionCount: z.number().int().nonnegative(),
+  })
+  .strict();
+const staffDirectoryMetadataSchema = z
+  .object({
+    filterCategory: z.enum(['all', 'id']),
+    returnedCount: z.number().int().nonnegative(),
+  })
+  .strict();
 
 export function parseAuditMetadata(
   action: AuditAction,
@@ -90,6 +130,21 @@ export function parseAuditMetadata(
   }
   if (action === 'mood_history_deleted') {
     return moodHistoryDeletedMetadataSchema.parse(metadata);
+  }
+  if (action === 'staff_principal_bootstrapped') {
+    return staffBootstrapMetadataSchema.parse(metadata);
+  }
+  if (action === 'staff_role_granted' || action === 'staff_role_revoked') {
+    return staffRoleMetadataSchema.parse(metadata);
+  }
+  if (action === 'staff_principal_disabled') {
+    return staffRevisionMetadataSchema.parse(metadata);
+  }
+  if (action === 'staff_sessions_revoked') {
+    return staffSessionsRevokedMetadataSchema.parse(metadata);
+  }
+  if (action === 'staff_directory_accessed') {
+    return staffDirectoryMetadataSchema.parse(metadata);
   }
   return emptyMetadataSchema.parse(metadata);
 }
