@@ -29,7 +29,7 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   so Phase 5E is not phase-complete
 - Phase 6 — Admin and operations features: ADR-020 staff-identity and
   least-privilege backend design accepted; Batch 1 identity/session/authorization
-  implementation is in progress on an independent Draft PR; no Admin UI or later
+  implementation is delivered for review in Draft PR #27; no Admin UI or later
   domain Admin API is authorized
 
 ## Current Production State
@@ -178,7 +178,7 @@ controls.
 
 ## Immediate Next Step
 
-Review the independent ADR-020 Batch 1 Draft PR for separate staff identity,
+Review ADR-020 Batch 1 Draft PR #27 for separate staff identity,
 sessions, finite permissions, access lifecycle, auditing, Migration 0009, and the
 database-backed reviewer authorization adapter. Do not implement an Admin UI or
 later Risk/Queue, Knowledge Management, Audit Read, or AI Quality APIs in that
