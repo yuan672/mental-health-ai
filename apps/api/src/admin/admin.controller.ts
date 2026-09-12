@@ -15,6 +15,12 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { ZodValidationPipe } from '../common/validation/zod-validation.pipe';
+import { AdminAuditReadService } from './admin-audit-read.service';
+import {
+  adminAuditReadDataSchema,
+  adminAuditReadQuerySchema,
+  type AdminAuditReadQuery,
+} from './admin-audit-read.schemas';
 import { AdminAuthEnabledGuard } from './admin-auth-enabled.guard';
 import { AdminNoStoreInterceptor } from './admin-no-store.interceptor';
 import type { StaffAuthenticatedRequest, StaffSessionView } from './staff-authenticated-request';
@@ -107,6 +113,7 @@ export class AdminController {
     private readonly access: StaffAccessService,
     private readonly safetyReview: AdminSafetyReviewService,
     private readonly knowledge: AdminKnowledgeService,
+    private readonly auditRead: AdminAuditReadService,
   ) {}
 
   @Post('auth/login')
@@ -244,6 +251,18 @@ export class AdminController {
       body.expectedAuthorizationRevision,
     );
     return { success: true, data: { ...result, principal: principalView(result.principal) } };
+  }
+
+  @Get('audit-logs')
+  @UseGuards(StaffSessionGuard)
+  async listAuditLogs(
+    @Req() request: StaffAuthenticatedRequest,
+    @Query(new ZodValidationPipe(adminAuditReadQuerySchema)) query: AdminAuditReadQuery,
+  ) {
+    return {
+      success: true,
+      data: adminAuditReadDataSchema.parse(await this.auditRead.list(request.staffSession, query)),
+    };
   }
 
   @Get('risk-events')

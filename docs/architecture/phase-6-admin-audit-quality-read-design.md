@@ -1,6 +1,7 @@
 # Phase 6 Admin Audit Read and AI Turn Metadata Design
 
-- Status: Accepted engineering design; implementation pending
+- Status: Accepted engineering design; Batch 4A implementation in review in PR
+  #33 and Batch 4B implementation pending
 - Date: 2026-09-12
 - Accepted: 2026-09-12
 - Scope: Phase 6 Batch 4 backend read contracts only
