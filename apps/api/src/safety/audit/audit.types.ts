@@ -18,6 +18,8 @@ export const auditResourceTypeSchema = z.enum([
   'knowledge_article_query',
   'knowledge_article',
   'knowledge_article_version',
+  'audit_log_query',
+  'ai_turn_query',
 ]);
 export const auditActionSchema = z.enum([
   'conversation_deleted',
@@ -52,6 +54,8 @@ export const auditActionSchema = z.enum([
   'knowledge_source_verified',
   'knowledge_version_published',
   'knowledge_version_withdrawn',
+  'audit_log_accessed',
+  'ai_quality_metadata_accessed',
 ]);
 
 export type AuditActorType = z.infer<typeof auditActorTypeSchema>;
@@ -159,6 +163,20 @@ const knowledgeMutationMetadataSchema = z
 const knowledgePublicationMutationMetadataSchema = knowledgeMutationMetadataSchema
   .extend({ publicationStatus: z.enum(['published', 'withdrawn']) })
   .strict();
+const auditLogAccessMetadataSchema = z
+  .object({
+    filterCategory: z.enum(['all', 'action', 'resource_type', 'time_range', 'combined']),
+    pageKind: z.enum(['initial', 'continuation']),
+    returnedCount: z.number().int().nonnegative(),
+  })
+  .strict();
+const aiQualityMetadataAccessSchema = z
+  .object({
+    accessCategory: z.enum(['list', 'detail']),
+    filterCategory: z.enum(['all', 'status', 'time_range', 'status_and_time', 'id']),
+    returnedCount: z.number().int().nonnegative(),
+  })
+  .strict();
 
 export function parseAuditMetadata(
   action: AuditAction,
@@ -223,6 +241,12 @@ export function parseAuditMetadata(
   }
   if (action === 'knowledge_version_published' || action === 'knowledge_version_withdrawn') {
     return knowledgePublicationMutationMetadataSchema.parse(metadata);
+  }
+  if (action === 'audit_log_accessed') {
+    return auditLogAccessMetadataSchema.parse(metadata);
+  }
+  if (action === 'ai_quality_metadata_accessed') {
+    return aiQualityMetadataAccessSchema.parse(metadata);
   }
   return emptyMetadataSchema.parse(metadata);
 }

@@ -5,6 +5,8 @@ import { HumanReviewQueueRepository } from '../safety/review/human-review-queue.
 import { AdminAuthEnabledGuard } from './admin-auth-enabled.guard';
 import { AdminNoStoreInterceptor } from './admin-no-store.interceptor';
 import { AdminController } from './admin.controller';
+import { AdminAuditReadRepository } from './admin-audit-read.repository';
+import { AdminAuditReadService } from './admin-audit-read.service';
 import { AdminSafetyReviewRepository } from './admin-safety-review.repository';
 import { AdminSafetyReviewService } from './admin-safety-review.service';
 import { AdminKnowledgeRepository } from './admin-knowledge.repository';
@@ -24,6 +26,8 @@ import { StaffTrustedOriginGuard } from './staff-trusted-origin.guard';
   controllers: [AdminController],
   providers: [
     AdminAuthEnabledGuard,
+    AdminAuditReadRepository,
+    AdminAuditReadService,
     AdminNoStoreInterceptor,
     AdminSafetyReviewRepository,
     AdminSafetyReviewService,

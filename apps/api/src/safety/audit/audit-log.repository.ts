@@ -34,19 +34,22 @@ export class AuditLogRepository {
   appendWithinTransaction(transaction: AppTransaction, input: AppendAuditInput): Promise<unknown> {
     return transaction
       .insert(auditLogs)
-      .values({
-        id: randomUUID(),
-        actorType: auditActorTypeSchema.parse(input.actorType),
-        actorId: input.actorId,
-        action: auditActionSchema.parse(input.action),
-        resourceType: auditResourceTypeSchema.parse(input.resourceType),
-        resourceId: input.resourceId,
-        idempotencyKey: input.idempotencyKey,
-        occurredAt: input.occurredAt,
-        safeMetadata: parseAuditMetadata(input.action, input.safeMetadata),
-        retentionUntil: this.retention.getRetentionUntil(input.occurredAt),
-      })
+      .values(this.values(input))
       .onConflictDoNothing({ target: auditLogs.idempotencyKey });
+  }
+
+  async appendRequiredWithinTransaction(
+    transaction: AppTransaction,
+    input: AppendAuditInput,
+  ): Promise<void> {
+    const inserted = await transaction
+      .insert(auditLogs)
+      .values(this.values(input))
+      .onConflictDoNothing({ target: auditLogs.idempotencyKey })
+      .returning({ id: auditLogs.id });
+    if (inserted.length !== 1) {
+      throw new Error('Required access audit was not inserted');
+    }
   }
 
   async append(input: AppendAuditInput): Promise<void> {
@@ -73,5 +76,20 @@ export class AuditLogRepository {
       }
     });
     return deleted;
+  }
+
+  private values(input: AppendAuditInput): typeof auditLogs.$inferInsert {
+    return {
+      id: randomUUID(),
+      actorType: auditActorTypeSchema.parse(input.actorType),
+      actorId: input.actorId,
+      action: auditActionSchema.parse(input.action),
+      resourceType: auditResourceTypeSchema.parse(input.resourceType),
+      resourceId: input.resourceId,
+      idempotencyKey: input.idempotencyKey,
+      occurredAt: input.occurredAt,
+      safeMetadata: parseAuditMetadata(input.action, input.safeMetadata),
+      retentionUntil: this.retention.getRetentionUntil(input.occurredAt),
+    };
   }
 }

@@ -1,6 +1,7 @@
 # Admin Audit Read and AI Turn Metadata API Draft
 
-- Status: Accepted engineering contract; implementation pending
+- Status: Accepted engineering contract; Batch 4A Audit Read implementation in
+  review, Batch 4B AI Turn metadata implementation pending
 - Base paths: `/admin/audit-logs` and `/admin/ai-quality`
 - Authentication: current Staff Session only
 - Transport: JSON over HTTPS with `Cache-Control: private, no-store`
@@ -337,7 +338,22 @@ commit acknowledgement is a new access and may create another Audit record.
 
 No client implementation is included in this batch.
 
-## 6. Preserved state
+## 6. Batch 4A implementation evidence
+
+The Batch 4A implementation provides `GET /admin/audit-logs` with the strict
+allowlisted projection, transaction-bound database reauthorization, required
+access Audit, bounded time/cursor validation, retention filtering, and PostgreSQL
+snapshot ordering described above. It adds no Schema or Migration.
+
+A local `_test`-database plan review used 30,000 synthetic Audit rows and the
+maximum page read (`limit + 1 = 51`). Representative unfiltered, action,
+resource, combined, and continuation queries completed in approximately
+6.1–12.0 ms on the development machine. This is bounded local evidence, not a
+production performance guarantee; no index Migration is justified for this
+local learning/demo batch. Production query-plan and workload validation remains
+separate readiness work.
+
+## 7. Preserved state
 
 - `ADMIN_AUTH_ENABLED=false` by default.
 - `AI_KNOWLEDGE_ENABLED=false` by default.

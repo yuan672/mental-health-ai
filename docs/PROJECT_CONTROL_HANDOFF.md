@@ -35,8 +35,8 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   PR #29; Batch 3 staff-only Knowledge Management backend contract is accepted in
   PR #30, its backend implementation is engineering complete and merged through
   PR #31, and the Batch 4 Audit Read/Persistent AI Turn metadata design is
-  accepted; Batch 4A and 4B implementation have not started, and no Admin UI is
-  included
+  accepted; Batch 4A Audit Read backend implementation is in review, Batch 4B has
+  not started, and no Admin UI is included
 
 ## Current Production State
 
@@ -135,8 +135,11 @@ safety, or validation for clinical use.
   legal restricted-CLI reviewer identity on HTTP no-change responses. The accepted
   Batch 4 design defines a narrowly allowlisted Audit reader and a Persistent AI
   Turn execution-metadata reader with no message content, scoring, or real-model
-  evaluation. Batch 4A and 4B implementation, all Admin UI, and production
-  enablement remain outside completed scope.
+  evaluation. Batch 4A implements the strict Audit projection, database
+  reauthorization, required access Audit, bounded opaque cursor, retention filter,
+  and short repeatable-read snapshot without a Schema change; it remains in review.
+  Batch 4B implementation, all Admin UI, and production enablement remain outside
+  completed scope.
 
 The existing Web is not a design constraint for the replacement frontend. New page,
 style, component, interaction, and Knowledge AI-B reducer work is paused in this
@@ -204,7 +207,7 @@ controls.
 
 ## Immediate Next Step
 
-Implement Phase 6 Batch 4A Audit Read against the accepted backend contracts in
+Review the Phase 6 Batch 4A Audit Read Draft implementation against
 `docs/architecture/phase-6-admin-audit-quality-read-design.md` and
 `docs/api/admin-audit-quality.md`. Persistent AI Turn metadata Batch 4B remains
 unimplemented until separately authorized. Knowledge AI-B remains pending for the
