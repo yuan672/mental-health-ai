@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  and,
   asc,
   desc,
   eq,
@@ -65,6 +66,25 @@ export class KnowledgePublicationRepository {
       .limit(1)
       .for('update');
     return article ?? null;
+  }
+
+  async lockVersion(
+    transaction: AppTransaction,
+    articleId: string,
+    version: number,
+  ): Promise<KnowledgeVersionRecord | null> {
+    const [record] = await transaction
+      .select()
+      .from(knowledgeArticleVersions)
+      .where(
+        and(
+          eq(knowledgeArticleVersions.articleId, articleId),
+          eq(knowledgeArticleVersions.version, version),
+        ),
+      )
+      .limit(1)
+      .for('update');
+    return record ?? null;
   }
 
   listVersions(transaction: AppTransaction, articleId: string): Promise<KnowledgeVersionRecord[]> {

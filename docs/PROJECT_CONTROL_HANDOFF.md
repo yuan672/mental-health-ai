@@ -33,7 +33,8 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   repair is merged through PR #28; Batch 2 metadata-only Risk Event and Human
   Review Queue backend implementation is engineering complete and merged through
   PR #29; Batch 3 staff-only Knowledge Management backend contract is accepted in
-  PR #30 and its implementation remains pending; no Admin UI is included
+  PR #30, and its backend implementation is delivered in Draft PR #31 but remains
+  unmerged; no Admin UI is included
 
 ## Current Production State
 
@@ -120,9 +121,16 @@ safety, or validation for clinical use.
   deleting or rewriting it. No content publication, real-model evaluation, or AI
   enablement is authorized.
   Admin Batch 1 identity/authorization and Batch 2 metadata-only safety review are
-  engineering complete. The Batch 3 Knowledge Management contract is accepted but
-  not yet implemented. General Audit Read, AI Quality, all Admin UI, and production
-  enablement remain outside completed scope.
+  engineering complete. Draft PR #31 delivers the Batch 3 Knowledge Management
+  backend implementation for review and remains unmerged. It adds exact-version
+  curated draft, source-review, publication/retirement, opaque candidate revision,
+  Staff HTTP, transaction-bound Audit, and CLI-order compatibility without an
+  Admin UI. Its final-readiness fixes make new-target CLI publication honor every
+  unresolved predecessor, serialize source review on the exact evidence row,
+  return candidate projections from a short consistent database view, and retain
+  legal restricted-CLI reviewer identity on HTTP no-change responses. General
+  Audit Read, AI Quality, all Admin UI, and production enablement remain outside
+  completed scope.
 
 The existing Web is not a design constraint for the replacement frontend. New page,
 style, component, interaction, and Knowledge AI-B reducer work is paused in this
@@ -190,13 +198,11 @@ controls.
 
 ## Immediate Next Step
 
-Implement the accepted Phase 6 Batch 3 staff-only Knowledge Management backend
-contract in
-`docs/architecture/phase-6-admin-knowledge-management-design.md` and
-`docs/api/admin-knowledge-management.md`. It refines the already accepted
-editor/source-reviewer/publisher separation without adding an Admin UI or changing
-the public reader and exact-version Knowledge AI contracts. General Audit Read and
-AI Quality batches remain unimplemented. Knowledge AI-B remains pending for the
+Review the delivered Phase 6 Batch 3 staff-only Knowledge Management backend
+against `docs/architecture/phase-6-admin-knowledge-management-design.md` and
+`docs/api/admin-knowledge-management.md`. Do not mark it engineering complete until
+its implementation PR is merged and post-merge CI passes. General Audit Read and AI
+Quality batches remain unimplemented. Knowledge AI-B remains pending for the
 replacement frontend; keep augmentation disabled by default and retain the v2
 reader plus v1 history guard. The three candidate articles remain unverified and
 unpublished, and real-model evaluation remains separate work.

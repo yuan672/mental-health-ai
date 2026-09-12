@@ -7,6 +7,8 @@ import { AdminNoStoreInterceptor } from './admin-no-store.interceptor';
 import { AdminController } from './admin.controller';
 import { AdminSafetyReviewRepository } from './admin-safety-review.repository';
 import { AdminSafetyReviewService } from './admin-safety-review.service';
+import { AdminKnowledgeRepository } from './admin-knowledge.repository';
+import { AdminKnowledgeService } from './admin-knowledge.service';
 import { StaffAccessService } from './staff-access.service';
 import { StaffAuthService } from './staff-auth.service';
 import { DatabaseStaffAuthorizer } from './staff-authorizer.service';
@@ -25,6 +27,8 @@ import { StaffTrustedOriginGuard } from './staff-trusted-origin.guard';
     AdminNoStoreInterceptor,
     AdminSafetyReviewRepository,
     AdminSafetyReviewService,
+    AdminKnowledgeRepository,
+    AdminKnowledgeService,
     DatabaseStaffAuthorizer,
     DatabaseStaffSafetyReviewerAuthorizer,
     PasswordHasherService,

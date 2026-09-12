@@ -25,6 +25,14 @@ export class DatabaseStaffAuthorizer implements StaffAuthorizer {
     context: StaffAuthorizationContext,
     permission: StaffPermission,
   ): Promise<void> {
+    await this.authorizeAnyWithinTransaction(tx, context, [permission]);
+  }
+
+  async authorizeAnyWithinTransaction(
+    tx: AppTransaction,
+    context: StaffAuthorizationContext,
+    permissions: readonly StaffPermission[],
+  ): Promise<void> {
     if (!context?.id || !context.sessionId || !context.authorizationRevision) {
       throw new AuthorizationError();
     }
@@ -38,7 +46,7 @@ export class DatabaseStaffAuthorizer implements StaffAuthorizer {
       session.revokedAt ||
       session.expiresAt.getTime() <= Date.now() ||
       session.issuedAuthorizationRevision !== context.authorizationRevision ||
-      !rolesGrantPermission(principal.roleKeys, permission)
+      !permissions.some((permission) => rolesGrantPermission(principal.roleKeys, permission))
     ) {
       throw new AuthorizationError();
     }

@@ -424,6 +424,7 @@ export const knowledgeArticleVersions = pgTable(
     title: varchar('title', { length: 160 }).notNull(),
     summary: varchar('summary', { length: 320 }).notNull(),
     contentBlocks: jsonb('content_blocks').$type<KnowledgeContentBlockRecord[]>().notNull(),
+    draftRevision: integer('draft_revision').notNull().default(1),
     publicationStatus: knowledgePublicationStatus('publication_status').notNull(),
     reviewStatus: knowledgeReviewStatus('review_status').notNull(),
     contentOrigin: knowledgeContentOrigin('content_origin').notNull(),
@@ -447,13 +448,14 @@ export const knowledgeArticleVersions = pgTable(
       table.id,
     ),
     check('knowledge_article_versions_version_check', sql`${table.version} > 0`),
+    check('knowledge_article_versions_draft_revision_check', sql`${table.draftRevision} > 0`),
     check(
       'knowledge_article_versions_content_blocks_check',
       sql`jsonb_typeof(${table.contentBlocks}) = 'array' AND jsonb_array_length(${table.contentBlocks}) BETWEEN 1 AND 100`,
     ),
     check(
       'knowledge_article_versions_status_timestamps_check',
-      sql`(${table.publicationStatus} = 'draft' AND ${table.publishedAt} IS NULL AND ${table.withdrawnAt} IS NULL) OR (${table.publicationStatus} = 'published' AND ${table.publishedAt} IS NOT NULL AND ${table.withdrawnAt} IS NULL) OR (${table.publicationStatus} = 'withdrawn' AND ${table.publishedAt} IS NOT NULL AND ${table.withdrawnAt} IS NOT NULL AND ${table.withdrawnAt} >= ${table.publishedAt})`,
+      sql`(${table.publicationStatus} = 'draft' AND ${table.publishedAt} IS NULL AND ${table.withdrawnAt} IS NULL) OR (${table.publicationStatus} = 'published' AND ${table.publishedAt} IS NOT NULL AND ${table.withdrawnAt} IS NULL) OR (${table.publicationStatus} = 'withdrawn' AND ${table.withdrawnAt} IS NOT NULL AND ((${table.publishedAt} IS NOT NULL AND ${table.withdrawnAt} >= ${table.publishedAt}) OR (${table.publishedAt} IS NULL AND ${table.contentOrigin} = 'curated' AND ${table.reviewStatus} = 'source_verified')))`,
     ),
     check(
       'knowledge_article_versions_review_evidence_check',

@@ -46,6 +46,12 @@ describe('sensitive logging redaction', () => {
       'knowledge-reference-secret',
       'knowledge-source-url-secret',
       'staff-initial-password-secret',
+      'knowledge-admin-title-secret',
+      'knowledge-admin-summary-secret',
+      'knowledge-admin-block-secret',
+      'knowledge-admin-publisher-secret',
+      'knowledge-admin-source-title-secret',
+      'knowledge-admin-source-locator-secret',
     ];
     logger.info({
       req: {
@@ -81,6 +87,16 @@ describe('sensitive logging redaction', () => {
       knowledgeReferences: [{ title: sensitiveValues[20] }],
       sourceUrl: sensitiveValues[21],
       initialPassword: sensitiveValues[22],
+      title: sensitiveValues[23],
+      summary: sensitiveValues[24],
+      contentBlocks: [{ type: 'paragraph', text: sensitiveValues[25] }],
+      sources: [
+        {
+          publisherName: sensitiveValues[26],
+          sourceTitle: sensitiveValues[27],
+          sourceLocator: sensitiveValues[28],
+        },
+      ],
     });
 
     for (const sensitiveValue of [...sensitiveValues, 'sensitive body', 'private-context-id']) {
