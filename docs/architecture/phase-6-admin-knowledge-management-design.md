@@ -1,7 +1,8 @@
 # Phase 6 Admin Knowledge Management Backend Design
 
-- Status: Proposed for Batch 3 implementation review
+- Status: Accepted for Batch 3 implementation; implementation pending
 - Date: 2026-09-12
+- Accepted: 2026-09-12
 - Scope: staff-only Knowledge editorial, source-review, publication, withdrawal,
   authorization, and Audit contracts; no management UI
 - Related: HANDOFF sections 17 and 45, ADR-007, ADR-018, ADR-019, and ADR-020
@@ -599,19 +600,26 @@ These may be delivered in one implementation PR if it never exposes a partial
 HTTP mutation path that lacks Audit, exact revision checks, or CLI serialization.
 There is no Admin Web batch in this task.
 
-## 16. Decisions required before implementation
+## 16. Accepted implementation boundary
 
-No product decision blocks the minimum implementation. The following engineering
-choices are fixed by this proposal and should be accepted or rejected together:
+No product decision blocks the minimum implementation. The following bounded
+engineering decisions were accepted on 2026-09-12. They do not constitute content
+or production-policy approval:
 
-1. `draft_revision` is an opaque monotonic integer covering the entire candidate;
-2. only the highest unverified draft is editable, while reviewed unpublished
-   candidates may coexist with a higher unverified draft;
-3. publication advances in predecessor order; a wrong curated source-verified
-   draft can be retired without publication, an unverified draft remains editable,
-   and a higher draft does not block resolving its eligible predecessor; and
-4. the restricted CLI retains its existing reviewed-manifest trust model while
-   Admin HTTP derives reviewer identity/time and both share state primitives.
+1. the three finite Knowledge permissions and their least-privilege read/write
+   boundaries remain separate, with combinations available only through explicit
+   existing Staff grants;
+2. `draft_revision` is an opaque monotonic integer covering the entire candidate;
+3. only the highest active `draft + unverified` candidate is editable, while a
+   reviewed unpublished candidate remains frozen evidence and may coexist with a
+   higher unverified draft;
+4. publication advances in predecessor order; an exact
+   `curated + draft + source_verified` candidate may be retired without
+   publication, an unverified draft remains editable and cannot be retired, and a
+   higher draft does not block resolving its eligible predecessor; and
+5. the restricted CLI retains its reviewed-manifest trust boundary, while the
+   Staff HTTP flow derives reviewer identity/time and both entry points share the
+   same version-order and row-lock state primitives.
 
 Production decisions remain separate: real editor/reviewer enrollment and MFA,
 content-review operating procedure, reviewer identity retention, real candidate

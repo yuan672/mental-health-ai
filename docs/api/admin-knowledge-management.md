@@ -1,13 +1,14 @@
 # Admin Knowledge Management API Draft
 
-- Status: Proposed for Phase 6 Batch 3 implementation
+- Status: Accepted Phase 6 Batch 3 contract; implementation pending
 - Base path: `/admin/knowledge`
 - Authentication: current Staff Session only
 - Transport: JSON over HTTPS; `Cache-Control: private, no-store`
 - Related: ADR-018, ADR-019, ADR-020, and
   `docs/architecture/phase-6-admin-knowledge-management-design.md`
 
-This contract is for backend review. No Admin page is included.
+This contract is accepted for the bounded backend implementation. No Admin page is
+included, and acceptance is not content-review or production-policy approval.
 
 ## 1. Common rules
 
