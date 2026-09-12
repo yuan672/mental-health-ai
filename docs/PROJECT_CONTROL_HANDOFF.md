@@ -31,7 +31,9 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   least-privilege backend design accepted; Batch 1 identity/session/authorization
   implementation is merged through PR #27 and its deterministic cancellation-test
   repair is merged through PR #28; Batch 2 metadata-only Risk Event and Human
-  Review Queue backend implementation is in review; no Admin UI is included
+  Review Queue backend implementation is engineering complete and merged through
+  PR #29; Batch 3 staff-only Knowledge Management backend contract is accepted in
+  PR #30 and its implementation remains pending; no Admin UI is included
 
 ## Current Production State
 
@@ -76,6 +78,8 @@ safety, or validation for clinical use.
   staff identity, sessions, finite authorization, and audited access lifecycle
 - [PR #28](https://github.com/yuan672/mental-health-ai/pull/28) — Deterministic
   output-classification cancellation-test repair
+- [PR #29](https://github.com/yuan672/mental-health-ai/pull/29) — Admin Batch 2
+  metadata-only Risk Event and Human Review Queue backend
 
 ## Current Feature Status
 
@@ -115,7 +119,10 @@ safety, or validation for clinical use.
   snapshot; Staging/Production also reject synthetic historical evidence without
   deleting or rewriting it. No content publication, real-model evaluation, or AI
   enablement is authorized.
-  Admin/Reviewer features and production enablement remain outside completed scope.
+  Admin Batch 1 identity/authorization and Batch 2 metadata-only safety review are
+  engineering complete. The Batch 3 Knowledge Management contract is accepted but
+  not yet implemented. General Audit Read, AI Quality, all Admin UI, and production
+  enablement remain outside completed scope.
 
 The existing Web is not a design constraint for the replacement frontend. New page,
 style, component, interaction, and Knowledge AI-B reducer work is paused in this
@@ -183,14 +190,16 @@ controls.
 
 ## Immediate Next Step
 
-Review the Phase 6 Batch 2 metadata-only Risk Event and Human Review Queue backend.
-Its five routes reuse the existing Risk/Queue tables and atomic state transitions,
-require a current `safety_reviewer` staff session, and return no psychological
-message content or user linkage. Knowledge Management, general Audit Read, AI
-Quality, and Admin UI batches remain unimplemented. Knowledge AI-B remains pending
-for the replacement frontend; keep augmentation disabled by default and retain the
-v2 reader plus v1 history guard. Curated content publication and real-model
-evaluation remain separate work.
+Implement the accepted Phase 6 Batch 3 staff-only Knowledge Management backend
+contract in
+`docs/architecture/phase-6-admin-knowledge-management-design.md` and
+`docs/api/admin-knowledge-management.md`. It refines the already accepted
+editor/source-reviewer/publisher separation without adding an Admin UI or changing
+the public reader and exact-version Knowledge AI contracts. General Audit Read and
+AI Quality batches remain unimplemented. Knowledge AI-B remains pending for the
+replacement frontend; keep augmentation disabled by default and retain the v2
+reader plus v1 history guard. The three candidate articles remain unverified and
+unpublished, and real-model evaluation remains separate work.
 
 ## Source of Truth
 
