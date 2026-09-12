@@ -15,6 +15,14 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { ZodValidationPipe } from '../common/validation/zod-validation.pipe';
+import { AdminAiTurnMetadataService } from './admin-ai-turn-metadata.service';
+import {
+  adminAiTurnIdSchema,
+  adminAiTurnMetadataDetailDataSchema,
+  adminAiTurnMetadataListDataSchema,
+  adminAiTurnMetadataQuerySchema,
+  type AdminAiTurnMetadataQuery,
+} from './admin-ai-turn-metadata.schemas';
 import { AdminAuditReadService } from './admin-audit-read.service';
 import {
   adminAuditReadDataSchema,
@@ -114,6 +122,7 @@ export class AdminController {
     private readonly safetyReview: AdminSafetyReviewService,
     private readonly knowledge: AdminKnowledgeService,
     private readonly auditRead: AdminAuditReadService,
+    private readonly aiTurnMetadata: AdminAiTurnMetadataService,
   ) {}
 
   @Post('auth/login')
@@ -262,6 +271,35 @@ export class AdminController {
     return {
       success: true,
       data: adminAuditReadDataSchema.parse(await this.auditRead.list(request.staffSession, query)),
+    };
+  }
+
+  @Get('ai-quality/turns')
+  @UseGuards(StaffSessionGuard)
+  async listAiTurnMetadata(
+    @Req() request: StaffAuthenticatedRequest,
+    @Query(new ZodValidationPipe(adminAiTurnMetadataQuerySchema))
+    query: AdminAiTurnMetadataQuery,
+  ) {
+    return {
+      success: true,
+      data: adminAiTurnMetadataListDataSchema.parse(
+        await this.aiTurnMetadata.list(request.staffSession, query),
+      ),
+    };
+  }
+
+  @Get('ai-quality/turns/:turnId')
+  @UseGuards(StaffSessionGuard)
+  async getAiTurnMetadata(
+    @Req() request: StaffAuthenticatedRequest,
+    @Param('turnId', new ZodValidationPipe(adminAiTurnIdSchema)) turnId: string,
+  ) {
+    return {
+      success: true,
+      data: adminAiTurnMetadataDetailDataSchema.parse(
+        await this.aiTurnMetadata.get(request.staffSession, turnId),
+      ),
     };
   }
 

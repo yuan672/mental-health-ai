@@ -3,6 +3,11 @@ import { PasswordHasherService } from '../auth/password-hasher.service';
 import { AuditModule } from '../safety/audit/audit.module';
 import { HumanReviewQueueRepository } from '../safety/review/human-review-queue.repository';
 import { AdminAuthEnabledGuard } from './admin-auth-enabled.guard';
+import { AdminAiTurnMetadataRepository } from './admin-ai-turn-metadata.repository';
+import {
+  AdminAiTurnMetadataClock,
+  AdminAiTurnMetadataService,
+} from './admin-ai-turn-metadata.service';
 import { AdminNoStoreInterceptor } from './admin-no-store.interceptor';
 import { AdminController } from './admin.controller';
 import { AdminAuditReadRepository } from './admin-audit-read.repository';
@@ -26,6 +31,9 @@ import { StaffTrustedOriginGuard } from './staff-trusted-origin.guard';
   controllers: [AdminController],
   providers: [
     AdminAuthEnabledGuard,
+    AdminAiTurnMetadataClock,
+    AdminAiTurnMetadataRepository,
+    AdminAiTurnMetadataService,
     AdminAuditReadRepository,
     AdminAuditReadService,
     AdminNoStoreInterceptor,

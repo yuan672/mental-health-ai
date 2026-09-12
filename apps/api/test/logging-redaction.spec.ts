@@ -1,6 +1,8 @@
 import { Writable } from 'node:stream';
+import type { IncomingMessage } from 'node:http';
 import pino from 'pino';
-import { LOG_REDACT_PATHS } from '../src/app.module';
+import { applicationLogProperties, LOG_REDACT_PATHS } from '../src/app.module';
+import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
 import { safeOperationalPath } from '../src/common/http/safe-request-path';
 
 describe('sensitive logging redaction', () => {
@@ -132,5 +134,63 @@ describe('sensitive logging redaction', () => {
       '/admin/staff-principals/:id/roles',
     );
     expect(safeOperationalPath(`/admin/staff-principals/${staffId}/roles`)).not.toContain(staffId);
+  });
+
+  it('collapses the complete AI metadata path family in ordinary and error logs', () => {
+    const turnId = '33333333-3333-4333-8333-333333333333';
+    const repeatedId = '44444444-4444-4444-8444-444444444444';
+    const querySecret = 'private-filter-value';
+    const unsafeSuffix = 'private-unexpected-suffix';
+    const unsafePaths = [
+      `/admin/ai-quality/turns/${turnId}`,
+      `/admin/ai-quality/turns/${turnId}/`,
+      `/admin/ai-quality/turns/${turnId}?filter=${querySecret}`,
+      `/ADMIN/AI-QUALITY/TURNS/${turnId}`,
+      `/AdMiN/aI-qUaLiTy/TuRnS/${turnId}`,
+      `/admin/ai-quality/turns/${turnId}/${repeatedId}/${unsafeSuffix}`,
+      `/admin/ai-quality/turns//${turnId}`,
+    ];
+
+    for (const unsafePath of unsafePaths) {
+      const safePath = safeOperationalPath(unsafePath);
+      expect(safePath).toBe('/admin/ai-quality/turns/:turnId');
+      expect(applicationLogProperties({ url: unsafePath } as IncomingMessage)).toEqual({
+        logType: 'application',
+        path: '/admin/ai-quality/turns/:turnId',
+      });
+      for (const forbidden of [turnId, repeatedId, querySecret, unsafeSuffix]) {
+        expect(safePath).not.toContain(forbidden);
+      }
+    }
+
+    expect(
+      applicationLogProperties({
+        url: `/admin/ai-quality/turns?filter=${querySecret}`,
+      } as IncomingMessage),
+    ).toEqual({ logType: 'application', path: '/admin/ai-quality/turns' });
+
+    const filter = new AppExceptionFilter();
+    const logger = (filter as unknown as { logger: { error: (value: unknown) => void } }).logger;
+    const error = jest.spyOn(logger, 'error').mockImplementation(() => undefined);
+    try {
+      for (const unsafePath of unsafePaths) {
+        filter.catch(new Error('synthetic failure'), {
+          switchToHttp: () => ({
+            getRequest: () => ({ method: 'GET', path: unsafePath }),
+            getResponse: () => ({ destroyed: true, writableEnded: false }),
+          }),
+        } as never);
+      }
+      expect(error).toHaveBeenCalledTimes(unsafePaths.length);
+      for (const [entry] of error.mock.calls) {
+        expect(entry).toEqual(expect.objectContaining({ path: '/admin/ai-quality/turns/:turnId' }));
+        const serialized = JSON.stringify(entry);
+        for (const forbidden of [turnId, repeatedId, querySecret, unsafeSuffix]) {
+          expect(serialized).not.toContain(forbidden);
+        }
+      }
+    } finally {
+      error.mockRestore();
+    }
   });
 });

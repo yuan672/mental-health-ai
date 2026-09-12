@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { IncomingMessage } from 'node:http';
 import { Module } from '@nestjs/common';
 import { LoggerModule } from 'nestjs-pino';
 import { AuthModule } from './auth/auth.module';
@@ -101,6 +102,13 @@ export const LOG_REDACT_PATHS = [
   '*.sourceLocator',
 ] as const;
 
+export function applicationLogProperties(request: IncomingMessage) {
+  return {
+    logType: 'application',
+    path: safeOperationalPath(request.url),
+  } as const;
+}
+
 @Module({
   imports: [
     LoggerModule.forRoot({
@@ -117,10 +125,7 @@ export const LOG_REDACT_PATHS = [
           paths: [...LOG_REDACT_PATHS],
           remove: true,
         },
-        customProps: (request) => ({
-          logType: 'application',
-          path: safeOperationalPath(request.url),
-        }),
+        customProps: applicationLogProperties,
       },
     }),
     DatabaseModule,
