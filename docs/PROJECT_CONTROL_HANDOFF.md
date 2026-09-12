@@ -29,9 +29,9 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   so Phase 5E is not phase-complete
 - Phase 6 — Admin and operations features: ADR-020 staff-identity and
   least-privilege backend design accepted; Batch 1 identity/session/authorization
-  implementation is merged through PR #27; its post-merge develop run exposed an
-  existing fixed-delay cancellation-test race, and the deterministic test repair is
-  pending review; no Admin UI or later domain Admin API is authorized
+  implementation is merged through PR #27 and its deterministic cancellation-test
+  repair is merged through PR #28; Batch 2 metadata-only Risk Event and Human
+  Review Queue backend implementation is in review; no Admin UI is included
 
 ## Current Production State
 
@@ -74,6 +74,8 @@ safety, or validation for clinical use.
   backend and final history consistency/environment-isolation fixes
 - [PR #27](https://github.com/yuan672/mental-health-ai/pull/27) — Admin Batch 1
   staff identity, sessions, finite authorization, and audited access lifecycle
+- [PR #28](https://github.com/yuan672/mental-health-ai/pull/28) — Deterministic
+  output-classification cancellation-test repair
 
 ## Current Feature Status
 
@@ -181,13 +183,14 @@ controls.
 
 ## Immediate Next Step
 
-Review the narrow deterministic repair for the post-merge AI output-classification
-cancellation test before treating `develop` quality CI as closed. PR #27 itself is
-merged; do not start later Risk/Queue, Knowledge Management, Audit Read, AI Quality,
-or Admin UI batches as part of that repair. Knowledge AI-B remains pending for the
-replacement frontend; keep augmentation disabled by default and retain the v2
-reader plus v1 history guard. Curated content publication and real-model evaluation
-remain separate work.
+Review the Phase 6 Batch 2 metadata-only Risk Event and Human Review Queue backend.
+Its five routes reuse the existing Risk/Queue tables and atomic state transitions,
+require a current `safety_reviewer` staff session, and return no psychological
+message content or user linkage. Knowledge Management, general Audit Read, AI
+Quality, and Admin UI batches remain unimplemented. Knowledge AI-B remains pending
+for the replacement frontend; keep augmentation disabled by default and retain the
+v2 reader plus v1 history guard. Curated content publication and real-model
+evaluation remain separate work.
 
 ## Source of Truth
 
