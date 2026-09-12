@@ -17,6 +17,7 @@ const apiEnvironment = {
   DATABASE_URL: databaseUrl,
   TEST_DATABASE_URL: databaseUrl,
   LOG_LEVEL: 'silent',
+  HTTP_RATE_LIMIT_CAPACITY_SCALE: '100',
   SESSION_TTL_SECONDS: '604800',
   AGE_VERIFICATION_PROVIDER: 'mock',
   REQUIRED_TERMS_VERSION: '1.1',

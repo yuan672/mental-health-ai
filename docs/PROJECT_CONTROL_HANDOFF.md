@@ -90,6 +90,8 @@ safety, or validation for clinical use.
   bounded Audit Read backend
 - [PR #34](https://github.com/yuan672/mental-health-ai/pull/34) — Admin Batch 4B
   bounded Persistent AI Turn metadata backend
+- [PR #36](https://github.com/yuan672/mental-health-ai/pull/36) — Accepted minimum
+  HTTP rate-limit and abuse-protection architecture
 
 ## Current Feature Status
 
@@ -204,7 +206,8 @@ controls.
 - Database encryption and key-management policy
 - Backup, restore, and deletion verification
 - Automated retention-cleanup scheduler
-- Abuse prevention and rate limiting
+- Production proxy trust, distributed/edge abuse protection, load-tested rate-limit
+  thresholds, and address-processing review
 - Deployment-layer SSE buffering and disconnect verification
 - Production AI quota policy
 - Multi-instance Incognito runtime decision
@@ -216,9 +219,11 @@ controls.
   backend task. No uncommitted AI-B work was present when the backend Admin design
   branch was created.
 - ADR-021 accepts the minimum process-local HTTP rate-limit and credential-work
-  protection architecture. Its implementation remains pending; the acceptance
-  does not approve production thresholds, proxy trust, cross-instance enforcement,
-  deployment, or production enablement.
+  protection architecture. Its implementation is delivered on
+  `feature/http-abuse-protection-backend` and awaits review. It adds no schema,
+  dependency, external service, or frontend work and does not approve production
+  thresholds, proxy trust, cross-instance enforcement, deployment, or production
+  enablement.
 
 ## Immediate Next Step
 

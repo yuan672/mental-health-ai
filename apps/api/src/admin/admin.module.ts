@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PasswordHasherService } from '../auth/password-hasher.service';
+import { HttpAbuseProtectionModule } from '../http-abuse/http-abuse-protection.module';
 import { AuditModule } from '../safety/audit/audit.module';
 import { HumanReviewQueueRepository } from '../safety/review/human-review-queue.repository';
 import { AdminAuthEnabledGuard } from './admin-auth-enabled.guard';
@@ -27,7 +28,7 @@ import { StaffSessionGuard } from './staff-session.guard';
 import { StaffTrustedOriginGuard } from './staff-trusted-origin.guard';
 
 @Module({
-  imports: [AuditModule],
+  imports: [AuditModule, HttpAbuseProtectionModule],
   controllers: [AdminController],
   providers: [
     AdminAuthEnabledGuard,

@@ -10,7 +10,7 @@ import type { Response } from 'express';
 import { AuthenticatedSessionGuard } from '../auth/authenticated-session.guard';
 import type { AuthenticatedRequest } from '../auth/authenticated-request';
 import { CsrfGuard } from '../auth/csrf.guard';
-import { AIProviderTimeoutError, AppError, ERROR_CODES } from '../common/errors';
+import { AIProviderTimeoutError, AppError, ConflictError, ERROR_CODES } from '../common/errors';
 import {
   applyKnowledgeReferenceResponseHeaders,
   parseKnowledgeReferenceCapability,
@@ -19,11 +19,19 @@ import {
 import { ZodValidationPipe } from '../common/validation/zod-validation.pipe';
 import { AiOrchestrationService } from './ai-orchestration.service';
 import {
+  ActiveAiExecutionCapacityError,
   AiExecutionTotalTimeoutError,
   type ConsentBoundExecution,
 } from './runtime/active-ai-execution.registry';
 import { ConsentExecutionCoordinator } from '../consents/runtime/consent-execution.coordinator';
 import { aiChatRequestSchema, type AiChatRequest } from './ai.schemas';
+import { HttpAbuseAdmissionService } from '../http-abuse/http-abuse-admission.service';
+import { HttpIngress, HttpPrincipal } from '../http-abuse/http-abuse.metadata';
+import {
+  createHttpDisconnectLifecycle,
+  type HttpRequestLifecycle,
+} from '../http-abuse/http-request-lifecycle';
+import { AiTurnService } from './turns/ai-turn.service';
 import {
   parseAiStreamEventV2,
   toAiStreamEventV1,
@@ -123,9 +131,13 @@ export class AiController {
   constructor(
     private readonly orchestration: AiOrchestrationService,
     private readonly consentExecutions: ConsentExecutionCoordinator,
+    private readonly httpAdmission: HttpAbuseAdmissionService,
+    private readonly aiTurns: AiTurnService,
   ) {}
 
   @Post('chat/stream')
+  @HttpIngress('mixed')
+  @HttpPrincipal('manual')
   @UseGuards(AuthenticatedSessionGuard, CsrfGuard)
   async streamChat(
     @Req() request: AuthenticatedRequest,
@@ -133,18 +145,31 @@ export class AiController {
     @Headers('x-mh-knowledge-references') knowledgeCapability: string | undefined,
     @Body(new ZodValidationPipe(aiChatRequestSchema)) body: AiChatRequest,
   ): Promise<void> {
-    response.vary('X-MH-Knowledge-References');
+    const userId = request.authenticatedSession.userId;
     const representation = parseKnowledgeReferenceCapability(knowledgeCapability);
-    const abortController = new AbortController();
-    const onClose = (): void => {
-      if (!response.writableEnded) {
-        abortController.abort(new Error('client_disconnect'));
+    response.vary('X-MH-Knowledge-References');
+    const requestLifecycle = createHttpDisconnectLifecycle(request, response);
+    try {
+      this.assertRequestActive(requestLifecycle);
+      this.httpAdmission.admit('classification_probe', userId, 'user');
+      if (body.mode === 'persistent' && body.conversationId) {
+        const existing = await this.aiTurns.findByClientRequestId(userId, body.clientRequestId);
+        this.assertRequestActive(requestLifecycle);
+        if (existing && existing.conversationId !== body.conversationId) {
+          throw new ConflictError('客户端请求与原对话不一致');
+        }
+        this.httpAdmission.admit(existing ? 'control_recovery' : 'ai_new_work', userId, 'user');
+      } else {
+        this.httpAdmission.admit('ai_new_work', userId, 'user');
       }
-    };
-    response.once('close', onClose);
+      this.assertRequestActive(requestLifecycle);
+    } catch (error) {
+      requestLifecycle.dispose();
+      throw error;
+    }
 
     if (body.mode === 'incognito') {
-      await this.streamIncognito(request, response, body, abortController, onClose, representation);
+      await this.streamIncognito(request, response, body, requestLifecycle, representation);
       return;
     }
 
@@ -156,17 +181,20 @@ export class AiController {
           sessionId: request.authenticatedSession.id,
         },
         body,
-        abortController.signal,
+        requestLifecycle.signal,
         new Date(),
         representation,
       );
     } catch (error) {
-      response.removeListener('close', onClose);
+      requestLifecycle.dispose();
+      if (error instanceof ActiveAiExecutionCapacityError) {
+        this.httpAdmission.rejectConcurrency('ai_new_work', 'user');
+      }
       throw error;
     }
 
     if (prepared.kind === 'existing') {
-      response.removeListener('close', onClose);
+      requestLifecycle.dispose();
       if (response.destroyed || response.writableEnded) return;
       if (prepared.deadlineAt.getTime() <= Date.now()) throw new AIProviderTimeoutError();
       applyKnowledgeReferenceResponseHeaders(response, representation);
@@ -192,7 +220,7 @@ export class AiController {
       } catch (error) {
         cleanupError = error;
       } finally {
-        response.removeListener('close', onClose);
+        requestLifecycle.dispose();
       }
       if (response.destroyed || response.writableEnded) return;
       if (prepared.execution.signal.aborted) {
@@ -215,7 +243,7 @@ export class AiController {
       } catch {
         // The typed execution termination remains the client-visible outcome.
       } finally {
-        response.removeListener('close', onClose);
+        requestLifecycle.dispose();
       }
       if (response.destroyed || response.writableEnded) return;
       clearUnflushedSseHeaders(response);
@@ -287,7 +315,7 @@ export class AiController {
         // A disconnected, cancelled, or expired request must not receive late safety events.
       } finally {
         prepared.execution.dispose();
-        response.removeListener('close', onClose);
+        requestLifecycle.dispose();
         if (!response.writableEnded && !response.destroyed) response.end();
       }
       return;
@@ -296,7 +324,7 @@ export class AiController {
     try {
       for await (const event of this.orchestration.streamPreparedTurn(
         prepared,
-        abortController.signal,
+        requestLifecycle.signal,
       )) {
         eventSequence += 1;
         await this.writeBoundSse(
@@ -332,7 +360,7 @@ export class AiController {
         }
       }
     } finally {
-      response.removeListener('close', onClose);
+      requestLifecycle.dispose();
       if (!response.writableEnded && !response.destroyed) {
         response.end();
       }
@@ -343,8 +371,7 @@ export class AiController {
     request: AuthenticatedRequest,
     response: Response,
     body: IncognitoAiChatRequest,
-    abortController: AbortController,
-    onClose: () => void,
+    requestLifecycle: HttpRequestLifecycle,
     representation: KnowledgeReferenceRepresentation,
   ): Promise<void> {
     let prepared;
@@ -355,12 +382,15 @@ export class AiController {
           sessionId: request.authenticatedSession.id,
         },
         body,
-        abortController.signal,
+        requestLifecycle.signal,
         new Date(),
         representation,
       );
     } catch (error) {
-      response.removeListener('close', onClose);
+      requestLifecycle.dispose();
+      if (error instanceof ActiveAiExecutionCapacityError) {
+        this.httpAdmission.rejectConcurrency('ai_new_work', 'user');
+      }
       throw error;
     }
 
@@ -379,7 +409,7 @@ export class AiController {
       } catch (error) {
         cleanupError = error;
       } finally {
-        response.removeListener('close', onClose);
+        requestLifecycle.dispose();
       }
       if (response.destroyed || response.writableEnded) return;
       if (prepared.execution.signal.aborted || prepared.generation.signal.aborted) {
@@ -405,7 +435,7 @@ export class AiController {
       } catch {
         // The typed execution/context termination remains the client-visible outcome.
       } finally {
-        response.removeListener('close', onClose);
+        requestLifecycle.dispose();
       }
       if (response.destroyed || response.writableEnded) return;
       if (prepared.execution.signal.aborted || prepared.generation.signal.aborted) {
@@ -462,7 +492,7 @@ export class AiController {
         // Context termination, logout, withdrawal, timeout, or disconnect rejects late events.
       } finally {
         this.orchestration.releasePreparedIncognitoTurn(prepared);
-        response.removeListener('close', onClose);
+        requestLifecycle.dispose();
         if (!response.writableEnded && !response.destroyed) response.end();
       }
       return;
@@ -472,7 +502,7 @@ export class AiController {
     try {
       for await (const event of this.orchestration.streamPreparedIncognitoTurn(
         prepared,
-        abortController.signal,
+        requestLifecycle.signal,
       )) {
         eventSequence += 1;
         await this.writeBoundSse(
@@ -518,9 +548,14 @@ export class AiController {
       if (prepared.deliveryState.groundedCommitSucceeded && !groundedCompletionWritten) {
         this.orchestration.retireGroundedIncognitoDelivery(prepared);
       }
-      response.removeListener('close', onClose);
+      requestLifecycle.dispose();
       if (!response.writableEnded && !response.destroyed) response.end();
     }
+  }
+
+  private assertRequestActive(lifecycle: HttpRequestLifecycle): void {
+    if (!lifecycle.signal.aborted) return;
+    throw lifecycle.signal.reason ?? new Error('client_disconnect');
   }
 
   private async writeBoundSse(

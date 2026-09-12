@@ -15,6 +15,7 @@ import {
 import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../auth/authenticated-request';
 import { AuthenticatedSessionGuard } from '../auth/authenticated-session.guard';
+import { HttpIngress, HttpPrincipal } from '../http-abuse/http-abuse.metadata';
 import { CsrfGuard } from '../auth/csrf.guard';
 import { ZodValidationPipe } from '../common/validation/zod-validation.pipe';
 import {
@@ -28,11 +29,16 @@ import {
   type PaginationQuery,
 } from './conversation-access.schemas';
 import { ConversationAccessService } from './conversation-access.service';
+import { HttpAbuseAdmissionService } from '../http-abuse/http-abuse-admission.service';
 
 @Controller('conversations')
 @UseGuards(AuthenticatedSessionGuard)
+@HttpPrincipal('principal_general')
 export class ConversationAccessController {
-  constructor(private readonly access: ConversationAccessService) {}
+  constructor(
+    private readonly access: ConversationAccessService,
+    private readonly httpAdmission: HttpAbuseAdmissionService,
+  ) {}
 
   @Get()
   @Header('Cache-Control', 'private, no-store')
@@ -44,6 +50,8 @@ export class ConversationAccessController {
   }
 
   @Get(':id/messages')
+  @HttpIngress('control')
+  @HttpPrincipal('manual')
   @Header('Cache-Control', 'private, no-store')
   async listMessages(
     @Req() request: AuthenticatedRequest,
@@ -54,6 +62,11 @@ export class ConversationAccessController {
   ) {
     response.vary('X-MH-Knowledge-References');
     const representation = parseKnowledgeReferenceCapability(knowledgeCapability);
+    this.httpAdmission.admit(
+      representation === 'v2' ? 'control_recovery' : 'principal_general',
+      request.authenticatedSession.userId,
+      'user',
+    );
     const result = await this.access.listMessages(
       request.authenticatedSession.userId,
       params.id,
@@ -84,6 +97,8 @@ export class ConversationAccessController {
   }
 
   @Delete(':id')
+  @HttpIngress('control')
+  @HttpPrincipal('control_recovery')
   @HttpCode(200)
   @UseGuards(CsrfGuard)
   delete(
@@ -94,6 +109,8 @@ export class ConversationAccessController {
   }
 
   @Delete()
+  @HttpIngress('control')
+  @HttpPrincipal('control_recovery')
   @HttpCode(200)
   @UseGuards(CsrfGuard)
   deleteAll(@Req() request: AuthenticatedRequest) {

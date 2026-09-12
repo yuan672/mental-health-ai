@@ -4,6 +4,9 @@ import { resolve } from 'node:path';
 loadDotEnv({ path: resolve(process.cwd(), '../../.env'), quiet: true });
 
 process.env.APP_ENV = 'test';
+// Keep broad application suites away from focused limiter fixture thresholds. Dedicated
+// rate-limit tests inject the unscaled policy configuration directly.
+process.env.HTTP_RATE_LIMIT_CAPACITY_SCALE ??= '100';
 process.env.DATABASE_URL = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 process.env.WEB_ORIGINS ??= 'http://localhost:5173';
 process.env.ADMIN_AUTH_ENABLED ??= 'false';

@@ -61,15 +61,17 @@ export class AppExceptionFilter implements ExceptionFilter {
 
     const requestId = (request as Request & { id?: string }).id;
 
-    this.logger.error({
-      event: 'request_failed',
-      requestId,
-      method: request.method,
-      path: safeOperationalPath(request.path),
-      errorCode: appError.code,
-      statusCode: appError.statusCode,
-      errorName: exception instanceof Error ? exception.name : 'UnknownError',
-    });
+    if (appError.code !== ERROR_CODES.RATE_LIMITED) {
+      this.logger.error({
+        event: 'request_failed',
+        requestId,
+        method: request.method,
+        path: safeOperationalPath(request.path),
+        errorCode: appError.code,
+        statusCode: appError.statusCode,
+        errorName: exception instanceof Error ? exception.name : 'UnknownError',
+      });
+    }
 
     // A client can disconnect while bounded cleanup is still waiting on the database.
     // Preserve the operational record, but never attempt a late JSON write to a closed socket.
@@ -85,6 +87,16 @@ export class AppExceptionFilter implements ExceptionFilter {
 
     if (!response.headersSent) {
       response.setHeader('Cache-Control', 'private, no-store');
+      const retryAfterSeconds = appError.metadata?.retryAfterSeconds;
+      if (
+        appError.code === ERROR_CODES.RATE_LIMITED &&
+        typeof retryAfterSeconds === 'number' &&
+        Number.isInteger(retryAfterSeconds) &&
+        retryAfterSeconds >= 1 &&
+        retryAfterSeconds <= 3_600
+      ) {
+        response.setHeader('Retry-After', retryAfterSeconds.toString());
+      }
     }
     response.status(appError.statusCode).json(payload);
   }

@@ -39,3 +39,9 @@ Initial error codes:
 - `CONSENT_UNAVAILABLE`
 - `DATABASE_ERROR`
 - `INTERNAL_ERROR`
+
+`RATE_LIMITED` is a transient HTTP/capacity admission result. A local token-bucket
+rejection includes a bounded `Retry-After` header; concurrency saturation may omit
+it because no exact completion time is known. `QUOTA_EXCEEDED` is the separate
+daily AI product policy and must not be treated as a short retry signal. See
+[`http-abuse-protection.md`](http-abuse-protection.md).

@@ -1,6 +1,7 @@
 # Minimum HTTP Rate Limiting and Abuse Protection Backend Design
 
-- Status: Accepted engineering design; implementation pending
+- Status: Accepted engineering design; implementation delivered on the feature
+  branch and pending review
 - Date: 2026-09-12
 - Scope: backend HTTP admission and bounded credential-work protection only
 - Related: HANDOFF sections 26 and 35; ADR-007, ADR-009, ADR-011 through ADR-020

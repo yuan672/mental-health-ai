@@ -162,6 +162,32 @@ export class ConsentsService {
     }
   }
 
+  async classifyHttpAdmission(
+    userId: string,
+    input: ConsentMutationRequest,
+  ): Promise<'principal_general' | 'control_recovery'> {
+    if (!this.consentPolicy.isKnownConsentType(input.consentType)) {
+      throw new ValidationError('授权类型无效');
+    }
+    try {
+      const existingOperation = await this.lifecycleRepository.findOperation(
+        userId,
+        input.operationId,
+      );
+      if (existingOperation) {
+        this.lifecycleRepository.assertOperationMatches(existingOperation, input);
+        return 'control_recovery';
+      }
+      return input.action === 'withdraw' ? 'control_recovery' : 'principal_general';
+    } catch (error) {
+      if (error instanceof ConsentOperationConflictRepositoryError) {
+        throw new ConsentOperationConflictError();
+      }
+      if (error instanceof ValidationError) throw error;
+      throw new ConsentUnavailableError();
+    }
+  }
+
   async mutate(userId: string, input: ConsentMutationRequest): Promise<ConsentMutationResponse> {
     if (!this.consentPolicy.isKnownConsentType(input.consentType)) {
       throw new ValidationError('授权类型无效');

@@ -28,6 +28,23 @@ const environmentSchema = z
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),
+    HTTP_RATE_LIMIT_KEY_TTL_SECONDS: z.coerce.number().int().min(10).max(86_400).default(300),
+    HTTP_RATE_LIMIT_SWEEP_INTERVAL_SECONDS: z.coerce.number().int().min(1).max(3_600).default(30),
+    HTTP_RATE_LIMIT_MAX_KEYS_PER_POLICY: z.coerce
+      .number()
+      .int()
+      .min(10)
+      .max(100_000)
+      .default(1_000),
+    HTTP_RATE_LIMIT_MAX_TOTAL_KEYS: z.coerce.number().int().min(120).max(1_200_000).default(12_000),
+    HTTP_RATE_LIMIT_CAPACITY_SCALE: z.coerce.number().int().min(1).max(100).default(1),
+    HTTP_CREDENTIAL_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(4),
+    HTTP_CREDENTIAL_OPERATION_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(1_000)
+      .max(120_000)
+      .default(30_000),
     WEB_ORIGINS: z
       .string()
       .default('http://localhost:5173')
@@ -131,6 +148,20 @@ const environmentSchema = z
         path: ['ADMIN_AUTH_ENABLED'],
         message:
           'Admin authentication is restricted to development and test until production prerequisites are approved',
+      });
+    }
+    if (value.HTTP_RATE_LIMIT_SWEEP_INTERVAL_SECONDS >= value.HTTP_RATE_LIMIT_KEY_TTL_SECONDS) {
+      context.addIssue({
+        code: 'custom',
+        path: ['HTTP_RATE_LIMIT_SWEEP_INTERVAL_SECONDS'],
+        message: 'HTTP rate-limit sweep interval must be shorter than the key TTL',
+      });
+    }
+    if (value.HTTP_RATE_LIMIT_MAX_KEYS_PER_POLICY * 12 > value.HTTP_RATE_LIMIT_MAX_TOTAL_KEYS) {
+      context.addIssue({
+        code: 'custom',
+        path: ['HTTP_RATE_LIMIT_MAX_TOTAL_KEYS'],
+        message: 'HTTP rate-limit total key bound must cover every hard policy partition',
       });
     }
     if (

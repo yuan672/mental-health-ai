@@ -130,6 +130,37 @@ describe('identity environment validation', () => {
     ).toThrow();
   });
 
+  it('strictly bounds process-local HTTP admission configuration', () => {
+    const parsed = parseEnvironment({
+      ...baseEnvironment,
+      APP_ENV: 'test',
+      AGE_VERIFICATION_PROVIDER: 'mock',
+      HTTP_RATE_LIMIT_MAX_KEYS_PER_POLICY: '10',
+      HTTP_RATE_LIMIT_MAX_TOTAL_KEYS: '120',
+    });
+    expect(parsed.HTTP_RATE_LIMIT_MAX_TOTAL_KEYS).toBe(120);
+    expect(parsed.HTTP_CREDENTIAL_MAX_CONCURRENCY).toBe(4);
+
+    expect(() =>
+      parseEnvironment({
+        ...baseEnvironment,
+        APP_ENV: 'test',
+        AGE_VERIFICATION_PROVIDER: 'mock',
+        HTTP_RATE_LIMIT_MAX_KEYS_PER_POLICY: '11',
+        HTTP_RATE_LIMIT_MAX_TOTAL_KEYS: '120',
+      }),
+    ).toThrow('total key bound');
+    expect(() =>
+      parseEnvironment({
+        ...baseEnvironment,
+        APP_ENV: 'test',
+        AGE_VERIFICATION_PROVIDER: 'mock',
+        HTTP_RATE_LIMIT_KEY_TTL_SECONDS: '30',
+        HTTP_RATE_LIMIT_SWEEP_INTERVAL_SECONDS: '30',
+      }),
+    ).toThrow('sweep interval');
+  });
+
   it('rejects an unsupported quota time zone', () => {
     expect(() =>
       parseEnvironment({

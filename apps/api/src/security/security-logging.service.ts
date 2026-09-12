@@ -6,6 +6,22 @@ export type RegistrationFailureReason =
   'age_not_verified' | 'age_provider_unavailable' | 'duplicate_identifier' | 'transaction_failed';
 export type CsrfRejectionReason = 'untrusted_origin' | 'missing_token' | 'token_mismatch';
 export type StaffLoginFailureReason = 'invalid_credentials' | 'disabled' | 'admin_disabled';
+export type HttpRateLimitPolicyGroup =
+  | 'network_standard'
+  | 'network_control'
+  | 'network_mixed_probe'
+  | 'public_read'
+  | 'user_credential'
+  | 'registration'
+  | 'staff_credential'
+  | 'classification_probe'
+  | 'principal_general'
+  | 'ai_new_work'
+  | 'staff_sensitive'
+  | 'control_recovery'
+  | 'credential_work';
+export type HttpRateLimitIdentityKind = 'network' | 'user' | 'staff';
+export type HttpRateLimitReason = 'token_exhausted' | 'key_capacity' | 'concurrency_capacity';
 
 @Injectable()
 export class SecurityLoggingService {
@@ -62,5 +78,19 @@ export class SecurityLoggingService {
 
   staffCsrfRejected(reason: CsrfRejectionReason): void {
     this.logger.warn({ event: 'staff_csrf_rejected', reason, eventCategory: 'security' });
+  }
+
+  httpRateLimited(
+    policyGroup: HttpRateLimitPolicyGroup,
+    identityKind: HttpRateLimitIdentityKind,
+    reason: HttpRateLimitReason,
+  ): void {
+    this.logger.warn({
+      event: 'http_rate_limited',
+      policyGroup,
+      identityKind,
+      reason,
+      eventCategory: 'security',
+    });
   }
 }

@@ -19,6 +19,7 @@ import { PasswordHasherService } from '../src/auth/password-hasher.service';
 import { hashSessionToken } from '../src/auth/sessions.service';
 import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
 import { env } from '../src/config/env';
+import { CredentialWorkAdmissionService } from '../src/http-abuse/credential-work-admission.service';
 import { ConsentLifecycleRepository } from '../src/consents/consent-lifecycle.repository';
 import { ConsentsService } from '../src/consents/consents.service';
 import { DatabaseService } from '../src/database/database.service';
@@ -79,6 +80,7 @@ describe('Phase 2A identity and access integration', () => {
   let consentsService: ConsentsService;
   let usersRepository: UsersRepository;
   let passwordHasher: PasswordHasherService;
+  let credentialWork: CredentialWorkAdmissionService;
   let registeredEmail: string;
   let registeredUserId: string;
 
@@ -112,6 +114,7 @@ describe('Phase 2A identity and access integration', () => {
     consentsService = moduleRef.get(ConsentsService);
     usersRepository = moduleRef.get(UsersRepository);
     passwordHasher = moduleRef.get(PasswordHasherService);
+    credentialWork = moduleRef.get(CredentialWorkAdmissionService);
   }, 60_000);
 
   afterAll(async () => {
@@ -211,6 +214,7 @@ describe('Phase 2A identity and access integration', () => {
 
   it('registers an age-verified adult atomically without leaking credential storage', async () => {
     registeredEmail = 'adult-' + randomUUID() + '@example.test';
+    const admittedWork = jest.spyOn(credentialWork, 'run');
     const response = await request(app.getHttpServer())
       .post('/auth/register')
       .set('Origin', WEB_ORIGIN)
@@ -227,6 +231,9 @@ describe('Phase 2A identity and access integration', () => {
     });
     expect(JSON.stringify(response.body)).not.toMatch(/password_hash|passwordHash/u);
     expect(await counts()).toEqual({ users: 1, credentials: 1, ageVerifications: 1, consents: 2 });
+    expect(admittedWork).toHaveBeenCalledTimes(1);
+    expect(admittedWork.mock.calls[0]?.[0]).toBeInstanceOf(AbortSignal);
+    admittedWork.mockRestore();
   });
 
   it('rejects invalid input and a weak password before persistence', async () => {
@@ -372,6 +379,7 @@ describe('Phase 2A identity and access integration', () => {
   it('uses indistinguishable responses and an Argon2 path for both login failures', async () => {
     const realVerify = jest.spyOn(passwordHasher, 'verify');
     const dummyVerify = jest.spyOn(passwordHasher, 'verifyDummy');
+    const admittedWork = jest.spyOn(credentialWork, 'run');
 
     const wrongPassword = await request(app.getHttpServer())
       .post('/auth/login')
@@ -391,6 +399,9 @@ describe('Phase 2A identity and access integration', () => {
     expect(wrongPassword.body.error.code).toBe('INVALID_CREDENTIALS');
     expect(realVerify).toHaveBeenCalled();
     expect(dummyVerify).toHaveBeenCalled();
+    expect(admittedWork).toHaveBeenCalledTimes(2);
+    expect(admittedWork.mock.calls.every(([signal]) => signal instanceof AbortSignal)).toBe(true);
+    admittedWork.mockRestore();
   });
 
   it('creates a server-side session cookie and returns no token hash', async () => {

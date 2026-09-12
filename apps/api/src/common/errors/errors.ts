@@ -38,8 +38,13 @@ export class ConflictError extends AppError {
 }
 
 export class RateLimitError extends AppError {
-  constructor(message = '请求过于频繁，请稍后重试') {
-    super(ERROR_CODES.RATE_LIMITED, 429, message);
+  constructor(message = '请求过于频繁，请稍后重试', retryAfterSeconds?: number) {
+    super(
+      ERROR_CODES.RATE_LIMITED,
+      429,
+      message,
+      retryAfterSeconds === undefined ? undefined : { retryAfterSeconds },
+    );
   }
 }
 

@@ -48,7 +48,7 @@ export class AuthService {
     private readonly usersRepository: UsersRepository,
   ) {}
 
-  async register(input: RegisterInput) {
+  async register(input: RegisterInput, signal?: AbortSignal) {
     const acceptedAt = new Date();
     const requiredConsents = this.consentPolicy.prepareRequiredConsents(input.consents, acceptedAt);
     const candidateUserId = randomUUID();
@@ -70,7 +70,7 @@ export class AuthService {
     }
 
     const normalizedEmail = input.email.trim().toLowerCase();
-    const passwordHash = await this.passwordHasher.hash(input.password);
+    const passwordHash = await this.passwordHasher.hash(input.password, signal);
 
     try {
       await this.usersRepository.createVerifiedRegistration({
@@ -107,17 +107,20 @@ export class AuthService {
     };
   }
 
-  async login(input: LoginInput): Promise<{ session: CreatedSession; user: { id: string } }> {
+  async login(
+    input: LoginInput,
+    signal?: AbortSignal,
+  ): Promise<{ session: CreatedSession; user: { id: string } }> {
     const normalizedEmail = input.email.trim().toLowerCase();
     const credential = await this.usersRepository.findCredentialByEmail(normalizedEmail);
 
     if (!credential) {
-      await this.passwordHasher.verifyDummy(input.password);
+      await this.passwordHasher.verifyDummy(input.password, signal);
       this.securityLogger.loginFailed('invalid_credentials');
       throw new InvalidCredentialsError();
     }
 
-    const valid = await this.passwordHasher.verify(credential.passwordHash, input.password);
+    const valid = await this.passwordHasher.verify(credential.passwordHash, input.password, signal);
     if (!valid) {
       this.securityLogger.loginFailed('invalid_credentials');
       throw new InvalidCredentialsError();

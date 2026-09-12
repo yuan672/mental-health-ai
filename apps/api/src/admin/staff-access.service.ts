@@ -56,8 +56,9 @@ export class StaffAccessService {
     actor: StaffAuthorizationContext,
     input: CreateStaffPrincipalRequest,
     now = new Date(),
+    signal?: AbortSignal,
   ): Promise<StaffMutationResult> {
-    const passwordHash = await this.passwordHasher.hash(input.initialPassword);
+    const passwordHash = await this.passwordHasher.hash(input.initialPassword, signal);
     const attempt = async (): Promise<StaffMutationResult> =>
       this.repository.transaction(async (tx) => {
         await this.repository.lockPrincipal(tx, actor.id);
