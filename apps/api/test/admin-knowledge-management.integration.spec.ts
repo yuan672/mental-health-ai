@@ -629,7 +629,11 @@ describe('Phase 6 Batch 3 Admin Knowledge Management backend', () => {
         return originalMarkSourceVerified(...args);
       });
     const blockedClient = await migrationClient.pool.connect();
-    let sourceMutation: Promise<void> | undefined;
+    let sourceMutationResult:
+      | Promise<
+          Readonly<{ status: 'fulfilled' }> | Readonly<{ status: 'rejected'; reason: unknown }>
+        >
+      | undefined;
     const reviewFirstInFlight: Promise<unknown>[] = [];
     try {
       const review = verifySources(reviewFirstKey, 1, reviewFirstRevision).then((value) => value);
@@ -638,7 +642,7 @@ describe('Phase 6 Batch 3 Admin Knowledge Management backend', () => {
       const blockedPid = await blockedClient.query<{ pid: number }>(
         'SELECT pg_backend_pid() AS pid',
       );
-      sourceMutation = (async () => {
+      sourceMutationResult = (async () => {
         await blockedClient.query('BEGIN');
         try {
           await blockedClient.query(
@@ -655,15 +659,24 @@ describe('Phase 6 Batch 3 Admin Knowledge Management backend', () => {
           await blockedClient.query('ROLLBACK');
           throw error;
         }
-      })();
-      reviewFirstInFlight.push(sourceMutation);
+      })().then(
+        () => ({ status: 'fulfilled' as const }),
+        (reason: unknown) => ({ status: 'rejected' as const, reason }),
+      );
+      reviewFirstInFlight.push(sourceMutationResult);
       await withTimeout(
         waitForKnowledgeVersionLockWaiter(migrationClient, blockedPid.rows[0]!.pid),
         'source mutation exact-version lock',
       );
       releaseReview.resolve();
       await expect(review).resolves.toMatchObject({ status: 201 });
-      await expect(sourceMutation).rejects.toThrow('verified or published knowledge sources');
+      const mutationResult = await sourceMutationResult;
+      expect(mutationResult.status).toBe('rejected');
+      if (mutationResult.status === 'rejected') {
+        expect(String(mutationResult.reason)).toContain(
+          'verified or published knowledge sources are immutable',
+        );
+      }
     } finally {
       releaseReview.resolve();
       await Promise.allSettled(reviewFirstInFlight);
