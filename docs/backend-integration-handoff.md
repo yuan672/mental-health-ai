@@ -91,9 +91,11 @@ replace authenticated ownership checks.
 
 ### 3.2 Staff surfaces
 
-Every `/admin` request, including GET, requires an exact configured Admin Origin.
-Every route also requires a current Staff Session unless it is the Staff login
-route. Mutations additionally require Staff CSRF.
+Every `/admin` request, including Staff login and GET, requires an enabled,
+environment-eligible Admin backend plus an exact configured Admin Origin. Staff
+login requires neither a pre-existing Staff Session nor Staff CSRF. Every other
+route requires a current Staff Session; Staff-authenticated mutations, including
+logout, additionally require Staff CSRF.
 
 | Surface            | Routes                                                                                            | Required role/permission source                                                                                                                           |
 | ------------------ | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -115,12 +117,19 @@ wildcard permission.
 - Browser calls must use cookie credentials. Ordinary users use HttpOnly
   `mh_session` and readable `mh_csrf`; Staff uses HttpOnly `mh_staff_session` and
   readable `mh_staff_csrf` scoped to `/admin`.
-- Ordinary cookie-authenticated mutations require an exact `WEB_ORIGINS` Origin
-  (or the existing HTTPS Referer fallback), the CSRF cookie, and
-  `x-csrf-token`. Registration and login require the trusted origin but no
+- Ordinary cookie-authenticated mutations require an exact `WEB_ORIGINS` Origin or,
+  when Origin is absent, a URL-parseable Referer whose origin is in that allowlist;
+  they also require the CSRF cookie and `x-csrf-token`. The current guard itself
+  does not impose a Referer scheme, so an explicitly allowlisted local HTTP origin
+  works in Development. ADR-011 still requires HTTPS Referer in Production; the
+  current implementation relies on the Production `WEB_ORIGINS` configuration and
+  deployment policy to satisfy that requirement rather than enforcing the scheme
+  in this guard. Registration and login require the trusted-origin check but no
   double-submit token. Ordinary GET reads do not require CSRF.
-- Every Admin request requires an exact `ADMIN_WEB_ORIGINS` Origin. Admin mutations
-  also require `x-staff-csrf-token`; Admin GET requests do not.
+- Every Admin request requires an exact `ADMIN_WEB_ORIGINS` Origin. Staff login
+  requires neither an existing Staff Session nor Staff CSRF. Staff-authenticated
+  Admin mutations, including logout, require the `mh_staff_csrf` cookie and
+  `x-staff-csrf-token`; Admin GET requests do not.
 - The Admin cookies use `SameSite=Strict`; user cookies use `SameSite=Lax`. Both
   become `Secure` in Production. Ordinary credentials never authenticate Admin
   routes.
@@ -249,7 +258,11 @@ them.
 5. `pnpm --filter @mental-health/api knowledge:seed-fixture -- <manifest>` inserts
    only a visibly synthetic Knowledge fixture and fails outside Development/Test.
    In Test it additionally requires a database name ending in `_test`. It does not
-   reset the schema.
+   reset the schema. With the repository-pinned pnpm 12.4.0, an isolated argv probe
+   confirmed that the `--` separator is removed before the script starts, so the
+   manifest is `process.argv[2]`. Filtered commands run with `apps/api` as their
+   working directory; the existing manifest loader checks both that directory and
+   the workspace root, so the runbook's root-relative fixture path resolves.
 6. `pnpm --filter @mental-health/api admin:bootstrap` reads one JSON object from
    protected stdin and is limited to Development/Test. Set
    `ADMIN_AUTH_ENABLED=true` only to exercise Admin HTTP in an eligible local
