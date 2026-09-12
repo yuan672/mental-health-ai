@@ -492,18 +492,22 @@ describe('Phase 6 Batch 3 Admin Knowledge Management backend', () => {
         await releaseCli.promise;
         return versions;
       });
+    const cliFirstInFlight: Promise<unknown>[] = [];
     try {
       const cli = publication.publishCurated(cliFirst.thirdManifest);
+      cliFirstInFlight.push(cli);
       await withTimeout(cliObservedPredecessor.promise, 'CLI unresolved predecessor barrier');
       const http = publishVersion('new-target-cli-first', 2, cliFirst.secondRevision).then(
         (value) => value,
       );
+      cliFirstInFlight.push(http);
       await withTimeout(waitForKnowledgeLockWaiter(migrationClient), 'HTTP predecessor lock');
       releaseCli.resolve();
       await expect(cli).rejects.toBeInstanceOf(KnowledgePublicationConflictError);
       await expect(http).resolves.toMatchObject({ status: 201 });
     } finally {
       releaseCli.resolve();
+      await Promise.allSettled(cliFirstInFlight);
       cliSpy.mockRestore();
     }
     const cliFirstVersions = await database.database
@@ -524,18 +528,22 @@ describe('Phase 6 Batch 3 Admin Knowledge Management backend', () => {
         await releaseHttp.promise;
         return originalMarkPublished(...args);
       });
+    const httpFirstInFlight: Promise<unknown>[] = [];
     try {
       const http = publishVersion('new-target-http-first', 2, httpFirst.secondRevision).then(
         (value) => value,
       );
+      httpFirstInFlight.push(http);
       await withTimeout(httpEntered.promise, 'HTTP predecessor publication barrier');
       const cli = publication.publishCurated(httpFirst.thirdManifest);
+      httpFirstInFlight.push(cli);
       await withTimeout(waitForKnowledgeLockWaiter(migrationClient), 'CLI new-target lock');
       releaseHttp.resolve();
       await expect(http).resolves.toMatchObject({ status: 201 });
       await expect(cli).resolves.toMatchObject({ disposition: 'published', version: 3 });
     } finally {
       releaseHttp.resolve();
+      await Promise.allSettled(httpFirstInFlight);
       httpSpy.mockRestore();
     }
     const current = await request(app.getHttpServer())
@@ -562,6 +570,7 @@ describe('Phase 6 Batch 3 Admin Knowledge Management backend', () => {
       .innerJoin(knowledgeArticles, eq(knowledgeArticles.id, knowledgeArticleVersions.articleId))
       .where(eq(knowledgeArticles.articleKey, mutationFirstKey));
     const mutationClient = await migrationClient.pool.connect();
+    const mutationFirstInFlight: Promise<unknown>[] = [];
     try {
       await mutationClient.query('BEGIN');
       await mutationClient.query(
@@ -573,6 +582,7 @@ describe('Phase 6 Batch 3 Admin Knowledge Management backend', () => {
       const review = verifySources(mutationFirstKey, 1, mutationFirstRevision).then(
         (value) => value,
       );
+      mutationFirstInFlight.push(review);
       await withTimeout(
         waitForKnowledgeVersionLockWaiter(migrationClient),
         'source review exact-version lock',
@@ -582,6 +592,7 @@ describe('Phase 6 Batch 3 Admin Knowledge Management backend', () => {
       expect(reviewResponse.status).toBe(409);
     } finally {
       await mutationClient.query('ROLLBACK').catch(() => undefined);
+      await Promise.allSettled(mutationFirstInFlight);
       mutationClient.release();
     }
     const mutationFirstState = await request(app.getHttpServer())
@@ -619,8 +630,10 @@ describe('Phase 6 Batch 3 Admin Knowledge Management backend', () => {
       });
     const blockedClient = await migrationClient.pool.connect();
     let sourceMutation: Promise<void> | undefined;
+    const reviewFirstInFlight: Promise<unknown>[] = [];
     try {
       const review = verifySources(reviewFirstKey, 1, reviewFirstRevision).then((value) => value);
+      reviewFirstInFlight.push(review);
       await withTimeout(reviewEntered.promise, 'source review transaction barrier');
       const blockedPid = await blockedClient.query<{ pid: number }>(
         'SELECT pg_backend_pid() AS pid',
@@ -643,6 +656,7 @@ describe('Phase 6 Batch 3 Admin Knowledge Management backend', () => {
           throw error;
         }
       })();
+      reviewFirstInFlight.push(sourceMutation);
       await withTimeout(
         waitForKnowledgeVersionLockWaiter(migrationClient, blockedPid.rows[0]!.pid),
         'source mutation exact-version lock',
@@ -652,8 +666,8 @@ describe('Phase 6 Batch 3 Admin Knowledge Management backend', () => {
       await expect(sourceMutation).rejects.toThrow('verified or published knowledge sources');
     } finally {
       releaseReview.resolve();
+      await Promise.allSettled(reviewFirstInFlight);
       reviewSpy.mockRestore();
-      await sourceMutation?.catch(() => undefined);
       blockedClient.release();
     }
     const reviewFirstState = await request(app.getHttpServer())
@@ -690,12 +704,14 @@ describe('Phase 6 Batch 3 Admin Knowledge Management backend', () => {
         await releaseSourceRead.promise;
         return originalListSources(...args);
       });
+    const candidateReadInFlight: Promise<unknown>[] = [];
     try {
       const read = request(app.getHttpServer())
         .get(`/admin/knowledge/articles/${key}/versions/1/review-candidate`)
         .set('Origin', ADMIN_ORIGIN)
         .set('Cookie', staffCookie(reviewer))
         .then((value) => value);
+      candidateReadInFlight.push(read);
       await withTimeout(sourceReadEntered.promise, 'candidate source read barrier');
       await migrationClient.pool.query(
         `UPDATE knowledge_article_sources
@@ -712,6 +728,7 @@ describe('Phase 6 Batch 3 Admin Knowledge Management backend', () => {
       );
     } finally {
       releaseSourceRead.resolve();
+      await Promise.allSettled(candidateReadInFlight);
       sourceSpy.mockRestore();
     }
     const refreshed = await request(app.getHttpServer())
