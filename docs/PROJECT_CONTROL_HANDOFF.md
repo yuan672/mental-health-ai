@@ -33,8 +33,8 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   repair is merged through PR #28; Batch 2 metadata-only Risk Event and Human
   Review Queue backend implementation is engineering complete and merged through
   PR #29; Batch 3 staff-only Knowledge Management backend contract is accepted in
-  PR #30, and its backend implementation is delivered on the dedicated feature
-  branch for review but remains unmerged; no Admin UI is included
+  PR #30, and its backend implementation is delivered in Draft PR #31 but remains
+  unmerged; no Admin UI is included
 
 ## Current Production State
 
@@ -121,12 +121,12 @@ safety, or validation for clinical use.
   deleting or rewriting it. No content publication, real-model evaluation, or AI
   enablement is authorized.
   Admin Batch 1 identity/authorization and Batch 2 metadata-only safety review are
-  engineering complete. The Batch 3 Knowledge Management backend implementation is
-  delivered for review and remains unmerged. It adds exact-version curated draft,
-  source-review, publication/retirement, opaque candidate revision, Staff HTTP,
-  transaction-bound Audit, and CLI-order compatibility without an Admin UI.
-  General Audit Read, AI Quality, all Admin UI, and production enablement remain
-  outside completed scope.
+  engineering complete. Draft PR #31 delivers the Batch 3 Knowledge Management
+  backend implementation for review and remains unmerged. It adds exact-version
+  curated draft, source-review, publication/retirement, opaque candidate revision,
+  Staff HTTP, transaction-bound Audit, and CLI-order compatibility without an
+  Admin UI. General Audit Read, AI Quality, all Admin UI, and production enablement
+  remain outside completed scope.
 
 The existing Web is not a design constraint for the replacement frontend. New page,
 style, component, interaction, and Knowledge AI-B reducer work is paused in this

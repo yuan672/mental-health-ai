@@ -1,6 +1,6 @@
 # Admin Knowledge Management API
 
-- Status: Phase 6 Batch 3 implementation delivered for review; not yet merged
+- Status: Phase 6 Batch 3 implementation delivered in Draft PR #31; not yet merged
 - Base path: `/admin/knowledge`
 - Authentication: current Staff Session only
 - Transport: JSON over HTTPS; `Cache-Control: private, no-store`
