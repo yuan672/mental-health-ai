@@ -27,9 +27,9 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   engineering complete and delivered by PR #25; Knowledge AI-B remains pending,
   with its former Web implementation direction paused for a replacement frontend,
   so Phase 5E is not phase-complete
-- Phase 6 — Admin and operations features: implementation not started; a docs-only
-  staff-identity and least-privilege backend design and Proposed ADR-020 are pending
-  review
+- Phase 6 — Admin and operations features: ADR-020 staff-identity and
+  least-privilege backend design accepted; Batch 1 implementation authorized but
+  not yet delivered; no Admin UI is authorized
 
 ## Current Production State
 
@@ -177,13 +177,13 @@ controls.
 
 ## Immediate Next Step
 
-Review the docs-only Admin identity and least-privilege backend proposal and
-Proposed ADR-020. If accepted, implement the first backend batch for separate staff
-identity, staff sessions, finite permissions, access lifecycle, and auditing. Do
-not implement an Admin UI. Knowledge AI-B remains pending for the replacement
-frontend; keep augmentation disabled by default and retain the v2 reader plus v1
-history guard. Curated content publication and real-model evaluation remain
-separate work.
+Implement the accepted ADR-020 Batch 1 backend for separate staff identity, staff
+sessions, finite permissions, access lifecycle, and auditing in an independent
+Draft PR. Do not implement an Admin UI or later Risk/Queue, Knowledge Management,
+Audit Read, or AI Quality APIs in that batch. Knowledge AI-B remains pending for
+the replacement frontend; keep augmentation disabled by default and retain the v2
+reader plus v1 history guard. Curated content publication and real-model evaluation
+remain separate work.
 
 ## Source of Truth
 

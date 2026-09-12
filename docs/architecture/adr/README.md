@@ -21,10 +21,11 @@ Accepted decisions:
 17. ADR-017 Mood Tracking and Minimal Profile Data Boundaries
 18. ADR-018 Knowledge Base Content and Publication Boundaries
 19. ADR-019 LLM Knowledge Retrieval and Citation Boundaries
+20. ADR-020 Admin Identity and Least-Privilege Backend Boundaries
 
 Proposed decisions:
 
-- ADR-020 Admin Identity and Least-Privilege Backend Boundaries
+- None
 
 New decisions should use the next sequential ADR number. Existing accepted ADRs should not be silently rewritten; supersede them with a new ADR when the decision materially changes.
 

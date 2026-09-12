@@ -1,7 +1,9 @@
 # ADR-020: Admin Identity and Least-Privilege Backend Boundaries
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-12
+- Accepted scope: separate staff identity/session domain and metadata-only initial
+  Safety Review and AI Quality Review, including the Batch 1 lifecycle contracts
 - Related: ADR-004, ADR-007, ADR-011, ADR-014, ADR-016, ADR-018, ADR-019
 - Supersedes: None
 
@@ -18,7 +20,7 @@ product access to high-sensitivity operational access. A broad administrator rol
 would also conflict with the requirement that ordinary administrators cannot read
 all psychological conversations.
 
-## Proposed decision
+## Decision
 
 ### Separate staff security domain
 
@@ -182,10 +184,10 @@ of effective access harder, and is unnecessary for the small fixed role set.
 Rejected. Test injection proves service behavior but is not authentication and
 must not become a production principal provider.
 
-## Adoption boundary
+## Acceptance boundary
 
-Acceptance of this ADR would authorize only the backend architecture and a first
-identity/session/authorization implementation batch. It would not approve an Admin
+Acceptance of this ADR authorizes only the backend architecture and the first
+identity/session/authorization implementation batch. It does not approve an Admin
 UI, production staff enrollment, MFA, staff retention, access to psychological
 message bodies, formal source review, candidate-article publication, Production AI
 enablement, or real-model evaluation.

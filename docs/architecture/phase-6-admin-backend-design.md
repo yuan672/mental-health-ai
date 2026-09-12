@@ -1,6 +1,6 @@
 # Phase 6 Admin Identity and Least-Privilege Backend Design
 
-- Status: Design review pending
+- Status: Accepted for Batch 1 backend implementation
 - Date: 2026-09-12
 - Scope: backend identity, sessions, authorization, sensitive-access auditing, and
   implementation boundaries only
@@ -543,7 +543,7 @@ phases.
 
 ### Batch 1: identity, sessions, and authorization foundation
 
-- Proposed ADR acceptance and exact schema/API contract review;
+- Accepted ADR-020 and exact schema/API contract review;
 - four staff tables and forward-only migration;
 - password/session services, separate cookies/origin/CSRF guards;
 - bootstrap and protected synthetic fixture commands;
@@ -679,13 +679,11 @@ enablement. No batch depends on an Admin UI.
 
 ## 13. Priority for the current local learning/demo use
 
-1. Review and accept or reject the separate staff-domain and metadata-only access
-   decisions in this design/Proposed ADR.
-2. Implement Batch 1 with synthetic Development/Test accounts and default-disabled
+1. Implement Batch 1 with synthetic Development/Test accounts and default-disabled
    Admin HTTP auth.
-3. Add metadata-only Risk/Queue APIs to exercise least-privilege and audited access.
-4. Add Knowledge Management only after a real candidate review workflow needs it.
-5. Add Audit read and AI Quality metadata APIs only when there is a concrete local
+2. Add metadata-only Risk/Queue APIs to exercise least-privilege and audited access.
+3. Add Knowledge Management only after a real candidate review workflow needs it.
+4. Add Audit read and AI Quality metadata APIs only when there is a concrete local
    review workflow.
 
 AI-B frontend integration is intentionally outside this backend work. The existing
@@ -693,12 +691,12 @@ v2 server contract remains available to the user's replacement frontend.
 
 ## 14. Decisions needed before implementation
 
-Only two decisions materially affect the first engineering batch:
+The two material engineering decisions for the first batch are accepted:
 
-1. Accept the recommended separate staff identity/session tables instead of adding
-   roles to ordinary users.
-2. Accept that initial Safety Review and AI Quality Review are metadata-only, with
-   no psychological message-content permission.
+1. use separate staff identity/session tables instead of adding roles to ordinary
+   users;
+2. keep initial Safety Review and AI Quality Review metadata-only, with no
+   psychological message-content permission.
 
 Production MFA/identity provider, production bootstrap operation, staff retention,
 and any future content-reading permission do not block local engineering, but they
