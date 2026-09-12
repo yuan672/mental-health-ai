@@ -66,6 +66,7 @@ export class StaffAccessService {
         const byEmail = await this.repository.findPrincipalByEmail(tx, input.email);
         if (byId || byEmail) {
           if (byId && byId.email === input.email && (!byEmail || byEmail.id === byId.id)) {
+            await this.appendDirectoryAudit(tx, actor.id, byId.id, 'id', 1, now);
             return { outcome: 'no_change', principal: byId };
           }
           throw new ConflictError('管理账号标识或邮箱已被使用');
@@ -101,6 +102,7 @@ export class StaffAccessService {
             const byId = await this.repository.findPrincipalById(tx, input.staffPrincipalId);
             const byEmail = await this.repository.findPrincipalByEmail(tx, input.email);
             if (byId && byId.email === input.email && (!byEmail || byEmail.id === byId.id)) {
+              await this.appendDirectoryAudit(tx, actor.id, byId.id, 'id', 1, now);
               return { outcome: 'no_change', principal: byId };
             }
             throw new ConflictError('管理账号标识或邮箱已被使用');
@@ -200,6 +202,7 @@ export class StaffAccessService {
         const active = await this.repository.findActiveRoleGrant(tx, targetId, roleKey);
         if (target.status !== 'active') throw new ConflictError('已停用的管理账号不能变更角色');
         if ((action === 'grant' && active) || (action === 'revoke' && !active)) {
+          await this.appendDirectoryAudit(tx, actor.id, target.id, 'id', 1, now);
           return { outcome: 'no_change', principal: target };
         }
         if (target.authorizationRevision !== expectedRevision) {
@@ -254,7 +257,10 @@ export class StaffAccessService {
     try {
       return await this.repository.transaction(async (tx) => {
         const target = await this.lockAndAuthorize(tx, actor, targetId, 'staff_principal:disable');
-        if (target.status === 'disabled') return { outcome: 'no_change', principal: target };
+        if (target.status === 'disabled') {
+          await this.appendDirectoryAudit(tx, actor.id, target.id, 'id', 1, now);
+          return { outcome: 'no_change', principal: target };
+        }
         if (target.authorizationRevision !== expectedRevision)
           throw new StaffAuthorizationChangedError();
         await this.repository.disablePrincipal(tx, targetId, now);

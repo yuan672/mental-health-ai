@@ -6,7 +6,9 @@ import {
   eq,
   migrate,
   staffPasswordCredentials,
+  staffPrincipals,
   staffRoleGrants,
+  staffSessions,
   humanReviewQueueItems,
   riskEvents,
 } from '@mental-health/database';
@@ -19,15 +21,18 @@ import { DatabaseStaffSafetyReviewerAuthorizer } from '../src/admin/staff-safety
 import { StaffAccessService } from '../src/admin/staff-access.service';
 import { StaffAuthService } from '../src/admin/staff-auth.service';
 import { StaffBootstrapService } from '../src/admin/staff-bootstrap.service';
+import { StaffRepository } from '../src/admin/staff.repository';
 import {
   AuthenticationError,
   AuthorizationError,
   ConflictError,
   DatabaseError,
+  NotFoundError,
 } from '../src/common/errors';
 import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
 import { env } from '../src/config/env';
 import { DatabaseService } from '../src/database/database.service';
+import { createCorsOptions } from '../src/common/http/cors-options';
 import { AuditLogRepository } from '../src/safety/audit/audit-log.repository';
 import { HumanReviewQueueService } from '../src/safety/review/human-review-queue.service';
 
@@ -40,6 +45,32 @@ function cookieValue(setCookies: string[], name: string): string {
   return decodeURIComponent(cookie.slice(name.length + 1).split(';')[0] ?? '');
 }
 
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+async function waitForDeferred(
+  signal: Promise<void>,
+  label: string,
+  timeoutMs = 10_000,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      signal,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 describe('Admin identity and least-privilege backend', () => {
   let app: INestApplication;
   let migrationClient: ReturnType<typeof createDatabaseClient>;
@@ -47,12 +78,15 @@ describe('Admin identity and least-privilege backend', () => {
   let bootstrap: StaffBootstrapService;
   let auth: StaffAuthService;
   let access: StaffAccessService;
+  let staffRepository: StaffRepository;
   let reviewer: DatabaseStaffSafetyReviewerAuthorizer;
   let audits: AuditLogRepository;
   let reviewQueue: HumanReviewQueueService;
   let adminId: string;
   let adminEmail: string;
   let adminSession: Awaited<ReturnType<StaffAuthService['login']>>;
+  let failedAuditBootstrapId: string;
+  let failedConcurrentBootstrapId: string;
   let bootstrapResults: PromiseSettledResult<
     Awaited<ReturnType<StaffBootstrapService['bootstrap']>>
   >[];
@@ -88,14 +122,29 @@ describe('Admin identity and least-privilege backend', () => {
     app = moduleRef.createNestApplication();
     app.useLogger(false);
     app.useGlobalFilters(new AppExceptionFilter());
+    app.enableCors(createCorsOptions());
     await app.init();
     database = moduleRef.get(DatabaseService);
     bootstrap = moduleRef.get(StaffBootstrapService);
     auth = moduleRef.get(StaffAuthService);
     access = moduleRef.get(StaffAccessService);
+    staffRepository = moduleRef.get(StaffRepository);
     reviewer = moduleRef.get(DatabaseStaffSafetyReviewerAuthorizer);
     audits = moduleRef.get(AuditLogRepository);
     reviewQueue = moduleRef.get(HumanReviewQueueService);
+    failedAuditBootstrapId = randomUUID();
+    const bootstrapAuditFailure = jest
+      .spyOn(audits, 'appendWithinTransaction')
+      .mockRejectedValueOnce(new Error('synthetic'));
+    await expect(
+      bootstrap.bootstrap({
+        staffPrincipalId: failedAuditBootstrapId,
+        email: 'root-audit-failure@example.test',
+        password: PASSWORD,
+      }),
+    ).rejects.toBeInstanceOf(DatabaseError);
+    bootstrapAuditFailure.mockRestore();
+
     const firstId = randomUUID();
     const secondId = randomUUID();
     const bootstrapBlocker = await migrationClient.pool.connect();
@@ -125,6 +174,7 @@ describe('Admin identity and least-privilege backend', () => {
       > => result.status === 'fulfilled',
     );
     if (!winner) throw new Error('Expected one bootstrap winner');
+    failedConcurrentBootstrapId = bootstrapResults[0]?.status === 'rejected' ? firstId : secondId;
     adminId = winner.value.id;
     adminEmail = winner.value.email;
     adminSession = await auth.login(adminEmail, PASSWORD);
@@ -139,6 +189,7 @@ describe('Admin identity and least-privilege backend', () => {
   it('keeps ordinary and forged identities outside the staff security domain', async () => {
     await request(app.getHttpServer())
       .get('/admin/auth/session')
+      .set('Origin', ADMIN_ORIGIN)
       .set('Cookie', 'mh_session=ordinary-session')
       .expect(401);
     await expect(reviewer.authorize({ id: adminId }, 'risk_event:read')).rejects.toBeInstanceOf(
@@ -153,6 +204,49 @@ describe('Admin identity and least-privilege backend', () => {
     await expect(reviewer.authorize(adminSession, 'risk_event:read')).rejects.toBeInstanceOf(
       AuthorizationError,
     );
+  });
+
+  it('isolates Admin reads and preflights from the ordinary Web origin', async () => {
+    const ordinaryRead = await request(app.getHttpServer())
+      .get('/admin/staff-principals')
+      .set('Origin', 'http://localhost:5173')
+      .set('Cookie', `mh_staff_session=${adminSession.rawToken}`)
+      .expect(403);
+    expect(ordinaryRead.headers['access-control-allow-origin']).toBeUndefined();
+
+    const noOrigin = await request(app.getHttpServer())
+      .get('/admin/staff-principals')
+      .set('Cookie', `mh_staff_session=${adminSession.rawToken}`)
+      .expect(403);
+    expect(noOrigin.headers['access-control-allow-origin']).toBeUndefined();
+
+    const ordinaryPreflight = await request(app.getHttpServer())
+      .options('/admin/staff-principals')
+      .set('Origin', 'http://localhost:5173')
+      .set('Access-Control-Request-Method', 'GET');
+    expect(ordinaryPreflight.headers['access-control-allow-origin']).toBeUndefined();
+
+    await request(app.getHttpServer())
+      .options('/admin/staff-principals')
+      .set('Origin', ADMIN_ORIGIN)
+      .set('Access-Control-Request-Method', 'GET')
+      .expect('Access-Control-Allow-Origin', ADMIN_ORIGIN)
+      .expect('Access-Control-Allow-Credentials', 'true')
+      .expect(204);
+
+    await request(app.getHttpServer())
+      .get('/admin/staff-principals')
+      .set('Origin', ADMIN_ORIGIN)
+      .set('Cookie', `mh_staff_session=${adminSession.rawToken}`)
+      .expect('Access-Control-Allow-Origin', ADMIN_ORIGIN)
+      .expect('Access-Control-Allow-Credentials', 'true')
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .get('/health')
+      .set('Origin', 'http://localhost:5173')
+      .expect('Access-Control-Allow-Origin', 'http://localhost:5173')
+      .expect(200);
   });
 
   it('uses separate strict cookies, trusted origin, CSRF, and indistinguishable login failures', async () => {
@@ -200,6 +294,29 @@ describe('Admin identity and least-privilege backend', () => {
       .from(staffRoleGrants)
       .where(eq(staffRoleGrants.grantSource, 'bootstrap'));
     expect(bootstrapCount?.value).toBe(1);
+    for (const failedId of [failedAuditBootstrapId, failedConcurrentBootstrapId]) {
+      expect(
+        await database.database
+          .select()
+          .from(staffPrincipals)
+          .where(eq(staffPrincipals.id, failedId)),
+      ).toHaveLength(0);
+      expect(
+        await database.database
+          .select()
+          .from(staffPasswordCredentials)
+          .where(eq(staffPasswordCredentials.staffPrincipalId, failedId)),
+      ).toHaveLength(0);
+      expect(
+        await database.database
+          .select()
+          .from(staffRoleGrants)
+          .where(eq(staffRoleGrants.staffPrincipalId, failedId)),
+      ).toHaveLength(0);
+      expect(
+        await database.database.select().from(auditLogs).where(eq(auditLogs.resourceId, failedId)),
+      ).toHaveLength(0);
+    }
   });
 
   it('creates staff idempotently without overwriting credentials and audits atomically', async () => {
@@ -226,6 +343,28 @@ describe('Admin identity and least-privilege backend', () => {
       .from(staffPasswordCredentials)
       .where(eq(staffPasswordCredentials.staffPrincipalId, id));
     expect(after).toEqual(before);
+    const lifecycleAudits = await database.database
+      .select()
+      .from(auditLogs)
+      .where(eq(auditLogs.idempotencyKey, `staff-principal-created:${id}`));
+    expect(lifecycleAudits).toHaveLength(1);
+    const accessAudits = await database.database
+      .select()
+      .from(auditLogs)
+      .where(eq(auditLogs.resourceId, id));
+    expect(accessAudits.filter((row) => row.action === 'staff_directory_accessed')).toHaveLength(2);
+
+    const failedAccessAudit = jest
+      .spyOn(audits, 'appendWithinTransaction')
+      .mockRejectedValueOnce(new Error('synthetic'));
+    await expect(access.create(adminSession, input)).rejects.toBeInstanceOf(DatabaseError);
+    failedAccessAudit.mockRestore();
+    expect(
+      await database.database
+        .select({ passwordHash: staffPasswordCredentials.passwordHash })
+        .from(staffPasswordCredentials)
+        .where(eq(staffPasswordCredentials.staffPrincipalId, id)),
+    ).toEqual(before);
     await expect(
       access.create(adminSession, { ...input, staffPrincipalId: randomUUID() }),
     ).rejects.toBeInstanceOf(ConflictError);
@@ -234,6 +373,184 @@ describe('Admin identity and least-privilege backend', () => {
       .from(auditLogs)
       .where(eq(auditLogs.idempotencyKey, `staff-principal-created:${id}`));
     expect(createdAudit).toHaveLength(1);
+  }, 60_000);
+
+  it('keeps an uncommitted create invisible and never treats a missing read as rollback proof', async () => {
+    const id = randomUUID();
+    const inserted = deferred();
+    const release = deferred();
+    const originalInsert = staffRepository.insertPrincipal.bind(staffRepository);
+    const insertSpy = jest
+      .spyOn(staffRepository, 'insertPrincipal')
+      .mockImplementation(async (tx, input) => {
+        const result = await originalInsert(tx, input);
+        if (input.id === id) {
+          inserted.resolve();
+          await release.promise;
+        }
+        return result;
+      });
+    const pending = access.create(adminSession, {
+      staffPrincipalId: id,
+      email: 'uncommitted-create@example.test',
+      initialPassword: PASSWORD,
+    });
+    try {
+      await waitForDeferred(inserted.promise, 'uncommitted staff insert');
+      await expect(access.get(adminSession, id)).rejects.toBeInstanceOf(NotFoundError);
+      release.resolve();
+      await expect(pending).resolves.toMatchObject({ outcome: 'applied' });
+    } finally {
+      release.resolve();
+      insertSpy.mockRestore();
+      await Promise.allSettled([pending]);
+    }
+    expect(
+      await database.database.select().from(staffPrincipals).where(eq(staffPrincipals.id, id)),
+    ).toHaveLength(1);
+  });
+
+  it('reconciles a committed create after acknowledgement loss without duplicating evidence', async () => {
+    const id = randomUUID();
+    const input = {
+      staffPrincipalId: id,
+      email: 'create-acknowledgement-loss@example.test',
+      initialPassword: PASSWORD,
+    };
+    const originalTransaction = staffRepository.transaction.bind(staffRepository);
+    const transactionSpy = jest
+      .spyOn(staffRepository, 'transaction')
+      .mockImplementationOnce(async (work) => {
+        await originalTransaction(work);
+        throw new Error('synthetic commit acknowledgement loss');
+      });
+    try {
+      await expect(access.create(adminSession, input)).rejects.toBeInstanceOf(DatabaseError);
+    } finally {
+      transactionSpy.mockRestore();
+    }
+    const hashAfterUnknown = await database.database
+      .select({ passwordHash: staffPasswordCredentials.passwordHash })
+      .from(staffPasswordCredentials)
+      .where(eq(staffPasswordCredentials.staffPrincipalId, id));
+    await expect(access.create(adminSession, input)).resolves.toMatchObject({
+      outcome: 'no_change',
+      principal: { id, email: input.email },
+    });
+    expect(
+      await database.database
+        .select({ passwordHash: staffPasswordCredentials.passwordHash })
+        .from(staffPasswordCredentials)
+        .where(eq(staffPasswordCredentials.staffPrincipalId, id)),
+    ).toEqual(hashAfterUnknown);
+    expect(
+      await database.database
+        .select()
+        .from(auditLogs)
+        .where(eq(auditLogs.idempotencyKey, `staff-principal-created:${id}`)),
+    ).toHaveLength(1);
+    expect(
+      (await database.database.select().from(auditLogs).where(eq(auditLogs.resourceId, id))).filter(
+        (row) => row.action === 'staff_directory_accessed',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('audits the unique-conflict create reconciliation before returning current staff state', async () => {
+    const secondAdmin = await access.create(adminSession, {
+      staffPrincipalId: randomUUID(),
+      email: 'second-access-admin@example.test',
+      initialPassword: PASSWORD,
+    });
+    await access.grantRole(adminSession, secondAdmin.principal.id, 'access_administrator', 1);
+    const secondAdminSession = await auth.login('second-access-admin@example.test', PASSWORD);
+
+    const runConcurrentCreate = async (id: string, email: string) => {
+      const bothReadMissing = deferred();
+      const releaseReads = deferred();
+      let readCount = 0;
+      const originalFind = staffRepository.findPrincipalById.bind(staffRepository);
+      const findSpy = jest
+        .spyOn(staffRepository, 'findPrincipalById')
+        .mockImplementation(async (tx, principalId) => {
+          const principal = await originalFind(tx, principalId);
+          if (principalId === id && !principal && ++readCount <= 2) {
+            if (readCount === 2) bothReadMissing.resolve();
+            await releaseReads.promise;
+          }
+          return principal;
+        });
+      const input = { staffPrincipalId: id, email, initialPassword: PASSWORD };
+      const attempts = [
+        access.create(adminSession, input),
+        access.create(secondAdminSession, input),
+      ];
+      try {
+        await waitForDeferred(bothReadMissing.promise, 'both create transactions to read missing');
+        releaseReads.resolve();
+        return await Promise.allSettled(attempts);
+      } finally {
+        releaseReads.resolve();
+        findSpy.mockRestore();
+        await Promise.allSettled(attempts);
+      }
+    };
+
+    const successId = randomUUID();
+    const successful = await runConcurrentCreate(successId, 'unique-reconcile@example.test');
+    expect(successful.filter((result) => result.status === 'fulfilled')).toHaveLength(2);
+    expect(
+      successful
+        .filter(
+          (
+            result,
+          ): result is PromiseFulfilledResult<Awaited<ReturnType<StaffAccessService['create']>>> =>
+            result.status === 'fulfilled',
+        )
+        .map((result) => result.value.outcome)
+        .sort(),
+    ).toEqual(['applied', 'no_change']);
+    const successAudits = await database.database
+      .select()
+      .from(auditLogs)
+      .where(eq(auditLogs.resourceId, successId));
+    expect(successAudits.filter((row) => row.action === 'staff_principal_created')).toHaveLength(1);
+    expect(successAudits.filter((row) => row.action === 'staff_directory_accessed')).toHaveLength(
+      1,
+    );
+
+    const failedAuditId = randomUUID();
+    const originalAppend = audits.appendWithinTransaction.bind(audits);
+    const auditSpy = jest
+      .spyOn(audits, 'appendWithinTransaction')
+      .mockImplementation((tx, event) => {
+        if (event.action === 'staff_directory_accessed' && event.resourceId === failedAuditId) {
+          return Promise.reject(new Error('synthetic'));
+        }
+        return originalAppend(tx, event);
+      });
+    const failedAudit = await runConcurrentCreate(
+      failedAuditId,
+      'unique-reconcile-audit-failure@example.test',
+    );
+    auditSpy.mockRestore();
+    expect(failedAudit.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(failedAudit.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    expect(failedAudit.find((result) => result.status === 'rejected')).toMatchObject({
+      reason: expect.any(DatabaseError),
+    });
+    const failedAudits = await database.database
+      .select()
+      .from(auditLogs)
+      .where(eq(auditLogs.resourceId, failedAuditId));
+    expect(failedAudits.filter((row) => row.action === 'staff_principal_created')).toHaveLength(1);
+    expect(failedAudits.filter((row) => row.action === 'staff_directory_accessed')).toHaveLength(0);
+    expect(
+      await database.database
+        .select()
+        .from(staffPrincipals)
+        .where(eq(staffPrincipals.id, failedAuditId)),
+    ).toHaveLength(1);
   }, 60_000);
 
   it('applies bounded roles, invalidates old sessions, and permits only mapped reviewer access', async () => {
@@ -256,6 +573,21 @@ describe('Admin identity and least-privilege backend', () => {
     await expect(
       access.grantRole(adminSession, target.principal.id, 'safety_reviewer', 1),
     ).resolves.toMatchObject({ outcome: 'no_change' });
+    const noChangeAudit = await database.database
+      .select()
+      .from(auditLogs)
+      .where(eq(auditLogs.resourceId, target.principal.id));
+    expect(noChangeAudit.filter((row) => row.action === 'staff_directory_accessed')).toHaveLength(
+      1,
+    );
+
+    const failedAccessAudit = jest
+      .spyOn(audits, 'appendWithinTransaction')
+      .mockRejectedValueOnce(new Error('synthetic'));
+    await expect(
+      access.grantRole(adminSession, target.principal.id, 'safety_reviewer', 1),
+    ).rejects.toBeInstanceOf(DatabaseError);
+    failedAccessAudit.mockRestore();
   });
 
   it('uses revoke-sessions as an applied revision boundary even with zero visible sessions', async () => {
@@ -294,6 +626,122 @@ describe('Admin identity and least-privilege backend', () => {
     });
   });
 
+  it('revokes a session when login holds the principal lock before revoke-sessions', async () => {
+    const created = await access.create(adminSession, {
+      staffPrincipalId: randomUUID(),
+      email: 'login-first@example.test',
+      initialPassword: PASSWORD,
+    });
+    const sessionInserted = deferred();
+    const releaseLogin = deferred();
+    const originalCreateSession = staffRepository.createSession.bind(staffRepository);
+    const createSessionSpy = jest
+      .spyOn(staffRepository, 'createSession')
+      .mockImplementation(async (tx, input) => {
+        await originalCreateSession(tx, input);
+        if (input.staffPrincipalId === created.principal.id) {
+          sessionInserted.resolve();
+          await releaseLogin.promise;
+        }
+      });
+    const pendingLogin = auth.login('login-first@example.test', PASSWORD);
+    let pendingRevoke: ReturnType<StaffAccessService['revokeSessions']> | undefined;
+    try {
+      await waitForDeferred(sessionInserted.promise, 'login session insert');
+      pendingRevoke = access.revokeSessions(adminSession, created.principal.id, 1);
+      await waitForLockWaiters('staff_principals', 1);
+      releaseLogin.resolve();
+      const session = await pendingLogin;
+      const revoked = await pendingRevoke;
+      expect(revoked).toMatchObject({ outcome: 'applied', sessionCount: 1 });
+      await expect(auth.validate(session.rawToken)).rejects.toBeInstanceOf(AuthenticationError);
+    } finally {
+      releaseLogin.resolve();
+      createSessionSpy.mockRestore();
+      await Promise.allSettled([pendingLogin, ...(pendingRevoke ? [pendingRevoke] : [])]);
+    }
+  });
+
+  it('binds a later login to the new revision when revoke-sessions holds the lock first', async () => {
+    const created = await access.create(adminSession, {
+      staffPrincipalId: randomUUID(),
+      email: 'revoke-first@example.test',
+      initialPassword: PASSWORD,
+    });
+    const sessionsRevoked = deferred();
+    const releaseRevoke = deferred();
+    const originalRevokeAll = staffRepository.revokeAllSessions.bind(staffRepository);
+    const revokeAllSpy = jest
+      .spyOn(staffRepository, 'revokeAllSessions')
+      .mockImplementation(async (tx, principalId, now) => {
+        const count = await originalRevokeAll(tx, principalId, now);
+        if (principalId === created.principal.id) {
+          sessionsRevoked.resolve();
+          await releaseRevoke.promise;
+        }
+        return count;
+      });
+    const pendingRevoke = access.revokeSessions(adminSession, created.principal.id, 1);
+    let pendingLogin: ReturnType<StaffAuthService['login']> | undefined;
+    try {
+      await waitForDeferred(sessionsRevoked.promise, 'revoke-sessions update');
+      pendingLogin = auth.login('revoke-first@example.test', PASSWORD);
+      await waitForLockWaiters('staff_principals', 1);
+      releaseRevoke.resolve();
+      const revoked = await pendingRevoke;
+      const laterSession = await pendingLogin;
+      expect(revoked).toMatchObject({ outcome: 'applied', sessionCount: 0 });
+      expect(laterSession.authorizationRevision).toBe(2);
+      await expect(
+        access.revokeSessions(adminSession, created.principal.id, 1),
+      ).rejects.toMatchObject({ statusCode: 409 });
+      await expect(auth.validate(laterSession.rawToken)).resolves.toMatchObject({
+        authorizationRevision: 2,
+      });
+    } finally {
+      releaseRevoke.resolve();
+      revokeAllSpy.mockRestore();
+      await Promise.allSettled([pendingRevoke, ...(pendingLogin ? [pendingLogin] : [])]);
+    }
+  });
+
+  it('rolls back revoke-sessions revision and session updates when Audit fails', async () => {
+    const created = await access.create(adminSession, {
+      staffPrincipalId: randomUUID(),
+      email: 'revoke-audit-rollback@example.test',
+      initialPassword: PASSWORD,
+    });
+    const session = await auth.login('revoke-audit-rollback@example.test', PASSWORD);
+    const failure = jest
+      .spyOn(audits, 'appendWithinTransaction')
+      .mockRejectedValueOnce(new Error('synthetic'));
+    await expect(
+      access.revokeSessions(adminSession, created.principal.id, 1),
+    ).rejects.toBeInstanceOf(DatabaseError);
+    failure.mockRestore();
+    await expect(auth.validate(session.rawToken)).resolves.toMatchObject({
+      authorizationRevision: 1,
+    });
+    const [principal] = await database.database
+      .select({ revision: staffPrincipals.authorizationRevision })
+      .from(staffPrincipals)
+      .where(eq(staffPrincipals.id, created.principal.id));
+    expect(principal?.revision).toBe(1);
+    const [storedSession] = await database.database
+      .select({ revokedAt: staffSessions.revokedAt })
+      .from(staffSessions)
+      .where(eq(staffSessions.id, session.sessionId));
+    expect(storedSession?.revokedAt).toBeNull();
+    expect(
+      (
+        await database.database
+          .select()
+          .from(auditLogs)
+          .where(eq(auditLogs.resourceId, created.principal.id))
+      ).filter((row) => row.action === 'staff_sessions_revoked'),
+    ).toHaveLength(0);
+  });
+
   it('makes disablement terminal and invalidates every existing staff session', async () => {
     const created = await access.create(adminSession, {
       staffPrincipalId: randomUUID(),
@@ -314,6 +762,32 @@ describe('Admin identity and least-privilege backend', () => {
     await expect(
       access.grantRole(adminSession, created.principal.id, 'audit_reader', 2),
     ).rejects.toBeInstanceOf(ConflictError);
+
+    await expect(access.disable(adminSession, created.principal.id, 1)).resolves.toMatchObject({
+      outcome: 'no_change',
+      principal: { status: 'disabled', authorizationRevision: 2 },
+    });
+    expect(
+      (
+        await database.database
+          .select()
+          .from(auditLogs)
+          .where(eq(auditLogs.resourceId, created.principal.id))
+      ).filter((row) => row.action === 'staff_directory_accessed'),
+    ).toHaveLength(1);
+
+    const failedAccessAudit = jest
+      .spyOn(audits, 'appendWithinTransaction')
+      .mockRejectedValueOnce(new Error('synthetic'));
+    await expect(access.disable(adminSession, created.principal.id, 1)).rejects.toBeInstanceOf(
+      DatabaseError,
+    );
+    failedAccessAudit.mockRestore();
+    const [disabled] = await database.database
+      .select({ status: staffPrincipals.status, revision: staffPrincipals.authorizationRevision })
+      .from(staffPrincipals)
+      .where(eq(staffPrincipals.id, created.principal.id));
+    expect(disabled).toEqual({ status: 'disabled', revision: 2 });
   });
 
   it('does not return a sensitive directory page when its access audit fails', async () => {

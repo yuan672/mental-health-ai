@@ -298,10 +298,11 @@ email/domain.
 The UUID gives a row-lifetime confirmation boundary without a general operation
 ledger. If that ID already exists for the same normalized email with a credential,
 the endpoint returns `no_change` plus the current staff state and never replaces
-the stored password hash; the response is not an immutable receipt for the
-original password. The same ID with another email, or the same email with another
-ID, returns 409 and changes nothing. After a network-unknown result, the caller
-keeps the original request in memory and first reads
+the stored password hash. Returning that sensitive current state requires the same
+bounded staff-directory access Audit as an explicit read; the response is not an
+immutable receipt for the original password. The same ID with another email, or the
+same email with another ID, returns 409 and changes nothing. After a network-unknown
+result, the caller keeps the original request in memory and first reads
 `GET /admin/staff-principals/:id`. `present` confirms only the current row;
 `missing` may mean the first transaction is still in flight and does not prove
 rollback. Retrying creation is permitted only with the same ID, email, and original
@@ -312,7 +313,8 @@ Grant, revoke, and disable operations use the target principal's
 `expectedAuthorizationRevision`:
 
 - if the requested desired state is already present, return `no_change` and the
-  current authoritative state;
+  current authoritative state only after a bounded staff-directory access Audit
+  commits in the same transaction; an Audit failure returns no sensitive state;
 - otherwise a stale revision returns HTTP 409 and applies nothing;
 - an applied transition increments the revision, revokes every existing target
   session, appends its Audit record, and commits atomically;
@@ -415,8 +417,12 @@ plain `{ id: "reviewer" }` value or an ordinary user ID remains insufficient.
 ## 8. API contract drafts
 
 Every response is `private, no-store`, uses the existing AppError envelope, and is
-strictly Zod validated. All mutations require the staff-origin and staff-CSRF
-guards. These routes are backend contracts only; this design adds no page.
+strictly Zod validated. Every Admin HTTP route, including read-only routes, requires
+a configured Admin origin; ordinary Web origins receive no Admin CORS permission.
+All mutations additionally require the staff-CSRF guard. Controlled non-browser
+callers must supply an allowed Admin `Origin`; offline bootstrap is the no-Origin
+administrative path. These routes are backend contracts only; this design adds no
+page.
 
 ### 8.1 Identity/session foundation batch
 

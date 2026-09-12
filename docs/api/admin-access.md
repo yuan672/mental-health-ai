@@ -7,7 +7,11 @@ recovery, offboarding, retention, and origin configuration are approved.
 Ordinary `mh_session`/`mh_csrf` cookies never authenticate these routes. Staff uses
 `mh_staff_session` (HttpOnly) and `mh_staff_csrf`, both scoped to `/admin` with
 `SameSite=Strict`; mutations also require `x-staff-csrf-token` and a trusted
-`ADMIN_WEB_ORIGINS` origin. Every response is `private, no-store`.
+`ADMIN_WEB_ORIGINS` origin. Every Admin HTTP request, including read-only requests,
+must carry a configured Admin origin. The API does not grant Admin CORS access to
+ordinary `WEB_ORIGINS`; a controlled non-browser HTTP caller must also supply an
+allowed Admin `Origin`, while the offline bootstrap command remains the no-Origin
+administrative path. Every response is `private, no-store`.
 
 ## Session routes
 
@@ -38,7 +42,10 @@ still commit.
 
 Role, disable, and session-revocation requests use
 `{ expectedAuthorizationRevision }`. Role changes are desired-state operations and
-may return `no_change`. An explicit session revocation is always `applied` at the
+may return `no_change`. Before any `no_change` response returns current email/access
+state, the same transaction appends a bounded staff-directory access Audit; Audit
+failure prevents that sensitive response without changing the lifecycle state. An
+explicit session revocation is always `applied` at the
 current revision, including when it revokes zero sessions. Applied access changes
 advance the revision, revoke existing sessions, and append an allowlisted Audit row
 in one transaction.

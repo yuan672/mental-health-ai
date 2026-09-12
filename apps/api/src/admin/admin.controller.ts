@@ -63,7 +63,7 @@ function sessionView(session: StaffSessionView) {
 }
 
 @Controller('admin')
-@UseGuards(AdminAuthEnabledGuard)
+@UseGuards(AdminAuthEnabledGuard, StaffTrustedOriginGuard)
 @UseInterceptors(AdminNoStoreInterceptor)
 export class AdminController {
   constructor(
@@ -73,7 +73,6 @@ export class AdminController {
 
   @Post('auth/login')
   @HttpCode(200)
-  @UseGuards(StaffTrustedOriginGuard)
   async login(
     @Body(new ZodValidationPipe(staffLoginSchema)) body: StaffLoginRequest,
     @Res({ passthrough: true }) response: Response,
