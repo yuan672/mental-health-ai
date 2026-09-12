@@ -1,6 +1,6 @@
 # Admin Audit Read and AI Turn Metadata API Draft
 
-- Status: Proposed; docs-only Phase 6 Batch 4 contract
+- Status: Accepted engineering contract; implementation pending
 - Base paths: `/admin/audit-logs` and `/admin/ai-quality`
 - Authentication: current Staff Session only
 - Transport: JSON over HTTPS with `Cache-Control: private, no-store`

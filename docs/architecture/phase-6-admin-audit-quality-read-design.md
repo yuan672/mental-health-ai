@@ -1,7 +1,8 @@
 # Phase 6 Admin Audit Read and AI Turn Metadata Design
 
-- Status: Proposed for design review
+- Status: Accepted engineering design; implementation pending
 - Date: 2026-09-12
+- Accepted: 2026-09-12
 - Scope: Phase 6 Batch 4 backend read contracts only
 - Related: HANDOFF section 45, ADR-007, ADR-013, ADR-014, ADR-019, and
   Accepted ADR-020
@@ -502,8 +503,8 @@ blocking it. Neither implementation requires an Admin page.
 
 ## 11. Decisions and production-only work
 
-No unresolved product decision blocks implementation after this design is
-accepted. The 7-day default, 31-day maximum, narrow Audit action subset, and split
+No unresolved product decision blocks implementation. The 7-day default, 31-day
+maximum, narrow Audit action subset, and split
 implementation are ordinary reversible engineering choices within ADR-020.
 
 A new architecture decision is required before any future batch adds message or
