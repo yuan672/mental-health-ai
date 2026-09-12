@@ -83,6 +83,42 @@ import type {
 
 const NOW = new Date('2026-09-10T08:00:00.000Z');
 
+type Deferred = Readonly<{
+  promise: Promise<void>;
+  resolve: () => void;
+}>;
+
+function deferred(): Deferred {
+  let settled = false;
+  let resolvePromise: () => void = () => undefined;
+  const promise = new Promise<void>((resolve) => {
+    resolvePromise = resolve;
+  });
+
+  return {
+    promise,
+    resolve: () => {
+      if (settled) return;
+      settled = true;
+      resolvePromise();
+    },
+  };
+}
+
+async function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 2_000): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
 function assessedDecision(level: RiskLevel): AssessedRiskDecision {
   return {
     status: 'assessed',
@@ -166,13 +202,29 @@ class FakeOutputSafetyClassifier implements OutputSafetyClassifier {
   decisions: OutputMode[] = ['ALLOW'];
   readonly candidates: string[] = [];
   readonly inputs: Array<Parameters<OutputSafetyClassifier['classify']>[0]> = [];
+  private classificationBarrier: Readonly<{
+    entered: Deferred;
+    release: Deferred;
+  }> | null = null;
   delayMilliseconds = 0;
 
   reset(...decisions: OutputMode[]): void {
+    this.classificationBarrier?.release.resolve();
     this.decisions = decisions.length > 0 ? [...decisions] : ['ALLOW'];
     this.candidates.length = 0;
     this.inputs.length = 0;
+    this.classificationBarrier = null;
     this.delayMilliseconds = 0;
+  }
+
+  holdNextClassification(): Readonly<{ entered: Promise<void>; release: () => void }> {
+    if (this.classificationBarrier !== null) {
+      throw new Error('Output safety classification barrier already installed');
+    }
+    const entered = deferred();
+    const release = deferred();
+    this.classificationBarrier = { entered, release };
+    return { entered: entered.promise, release: release.resolve };
   }
 
   async classify(
@@ -182,6 +234,12 @@ class FakeOutputSafetyClassifier implements OutputSafetyClassifier {
     void signal;
     this.candidates.push(input.candidate);
     this.inputs.push(input);
+    const barrier = this.classificationBarrier;
+    if (barrier !== null) {
+      this.classificationBarrier = null;
+      barrier.entered.resolve();
+      await barrier.release.promise;
+    }
     if (this.delayMilliseconds > 0) {
       await new Promise((resolve) => setTimeout(resolve, this.delayMilliseconds));
     }
@@ -1020,7 +1078,9 @@ describe('Phase 4 AI safety integration', () => {
 
   it('cancels in-flight output classification without emitting its late result', async () => {
     const userId = await createUser();
-    outputClassifier.delayMilliseconds = 50;
+    // The held classifier deliberately ignores AbortSignal until released so the
+    // test exercises a real late result after classification has started.
+    const classification = outputClassifier.holdNextClassification();
     const prepared = await prepare(userId, '取消输出分类测试');
     if (prepared.kind !== 'ready') throw new Error('Expected generation');
     const controller = new AbortController();
@@ -1035,16 +1095,29 @@ describe('Phase 4 AI safety integration', () => {
         return error;
       }
     })();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    controller.abort(new Error('synthetic client disconnect'));
-    const error = await execution;
+    try {
+      await withTimeout(classification.entered, 'output safety classification entry');
+      expect(outputClassifier.inputs).toHaveLength(1);
+      expect(provider.streamCalls).toBe(1);
 
-    expect(error).toMatchObject({ code: 'AI_PROVIDER_UNAVAILABLE' });
-    expect(emitted.map((event) => event.type)).toEqual(['turn.started']);
-    const turn = await aiTurnsService.findByClientRequestId(userId, prepared.turn.clientRequestId);
-    expect(turn).toMatchObject({ status: 'cancelled', assistantMessageId: null });
-    expect(provider.readersReleased).toBe(1);
-    expect((await quota.getUsage(userId, NOW)).usedCount).toBe(1);
+      controller.abort(new Error('synthetic client disconnect'));
+      classification.release();
+      const error = await withTimeout(execution, 'cancelled AI execution');
+
+      expect(error).toMatchObject({ code: 'AI_PROVIDER_UNAVAILABLE' });
+      expect(emitted.map((event) => event.type)).toEqual(['turn.started']);
+      const turn = await aiTurnsService.findByClientRequestId(
+        userId,
+        prepared.turn.clientRequestId,
+      );
+      expect(turn).toMatchObject({ status: 'cancelled', assistantMessageId: null });
+      expect(provider.readersReleased).toBe(1);
+      expect((await quota.getUsage(userId, NOW)).usedCount).toBe(1);
+    } finally {
+      controller.abort(new Error('synthetic test cleanup'));
+      classification.release();
+      await withTimeout(execution, 'AI execution cleanup').catch(() => undefined);
+    }
   });
 
   it('deduplicates 20 concurrent HIGH safety side effects for one ordinary turn', async () => {
