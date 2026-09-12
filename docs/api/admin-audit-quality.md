@@ -361,6 +361,15 @@ transaction-bound database reauthorization, required access Audit, bounded
 time/cursor validation, parent-Conversation visibility rule, and PostgreSQL
 snapshot ordering described above. It adds no Schema or Migration.
 
+The review hardening establishes `observedAt` only after transaction-bound Staff
+authorization and uses that one value for Conversation expiry, lease projection,
+the initial window, response, and access Audit. Continuations retain their original
+cursor window while receiving a new request `observedAt`. Unknown stored failure
+codes—including names inherited from the JavaScript object prototype—map to the
+bounded `unknown` category. Ordinary and error-log paths collapse the complete
+AI-turn detail path family to one fixed route shape without retaining a target ID,
+query, or extra suffix.
+
 A local `_test`-database plan review temporarily added 30,000 synthetic
 Conversations and AI Turns inside one transaction, analyzed the resulting tables,
 and then rolled the transaction back. The maximum list read (`limit + 1 = 51`)

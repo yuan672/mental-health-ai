@@ -80,5 +80,7 @@ function failureCategory(
     return failureCode === null ? null : 'unknown';
   }
   if (failureCode === null) return 'unknown';
-  return FAILURE_CATEGORIES[failureCode as keyof typeof FAILURE_CATEGORIES] ?? 'unknown';
+  return Object.prototype.hasOwnProperty.call(FAILURE_CATEGORIES, failureCode)
+    ? FAILURE_CATEGORIES[failureCode as keyof typeof FAILURE_CATEGORIES]
+    : 'unknown';
 }

@@ -144,7 +144,10 @@ safety, or validation for clinical use.
   [PR #33](https://github.com/yuan672/mental-health-ai/pull/33). Batch 4B adds the
   strict Persistent AI Turn lifecycle projection, parent-Conversation visibility,
   required access Audit, bounded pagination, and snapshot-ordering tests without a
-  Schema change; its implementation is in review in
+  Schema change. Review hardening also bounds special unknown failure codes, masks
+  the complete detail-route family in operational logs, and establishes one
+  transaction-local observation time after Staff authorization. Its implementation
+  is in review in
   [PR #34](https://github.com/yuan672/mental-health-ai/pull/34). All Admin UI and
   production enablement remain outside completed scope.
 

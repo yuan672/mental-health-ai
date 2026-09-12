@@ -15,7 +15,10 @@ import { Test, type TestingModule } from '@nestjs/testing';
 import { resolve } from 'node:path';
 import request from 'supertest';
 import { AdminAiTurnMetadataRepository } from '../src/admin/admin-ai-turn-metadata.repository';
-import { AdminAiTurnMetadataService } from '../src/admin/admin-ai-turn-metadata.service';
+import {
+  AdminAiTurnMetadataClock,
+  AdminAiTurnMetadataService,
+} from '../src/admin/admin-ai-turn-metadata.service';
 import type { AdminAiTurnStatus } from '../src/admin/admin-ai-turn-metadata.schemas';
 import { StaffAccessService } from '../src/admin/staff-access.service';
 import { StaffAuthService, type CreatedStaffSession } from '../src/admin/staff-auth.service';
@@ -27,6 +30,7 @@ import { encodeOpaqueCursor } from '../src/common/pagination/opaque-cursor';
 import { env } from '../src/config/env';
 import { DatabaseService } from '../src/database/database.service';
 import { AuditLogRepository } from '../src/safety/audit/audit-log.repository';
+import { DatabaseStaffAuthorizer } from '../src/admin/staff-authorizer.service';
 
 const ADMIN_ORIGIN = 'http://localhost:5174';
 const PASSWORD = 'Synthetic-Ai-Metadata-Password-9!';
@@ -66,6 +70,8 @@ describe('Admin Persistent AI Turn metadata backend', () => {
   let database: DatabaseService;
   let repository: AdminAiTurnMetadataRepository;
   let service: AdminAiTurnMetadataService;
+  let clock: AdminAiTurnMetadataClock;
+  let authorizer: DatabaseStaffAuthorizer;
   let audits: AuditLogRepository;
   let access: StaffAccessService;
   let auth: StaffAuthService;
@@ -185,6 +191,8 @@ describe('Admin Persistent AI Turn metadata backend', () => {
     database = moduleRef.get(DatabaseService);
     repository = moduleRef.get(AdminAiTurnMetadataRepository);
     service = moduleRef.get(AdminAiTurnMetadataService);
+    clock = moduleRef.get(AdminAiTurnMetadataClock);
+    authorizer = moduleRef.get(DatabaseStaffAuthorizer);
     audits = moduleRef.get(AuditLogRepository);
     access = moduleRef.get(StaffAccessService);
     auth = moduleRef.get(StaffAuthService);
@@ -363,6 +371,45 @@ describe('Admin Persistent AI Turn metadata backend', () => {
     expect(usage?.value ?? 0).toBe(0);
   });
 
+  it('maps prototype property names to unknown without breaking list, detail, or access Audit', async () => {
+    const turns = await Promise.all(
+      ['toString', 'constructor', '__proto__'].map((failureCode) =>
+        insertTurn({ status: 'failed', failureCode }),
+      ),
+    );
+    const known = await insertTurn({ status: 'failed', failureCode: 'TIMEOUT' });
+
+    const list = await request(app.getHttpServer())
+      .get('/admin/ai-quality/turns?status=failed')
+      .set('Origin', ADMIN_ORIGIN)
+      .set('Cookie', staffCookie(qualityReviewer))
+      .expect(200);
+    expect(list.body.data.turns).toHaveLength(turns.length + 1);
+    for (const turn of turns) {
+      expect(list.body.data.turns).toContainEqual(
+        expect.objectContaining({ turnId: turn.turnId, failureCategory: 'unknown' }),
+      );
+    }
+    expect(list.body.data.turns).toContainEqual(
+      expect.objectContaining({ turnId: known.turnId, failureCategory: 'timeout' }),
+    );
+
+    for (const turn of turns) {
+      const detail = await request(app.getHttpServer())
+        .get(`/admin/ai-quality/turns/${turn.turnId}`)
+        .set('Origin', ADMIN_ORIGIN)
+        .set('Cookie', staffCookie(qualityReviewer))
+        .expect(200);
+      expect(detail.body.data.turn.failureCategory).toBe('unknown');
+      const serialized = JSON.stringify(detail.body);
+      for (const rawCode of ['toString', 'constructor', '__proto__']) {
+        expect(serialized).not.toContain(rawCode);
+      }
+    }
+
+    expect(await accessAuditCount()).toBe(1 + turns.length);
+  });
+
   it('paginates by the internal createdAt/id keyset and validates every continuation', async () => {
     const createdAt = new Date(Date.now() - 60_000);
     const ids = [randomUUID(), randomUUID(), randomUUID()].sort().reverse();
@@ -488,6 +535,127 @@ describe('Admin Persistent AI Turn metadata backend', () => {
         .set('Origin', ADMIN_ORIGIN)
         .set('Cookie', staffCookie(qualityReviewer))
         .expect(400);
+    }
+  });
+
+  it('establishes one observedAt after transaction authorization and before metadata selection', async () => {
+    const observedAt = new Date('2026-09-12T10:00:00.000Z');
+    const expired = await insertTurn({
+      createdAt: new Date(observedAt.getTime() - 60_000),
+      expiresAt: new Date(observedAt.getTime() - 1),
+    });
+    const saved = await insertTurn({
+      status: 'streaming',
+      createdAt: new Date(observedAt.getTime() - 30_000),
+      leaseExpiresAt: new Date(observedAt.getTime() + 1),
+      saved: true,
+      expiresAt: null,
+    });
+    const authorizationEntered = deferred();
+    const releaseAuthorization = deferred();
+    const originalAuthorize = authorizer.authorizeWithinTransaction.bind(authorizer);
+    const authorizationBarrier = jest
+      .spyOn(authorizer, 'authorizeWithinTransaction')
+      .mockImplementationOnce(
+        async (...args: Parameters<DatabaseStaffAuthorizer['authorizeWithinTransaction']>) => {
+          authorizationEntered.resolve();
+          await releaseAuthorization.promise;
+          return originalAuthorize(...args);
+        },
+      );
+    const clockRead = jest.spyOn(clock, 'now').mockReturnValue(observedAt);
+    const inFlight = request(app.getHttpServer())
+      .get('/admin/ai-quality/turns')
+      .set('Origin', ADMIN_ORIGIN)
+      .set('Cookie', staffCookie(qualityReviewer))
+      .then((response) => response);
+
+    try {
+      await within(authorizationEntered.promise, 'AI metadata transaction authorization');
+      expect(clockRead).not.toHaveBeenCalled();
+      releaseAuthorization.resolve();
+      const list = await within(inFlight, 'post-authorization observedAt list');
+      expect(list.status).toBe(200);
+      expect(list.body.data).toMatchObject({
+        observedAt: observedAt.toISOString(),
+        period: {
+          createdFrom: new Date(observedAt.getTime() - 7 * 24 * 60 * 60 * 1_000).toISOString(),
+          createdBefore: observedAt.toISOString(),
+        },
+      });
+      expect(list.body.data.turns).toEqual([
+        expect.objectContaining({ turnId: saved.turnId, leaseState: 'valid' }),
+      ]);
+      expect(list.body.data.turns.map((turn: { turnId: string }) => turn.turnId)).not.toContain(
+        expired.turnId,
+      );
+
+      await request(app.getHttpServer())
+        .get(`/admin/ai-quality/turns/${expired.turnId}`)
+        .set('Origin', ADMIN_ORIGIN)
+        .set('Cookie', staffCookie(qualityReviewer))
+        .expect(404);
+      const detail = await request(app.getHttpServer())
+        .get(`/admin/ai-quality/turns/${saved.turnId}`)
+        .set('Origin', ADMIN_ORIGIN)
+        .set('Cookie', staffCookie(qualityReviewer))
+        .expect(200);
+      expect(detail.body.data).toMatchObject({
+        observedAt: observedAt.toISOString(),
+        turn: { turnId: saved.turnId, leaseState: 'valid' },
+      });
+
+      const accessAudits = await database.database
+        .select({ occurredAt: auditLogs.occurredAt })
+        .from(auditLogs)
+        .where(eq(auditLogs.action, 'ai_quality_metadata_accessed'));
+      expect(accessAudits).toHaveLength(2);
+      expect(
+        accessAudits.every((audit) => audit.occurredAt.getTime() === observedAt.getTime()),
+      ).toBe(true);
+    } finally {
+      releaseAuthorization.resolve();
+      authorizationBarrier.mockRestore();
+      clockRead.mockRestore();
+      await Promise.allSettled([inFlight]);
+    }
+  });
+
+  it('keeps the initial cursor window while using a new transaction observedAt on continuation', async () => {
+    const initialObservedAt = new Date('2026-09-12T10:00:00.000Z');
+    const continuationObservedAt = new Date('2026-09-12T11:00:00.000Z');
+    await insertTurn({
+      createdAt: new Date(initialObservedAt.getTime() - 30_000),
+      saved: true,
+      expiresAt: null,
+    });
+    await insertTurn({
+      createdAt: new Date(initialObservedAt.getTime() - 60_000),
+      saved: true,
+      expiresAt: null,
+    });
+    const clockRead = jest
+      .spyOn(clock, 'now')
+      .mockReturnValueOnce(initialObservedAt)
+      .mockReturnValueOnce(continuationObservedAt);
+
+    try {
+      const first = await request(app.getHttpServer())
+        .get('/admin/ai-quality/turns?limit=1')
+        .set('Origin', ADMIN_ORIGIN)
+        .set('Cookie', staffCookie(qualityReviewer))
+        .expect(200);
+      const second = await request(app.getHttpServer())
+        .get(`/admin/ai-quality/turns?limit=1&cursor=${first.body.data.nextCursor}`)
+        .set('Origin', ADMIN_ORIGIN)
+        .set('Cookie', staffCookie(qualityReviewer))
+        .expect(200);
+
+      expect(first.body.data.observedAt).toBe(initialObservedAt.toISOString());
+      expect(second.body.data.observedAt).toBe(continuationObservedAt.toISOString());
+      expect(second.body.data.period).toEqual(first.body.data.period);
+    } finally {
+      clockRead.mockRestore();
     }
   });
 

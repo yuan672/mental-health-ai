@@ -109,6 +109,15 @@ describe('Admin AI Turn metadata contracts', () => {
     ).toBeNull();
   });
 
+  it.each(['toString', 'constructor', '__proto__'])(
+    'treats prototype property name %s as an unknown stored failure code',
+    (failureCode) => {
+      const projected = presentAdminAiTurnMetadata(storedRow({ failureCode }), OBSERVED_AT);
+      expect(projected.failureCategory).toBe('unknown');
+      expect(JSON.stringify(projected)).not.toContain(failureCode);
+    },
+  );
+
   it('limits prompt identity and derives terminal lifecycle semantics', () => {
     const valid = presentAdminAiTurnMetadata(storedRow(), OBSERVED_AT);
     expect(valid).toMatchObject({

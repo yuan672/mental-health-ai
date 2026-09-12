@@ -43,34 +43,42 @@ type NormalizedTurnRead = Readonly<{
 }>;
 
 @Injectable()
+export class AdminAiTurnMetadataClock {
+  now(): Date {
+    return new Date();
+  }
+}
+
+@Injectable()
 export class AdminAiTurnMetadataService {
   constructor(
     private readonly repository: AdminAiTurnMetadataRepository,
     private readonly authorizer: DatabaseStaffAuthorizer,
     private readonly audits: AuditLogRepository,
+    private readonly clock: AdminAiTurnMetadataClock,
   ) {}
 
   async list(
     actor: StaffAuthorizationContext,
     query: AdminAiTurnMetadataQuery,
-    observedAt = new Date(),
   ): Promise<AdminAiTurnMetadataListData> {
     const parsedQuery = adminAiTurnMetadataQuerySchema.safeParse(query);
     if (!parsedQuery.success) throw new ValidationError();
     const validatedQuery = parsedQuery.data;
-    const normalized = normalizeQuery(validatedQuery, observedAt);
-    const repositoryQuery: AdminAiTurnMetadataRepositoryQuery = {
-      status: normalized.status,
-      createdFrom: normalized.createdFrom,
-      createdBefore: normalized.createdBefore,
-      observedAt,
-      cursor: normalized.cursor,
-      limit: validatedQuery.limit + 1,
-    };
 
     try {
       return await this.repository.readTransaction(async (tx) => {
         await this.authorizer.authorizeWithinTransaction(tx, actor, 'ai_quality:read_metadata');
+        const observedAt = this.clock.now();
+        const normalized = normalizeQuery(validatedQuery, observedAt);
+        const repositoryQuery: AdminAiTurnMetadataRepositoryQuery = {
+          status: normalized.status,
+          createdFrom: normalized.createdFrom,
+          createdBefore: normalized.createdBefore,
+          observedAt,
+          cursor: normalized.cursor,
+          limit: validatedQuery.limit + 1,
+        };
         const rows = await this.repository.list(tx, repositoryQuery);
         const projected = rows.map((row) => presentAdminAiTurnMetadata(row, observedAt));
         const turns = projected.slice(0, validatedQuery.limit);
@@ -123,15 +131,16 @@ export class AdminAiTurnMetadataService {
   async get(
     actor: StaffAuthorizationContext,
     turnId: string,
-    observedAt = new Date(),
   ): Promise<AdminAiTurnMetadataDetailData> {
     const parsedTurnId = adminAiTurnIdSchema.safeParse(turnId);
-    if (!parsedTurnId.success || !Number.isFinite(observedAt.getTime())) {
+    if (!parsedTurnId.success) {
       throw new ValidationError();
     }
     try {
       return await this.repository.readTransaction(async (tx) => {
         await this.authorizer.authorizeWithinTransaction(tx, actor, 'ai_quality:read_metadata');
+        const observedAt = this.clock.now();
+        if (!Number.isFinite(observedAt.getTime())) throw new ValidationError();
         const row = await this.repository.findVisibleById(tx, parsedTurnId.data, observedAt);
         if (!row) throw new NotFoundError();
         const turn = presentAdminAiTurnMetadata(row, observedAt);
