@@ -22,6 +22,7 @@ Accepted decisions:
 18. ADR-018 Knowledge Base Content and Publication Boundaries
 19. ADR-019 LLM Knowledge Retrieval and Citation Boundaries
 20. ADR-020 Admin Identity and Least-Privilege Backend Boundaries
+21. ADR-021 Minimum HTTP Rate Limiting and Abuse Protection
 
 Proposed decisions:
 

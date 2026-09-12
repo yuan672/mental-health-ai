@@ -215,6 +215,10 @@ controls.
 - Replacement frontend design and implementation are user-owned and outside this
   backend task. No uncommitted AI-B work was present when the backend Admin design
   branch was created.
+- ADR-021 accepts the minimum process-local HTTP rate-limit and credential-work
+  protection architecture. Its implementation remains pending; the acceptance
+  does not approve production thresholds, proxy trust, cross-instance enforcement,
+  deployment, or production enablement.
 
 ## Immediate Next Step
 
