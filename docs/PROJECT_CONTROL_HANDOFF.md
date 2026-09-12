@@ -92,6 +92,8 @@ safety, or validation for clinical use.
   bounded Persistent AI Turn metadata backend
 - [PR #36](https://github.com/yuan672/mental-health-ai/pull/36) — Accepted minimum
   HTTP rate-limit and abuse-protection architecture
+- [PR #37](https://github.com/yuan672/mental-health-ai/pull/37) — Minimum
+  process-local HTTP rate limiting and abuse protection
 
 ## Current Feature Status
 
@@ -219,21 +221,27 @@ controls.
   backend task. No uncommitted AI-B work was present when the backend Admin design
   branch was created.
 - ADR-021 accepts the minimum process-local HTTP rate-limit and credential-work
-  protection architecture. Its implementation is delivered on
-  `feature/http-abuse-protection-backend` and awaits review. It adds no schema,
-  dependency, external service, or frontend work and does not approve production
-  thresholds, proxy trust, cross-instance enforcement, deployment, or production
-  enablement.
+  protection architecture. Its bounded local/demo implementation is merged through
+  PR #37. It adds no schema, dependency, external service, or frontend work and
+  does not approve production thresholds, proxy trust, cross-instance enforcement,
+  deployment, or production enablement.
+- NF-02 data lifecycle and account deletion is in design review on
+  `feature/data-lifecycle-deletion-design`. The proposal inventories current
+  deletion, retention, foreign-key, process-memory, log, backup, and provider
+  boundaries and recommends a minimal local/demo account-deletion contract. No
+  account-deletion API, schema, migration, scheduler, or production retention
+  policy is implemented by that design work.
 
 ## Immediate Next Step
 
 Use `docs/backend-integration-handoff.md` as the backend capability and protocol
 index for the user-owned replacement frontend. Knowledge AI-B and every Admin UI
 remain pending client work; keep augmentation and Admin HTTP disabled by default,
-and retain the v2 reader plus v1 history guard. No unresolved implementation gap
-has been identified in the accepted, merged backend batches. The three candidate
-articles remain unverified and unpublished, and production policy/content review
-and real-model evaluation remain separate work.
+and retain the v2 reader plus v1 history guard. Review the proposed NF-02 lifecycle
+matrix and account-deletion contract before authorizing implementation; account
+deletion does not exist yet. The three candidate articles remain unverified and
+unpublished, and production policy/content review and real-model evaluation remain
+separate work.
 
 ## Source of Truth
 
