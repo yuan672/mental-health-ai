@@ -29,8 +29,9 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   so Phase 5E is not phase-complete
 - Phase 6 — Admin and operations features: ADR-020 staff-identity and
   least-privilege backend design accepted; Batch 1 identity/session/authorization
-  implementation is delivered for review in Draft PR #27; no Admin UI or later
-  domain Admin API is authorized
+  implementation is merged through PR #27; its post-merge develop run exposed an
+  existing fixed-delay cancellation-test race, and the deterministic test repair is
+  pending review; no Admin UI or later domain Admin API is authorized
 
 ## Current Production State
 
@@ -71,6 +72,8 @@ safety, or validation for clinical use.
   reader and final accessibility/state recovery fixes
 - [PR #25](https://github.com/yuan672/mental-health-ai/pull/25) — Knowledge AI-A
   backend and final history consistency/environment-isolation fixes
+- [PR #27](https://github.com/yuan672/mental-health-ai/pull/27) — Admin Batch 1
+  staff identity, sessions, finite authorization, and audited access lifecycle
 
 ## Current Feature Status
 
@@ -178,13 +181,13 @@ controls.
 
 ## Immediate Next Step
 
-Review ADR-020 Batch 1 Draft PR #27 for separate staff identity,
-sessions, finite permissions, access lifecycle, auditing, Migration 0009, and the
-database-backed reviewer authorization adapter. Do not implement an Admin UI or
-later Risk/Queue, Knowledge Management, Audit Read, or AI Quality APIs in that
-batch. Knowledge AI-B remains pending for the replacement frontend; keep
-augmentation disabled by default and retain the v2 reader plus v1 history guard.
-Curated content publication and real-model evaluation remain separate work.
+Review the narrow deterministic repair for the post-merge AI output-classification
+cancellation test before treating `develop` quality CI as closed. PR #27 itself is
+merged; do not start later Risk/Queue, Knowledge Management, Audit Read, AI Quality,
+or Admin UI batches as part of that repair. Knowledge AI-B remains pending for the
+replacement frontend; keep augmentation disabled by default and retain the v2
+reader plus v1 history guard. Curated content publication and real-model evaluation
+remain separate work.
 
 ## Source of Truth
 
