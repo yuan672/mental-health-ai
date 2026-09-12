@@ -27,6 +27,13 @@ export class AdminKnowledgeRepository {
     return this.database.database.transaction(work);
   }
 
+  readTransaction<T>(work: (tx: AppTransaction) => Promise<T>): Promise<T> {
+    return this.database.database.transaction(work, {
+      isolationLevel: 'repeatable read',
+      accessMode: 'read write',
+    });
+  }
+
   async ensureAndLockArticle(
     tx: AppTransaction,
     articleKey: string,
@@ -49,6 +56,37 @@ export class AdminKnowledgeRepository {
       .select()
       .from(knowledgeArticles)
       .where(eq(knowledgeArticles.articleKey, articleKey))
+      .limit(1)
+      .for('update');
+    return record ?? null;
+  }
+
+  async findArticle(
+    tx: AppTransaction,
+    articleKey: string,
+  ): Promise<AdminKnowledgeArticleRecord | null> {
+    const [record] = await tx
+      .select()
+      .from(knowledgeArticles)
+      .where(eq(knowledgeArticles.articleKey, articleKey))
+      .limit(1);
+    return record ?? null;
+  }
+
+  async lockVersion(
+    tx: AppTransaction,
+    articleId: string,
+    version: number,
+  ): Promise<AdminKnowledgeVersionRecord | null> {
+    const [record] = await tx
+      .select()
+      .from(knowledgeArticleVersions)
+      .where(
+        and(
+          eq(knowledgeArticleVersions.articleId, articleId),
+          eq(knowledgeArticleVersions.version, version),
+        ),
+      )
       .limit(1)
       .for('update');
     return record ?? null;

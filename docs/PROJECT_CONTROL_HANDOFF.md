@@ -125,8 +125,12 @@ safety, or validation for clinical use.
   backend implementation for review and remains unmerged. It adds exact-version
   curated draft, source-review, publication/retirement, opaque candidate revision,
   Staff HTTP, transaction-bound Audit, and CLI-order compatibility without an
-  Admin UI. General Audit Read, AI Quality, all Admin UI, and production enablement
-  remain outside completed scope.
+  Admin UI. Its final-readiness fixes make new-target CLI publication honor every
+  unresolved predecessor, serialize source review on the exact evidence row,
+  return candidate projections from a short consistent database view, and retain
+  legal restricted-CLI reviewer identity on HTTP no-change responses. General
+  Audit Read, AI Quality, all Admin UI, and production enablement remain outside
+  completed scope.
 
 The existing Web is not a design constraint for the replacement frontend. New page,
 style, component, interaction, and Knowledge AI-B reducer work is paused in this

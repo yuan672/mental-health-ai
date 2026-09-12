@@ -4,6 +4,7 @@ import {
   createDatabaseClient,
   eq,
   knowledgeArticles,
+  knowledgeArticleSources,
   knowledgeArticleVersions,
   migrate,
 } from '@mental-health/database';
@@ -18,7 +19,7 @@ import type { StaffRole } from '../src/admin/staff-access.types';
 import { StaffAuthService } from '../src/admin/staff-auth.service';
 import { StaffBootstrapService } from '../src/admin/staff-bootstrap.service';
 import { AppModule } from '../src/app.module';
-import { AuthorizationError } from '../src/common/errors';
+import { AuthorizationError, KnowledgePublicationConflictError } from '../src/common/errors';
 import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
 import { createCorsOptions } from '../src/common/http/cors-options';
 import { env } from '../src/config/env';
@@ -366,9 +367,14 @@ describe('Phase 6 Batch 3 Admin Knowledge Management backend', () => {
       reviewedBy: reviewer.id,
       reviewedAt: firstReview.body.data.reviewedAt as string,
     };
-    await expect(publication.publishCurated(manifest)).resolves.toEqual(
+    const publishedFirst = await publication.publishCurated(manifest);
+    expect(publishedFirst).toEqual(
       expect.objectContaining({ version: 1, disposition: 'published' }),
     );
+    await expect(publication.publishCurated(manifest)).resolves.toEqual({
+      ...publishedFirst,
+      disposition: 'existing',
+    });
     await publishVersion(key, 2, secondRevision).expect(201);
     const oldRetry = await mutationHeaders(
       request(app.getHttpServer()).post(`/admin/knowledge/articles/${key}/versions/1/withdraw`),
@@ -394,6 +400,374 @@ describe('Phase 6 Batch 3 Admin Knowledge Management backend', () => {
       .send({ expectedDraftRevision: thirdRevision })
       .expect(201);
     await publishVersion(key, 3, thirdRevision).expect(409);
+  });
+
+  it('rejects CLI creation past every unresolved predecessor and resumes only after retirement', async () => {
+    const unresolvedKey = 'cli-new-target-unresolved';
+    await createDraft(unresolvedKey, 1, 'unresolved-v1').expect(201);
+    await expect(
+      publication.publishCurated({
+        articleKey: unresolvedKey,
+        version: 2,
+        ...candidate('unresolved-v2'),
+        contentOrigin: 'curated',
+        reviewStatus: 'source_verified',
+        reviewedBy: 'synthetic-cli-reviewer',
+        reviewedAt: '2026-09-12T02:00:00.000Z',
+      }),
+    ).rejects.toBeInstanceOf(KnowledgePublicationConflictError);
+    const unresolvedRows = await database.database
+      .select({ version: knowledgeArticleVersions.version })
+      .from(knowledgeArticleVersions)
+      .innerJoin(knowledgeArticles, eq(knowledgeArticles.id, knowledgeArticleVersions.articleId))
+      .where(eq(knowledgeArticles.articleKey, unresolvedKey));
+    expect(unresolvedRows).toEqual([{ version: 1 }]);
+
+    const orderedKey = 'cli-new-target-retired-predecessor';
+    const first = await createDraft(orderedKey, 1, 'ordered-v1').expect(201);
+    const firstRevision = first.body.data.state.draftRevision as number;
+    await verifySources(orderedKey, 1, firstRevision).expect(201);
+    await publishVersion(orderedKey, 1, firstRevision).expect(201);
+    const second = await createDraft(orderedKey, 2, 'ordered-v2').expect(201);
+    const secondRevision = second.body.data.state.draftRevision as number;
+    await verifySources(orderedKey, 2, secondRevision).expect(201);
+    const thirdManifest = {
+      articleKey: orderedKey,
+      version: 3,
+      ...candidate('ordered-v3'),
+      contentOrigin: 'curated' as const,
+      reviewStatus: 'source_verified' as const,
+      reviewedBy: 'synthetic-cli-reviewer',
+      reviewedAt: '2026-09-12T03:00:00.000Z',
+    };
+    await expect(publication.publishCurated(thirdManifest)).rejects.toBeInstanceOf(
+      KnowledgePublicationConflictError,
+    );
+    await mutationHeaders(
+      request(app.getHttpServer()).post(
+        `/admin/knowledge/articles/${orderedKey}/versions/2/withdraw`,
+      ),
+      publisher,
+    )
+      .send({ expectedDraftRevision: secondRevision })
+      .expect(201);
+    await expect(publication.publishCurated(thirdManifest)).resolves.toMatchObject({
+      disposition: 'published',
+      version: 3,
+    });
+  });
+
+  it('serializes new-target CLI publication with predecessor resolution in both lock orders', async () => {
+    async function prepareSequence(key: string) {
+      const first = await createDraft(key, 1, `${key}-v1`).expect(201);
+      const firstRevision = first.body.data.state.draftRevision as number;
+      await verifySources(key, 1, firstRevision).expect(201);
+      await publishVersion(key, 1, firstRevision).expect(201);
+      const second = await createDraft(key, 2, `${key}-v2`).expect(201);
+      const secondRevision = second.body.data.state.draftRevision as number;
+      await verifySources(key, 2, secondRevision).expect(201);
+      return {
+        secondRevision,
+        thirdManifest: {
+          articleKey: key,
+          version: 3,
+          ...candidate(`${key}-v3`),
+          contentOrigin: 'curated' as const,
+          reviewStatus: 'source_verified' as const,
+          reviewedBy: 'synthetic-cli-reviewer',
+          reviewedAt: '2026-09-12T03:30:00.000Z',
+        },
+      };
+    }
+
+    const cliFirst = await prepareSequence('new-target-cli-first');
+    const cliObservedPredecessor = deferred();
+    const releaseCli = deferred();
+    const originalListVersions = publicationRepository.listVersions.bind(publicationRepository);
+    const cliSpy = jest
+      .spyOn(publicationRepository, 'listVersions')
+      .mockImplementationOnce(async (...args) => {
+        const versions = await originalListVersions(...args);
+        cliObservedPredecessor.resolve();
+        await releaseCli.promise;
+        return versions;
+      });
+    try {
+      const cli = publication.publishCurated(cliFirst.thirdManifest);
+      await withTimeout(cliObservedPredecessor.promise, 'CLI unresolved predecessor barrier');
+      const http = publishVersion('new-target-cli-first', 2, cliFirst.secondRevision).then(
+        (value) => value,
+      );
+      await withTimeout(waitForKnowledgeLockWaiter(migrationClient), 'HTTP predecessor lock');
+      releaseCli.resolve();
+      await expect(cli).rejects.toBeInstanceOf(KnowledgePublicationConflictError);
+      await expect(http).resolves.toMatchObject({ status: 201 });
+    } finally {
+      releaseCli.resolve();
+      cliSpy.mockRestore();
+    }
+    const cliFirstVersions = await database.database
+      .select({ version: knowledgeArticleVersions.version })
+      .from(knowledgeArticleVersions)
+      .innerJoin(knowledgeArticles, eq(knowledgeArticles.id, knowledgeArticleVersions.articleId))
+      .where(eq(knowledgeArticles.articleKey, 'new-target-cli-first'));
+    expect(cliFirstVersions.map((item) => item.version).sort()).toEqual([1, 2]);
+
+    const httpFirst = await prepareSequence('new-target-http-first');
+    const httpEntered = deferred();
+    const releaseHttp = deferred();
+    const originalMarkPublished = repository.markPublished.bind(repository);
+    const httpSpy = jest
+      .spyOn(repository, 'markPublished')
+      .mockImplementationOnce(async (...args) => {
+        httpEntered.resolve();
+        await releaseHttp.promise;
+        return originalMarkPublished(...args);
+      });
+    try {
+      const http = publishVersion('new-target-http-first', 2, httpFirst.secondRevision).then(
+        (value) => value,
+      );
+      await withTimeout(httpEntered.promise, 'HTTP predecessor publication barrier');
+      const cli = publication.publishCurated(httpFirst.thirdManifest);
+      await withTimeout(waitForKnowledgeLockWaiter(migrationClient), 'CLI new-target lock');
+      releaseHttp.resolve();
+      await expect(http).resolves.toMatchObject({ status: 201 });
+      await expect(cli).resolves.toMatchObject({ disposition: 'published', version: 3 });
+    } finally {
+      releaseHttp.resolve();
+      httpSpy.mockRestore();
+    }
+    const current = await request(app.getHttpServer())
+      .get('/admin/knowledge/articles/new-target-http-first/versions/3/status')
+      .set('Origin', ADMIN_ORIGIN)
+      .set('Cookie', staffCookie(publisher))
+      .expect(200);
+    expect(current.body.data.state).toEqual(
+      expect.objectContaining({ version: 3, publicationStatus: 'published' }),
+    );
+  });
+
+  it('serializes exact source evidence mutation and review in both PostgreSQL lock orders', async () => {
+    const mutationFirstKey = 'source-mutation-first';
+    const mutationFirst = await createDraft(mutationFirstKey, 1, 'before-mutation').expect(201);
+    const mutationFirstRevision = mutationFirst.body.data.state.draftRevision as number;
+    const [mutationFirstSource] = await database.database
+      .select()
+      .from(knowledgeArticleSources)
+      .innerJoin(
+        knowledgeArticleVersions,
+        eq(knowledgeArticleVersions.id, knowledgeArticleSources.articleVersionId),
+      )
+      .innerJoin(knowledgeArticles, eq(knowledgeArticles.id, knowledgeArticleVersions.articleId))
+      .where(eq(knowledgeArticles.articleKey, mutationFirstKey));
+    const mutationClient = await migrationClient.pool.connect();
+    try {
+      await mutationClient.query('BEGIN');
+      await mutationClient.query(
+        `UPDATE knowledge_article_sources
+         SET source_title = $1
+         WHERE id = $2`,
+        ['合成来源标题 after-mutation', mutationFirstSource!.knowledge_article_sources.id],
+      );
+      const review = verifySources(mutationFirstKey, 1, mutationFirstRevision).then(
+        (value) => value,
+      );
+      await withTimeout(
+        waitForKnowledgeVersionLockWaiter(migrationClient),
+        'source review exact-version lock',
+      );
+      await mutationClient.query('COMMIT');
+      const reviewResponse = await review;
+      expect(reviewResponse.status).toBe(409);
+    } finally {
+      await mutationClient.query('ROLLBACK').catch(() => undefined);
+      mutationClient.release();
+    }
+    const mutationFirstState = await request(app.getHttpServer())
+      .get(`/admin/knowledge/articles/${mutationFirstKey}/versions/1/review-candidate`)
+      .set('Origin', ADMIN_ORIGIN)
+      .set('Cookie', staffCookie(reviewer))
+      .expect(200);
+    expect(mutationFirstState.body.data.state.reviewStatus).toBe('unverified');
+    expect(mutationFirstState.body.data.state.draftRevision).toBeGreaterThan(mutationFirstRevision);
+    expect(mutationFirstState.body.data.candidate.sources[0].sourceTitle).toBe(
+      '合成来源标题 after-mutation',
+    );
+
+    const reviewFirstKey = 'source-review-first';
+    const reviewFirst = await createDraft(reviewFirstKey, 1, 'review-first').expect(201);
+    const reviewFirstRevision = reviewFirst.body.data.state.draftRevision as number;
+    const [reviewFirstSource] = await database.database
+      .select()
+      .from(knowledgeArticleSources)
+      .innerJoin(
+        knowledgeArticleVersions,
+        eq(knowledgeArticleVersions.id, knowledgeArticleSources.articleVersionId),
+      )
+      .innerJoin(knowledgeArticles, eq(knowledgeArticles.id, knowledgeArticleVersions.articleId))
+      .where(eq(knowledgeArticles.articleKey, reviewFirstKey));
+    const reviewEntered = deferred();
+    const releaseReview = deferred();
+    const originalMarkSourceVerified = repository.markSourceVerified.bind(repository);
+    const reviewSpy = jest
+      .spyOn(repository, 'markSourceVerified')
+      .mockImplementationOnce(async (...args) => {
+        reviewEntered.resolve();
+        await releaseReview.promise;
+        return originalMarkSourceVerified(...args);
+      });
+    const blockedClient = await migrationClient.pool.connect();
+    let sourceMutation: Promise<void> | undefined;
+    try {
+      const review = verifySources(reviewFirstKey, 1, reviewFirstRevision).then((value) => value);
+      await withTimeout(reviewEntered.promise, 'source review transaction barrier');
+      const blockedPid = await blockedClient.query<{ pid: number }>(
+        'SELECT pg_backend_pid() AS pid',
+      );
+      sourceMutation = (async () => {
+        await blockedClient.query('BEGIN');
+        try {
+          await blockedClient.query(
+            `UPDATE knowledge_article_sources
+             SET source_title = $1
+             WHERE id = $2`,
+            [
+              '合成来源标题 forbidden-after-review',
+              reviewFirstSource!.knowledge_article_sources.id,
+            ],
+          );
+          await blockedClient.query('COMMIT');
+        } catch (error) {
+          await blockedClient.query('ROLLBACK');
+          throw error;
+        }
+      })();
+      await withTimeout(
+        waitForKnowledgeVersionLockWaiter(migrationClient, blockedPid.rows[0]!.pid),
+        'source mutation exact-version lock',
+      );
+      releaseReview.resolve();
+      await expect(review).resolves.toMatchObject({ status: 201 });
+      await expect(sourceMutation).rejects.toThrow('verified or published knowledge sources');
+    } finally {
+      releaseReview.resolve();
+      reviewSpy.mockRestore();
+      await sourceMutation?.catch(() => undefined);
+      blockedClient.release();
+    }
+    const reviewFirstState = await request(app.getHttpServer())
+      .get(`/admin/knowledge/articles/${reviewFirstKey}/versions/1/review-candidate`)
+      .set('Origin', ADMIN_ORIGIN)
+      .set('Cookie', staffCookie(reviewer))
+      .expect(200);
+    expect(reviewFirstState.body.data.state.reviewStatus).toBe('source_verified');
+    expect(reviewFirstState.body.data.candidate.sources[0].sourceTitle).toBe(
+      '合成来源标题 review-first',
+    );
+  });
+
+  it('reads candidate revision and sources from one repeatable-read snapshot', async () => {
+    const key = 'candidate-consistent-snapshot';
+    const created = await createDraft(key, 1, 'snapshot-before').expect(201);
+    const originalRevision = created.body.data.state.draftRevision as number;
+    const [source] = await database.database
+      .select()
+      .from(knowledgeArticleSources)
+      .innerJoin(
+        knowledgeArticleVersions,
+        eq(knowledgeArticleVersions.id, knowledgeArticleSources.articleVersionId),
+      )
+      .innerJoin(knowledgeArticles, eq(knowledgeArticles.id, knowledgeArticleVersions.articleId))
+      .where(eq(knowledgeArticles.articleKey, key));
+    const sourceReadEntered = deferred();
+    const releaseSourceRead = deferred();
+    const originalListSources = repository.listSources.bind(repository);
+    const sourceSpy = jest
+      .spyOn(repository, 'listSources')
+      .mockImplementationOnce(async (...args) => {
+        sourceReadEntered.resolve();
+        await releaseSourceRead.promise;
+        return originalListSources(...args);
+      });
+    try {
+      const read = request(app.getHttpServer())
+        .get(`/admin/knowledge/articles/${key}/versions/1/review-candidate`)
+        .set('Origin', ADMIN_ORIGIN)
+        .set('Cookie', staffCookie(reviewer))
+        .then((value) => value);
+      await withTimeout(sourceReadEntered.promise, 'candidate source read barrier');
+      await migrationClient.pool.query(
+        `UPDATE knowledge_article_sources
+         SET source_title = $1
+         WHERE id = $2`,
+        ['合成来源标题 snapshot-after', source!.knowledge_article_sources.id],
+      );
+      releaseSourceRead.resolve();
+      const snapshot = await read;
+      expect(snapshot.status).toBe(200);
+      expect(snapshot.body.data.state.draftRevision).toBe(originalRevision);
+      expect(snapshot.body.data.candidate.sources[0].sourceTitle).toBe(
+        '合成来源标题 snapshot-before',
+      );
+    } finally {
+      releaseSourceRead.resolve();
+      sourceSpy.mockRestore();
+    }
+    const refreshed = await request(app.getHttpServer())
+      .get(`/admin/knowledge/articles/${key}/versions/1/review-candidate`)
+      .set('Origin', ADMIN_ORIGIN)
+      .set('Cookie', staffCookie(reviewer))
+      .expect(200);
+    expect(refreshed.body.data.state.draftRevision).toBeGreaterThan(originalRevision);
+    expect(refreshed.body.data.candidate.sources[0].sourceTitle).toBe(
+      '合成来源标题 snapshot-after',
+    );
+  });
+
+  it('preserves legal CLI reviewer evidence across HTTP no-change review responses', async () => {
+    const key = 'cli-reviewer-evidence';
+    const reviewedAt = '2026-09-12T04:00:00.000Z';
+    await publication.publishCurated({
+      articleKey: key,
+      version: 1,
+      ...candidate('cli-evidence'),
+      contentOrigin: 'curated',
+      reviewStatus: 'source_verified',
+      reviewedBy: 'synthetic-cli-reviewer',
+      reviewedAt,
+    });
+    const status = await request(app.getHttpServer())
+      .get(`/admin/knowledge/articles/${key}/versions/1/status`)
+      .set('Origin', ADMIN_ORIGIN)
+      .set('Cookie', staffCookie(reviewer))
+      .expect(200);
+    const revision = status.body.data.state.draftRevision as number;
+
+    const publishedReplay = await verifySources(key, 1, revision).expect(201);
+    expect(publishedReplay.body.data).toEqual(
+      expect.objectContaining({
+        disposition: 'no_change',
+        reviewedBy: 'synthetic-cli-reviewer',
+        reviewedAt,
+      }),
+    );
+    await publication.withdraw(key, 1, new Date('2027-09-12T05:00:00.000Z'));
+    const withdrawnReplay = await verifySources(key, 1, revision).expect(201);
+    expect(withdrawnReplay.body.data.reviewedBy).toBe('synthetic-cli-reviewer');
+
+    const auditFailure = jest
+      .spyOn(audits, 'appendWithinTransaction')
+      .mockRejectedValueOnce(new Error('synthetic audit failure'));
+    const failed = await verifySources(key, 1, revision).expect(500);
+    auditFailure.mockRestore();
+    expect(JSON.stringify(failed.body)).not.toContain('synthetic-cli-reviewer');
+    await verifySources(key, 1, revision).expect(201);
+    const reviewAudits = await database.database
+      .select()
+      .from(auditLogs)
+      .where(eq(auditLogs.action, 'knowledge_source_verified'));
+    expect(reviewAudits).toHaveLength(3);
   });
 
   it('serializes CLI and Staff HTTP publication in both lock orders', async () => {
@@ -572,4 +946,24 @@ async function waitForKnowledgeLockWaiter(
     await new Promise<void>((settle) => setImmediate(settle));
   }
   throw new Error('Timed out waiting for the Knowledge article row-lock waiter');
+}
+
+async function waitForKnowledgeVersionLockWaiter(
+  client: ReturnType<typeof createDatabaseClient>,
+  waiterPid?: number,
+): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const result = await client.pool.query<{ count: number }>(
+      `SELECT count(*)::int AS count FROM pg_stat_activity
+       WHERE pid <> pg_backend_pid()
+         AND wait_event_type = 'Lock'
+         AND ($1::int IS NULL OR pid = $1)
+         AND ($1::int IS NOT NULL OR query ILIKE '%knowledge_article_versions%')`,
+      [waiterPid ?? null],
+    );
+    if ((result.rows[0]?.count ?? 0) > 0) return;
+    await new Promise<void>((settle) => setImmediate(settle));
+  }
+  throw new Error('Timed out waiting for the Knowledge version row-lock waiter');
 }

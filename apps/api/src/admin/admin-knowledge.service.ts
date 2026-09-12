@@ -47,7 +47,7 @@ export class AdminKnowledgeService {
   async list(actor: StaffAuthorizationContext, query: AdminKnowledgeListQuery, now = new Date()) {
     const cursor = decodeOpaqueCursor(query.cursor, adminKnowledgeCursorSchema);
     try {
-      return await this.repository.transaction(async (tx) => {
+      return await this.repository.readTransaction(async (tx) => {
         await this.authorizer.authorizeAnyWithinTransaction(tx, actor, KNOWLEDGE_PERMISSIONS);
         const rows = await this.repository.listArticles(
           tx,
@@ -122,7 +122,7 @@ export class AdminKnowledgeService {
     now = new Date(),
   ) {
     try {
-      return await this.repository.transaction(async (tx) => {
+      return await this.repository.readTransaction(async (tx) => {
         await this.authorizer.authorizeWithinTransaction(tx, actor, 'knowledge:publish');
         const exact = await this.loadExact(tx, articleKey, version);
         const sources = await this.repository.listSources(tx, exact.target.id);
@@ -160,15 +160,24 @@ export class AdminKnowledgeService {
       const versions = await this.repository.listVersions(tx, article.id);
       const target = versions.find((item) => item.version === version);
       if (target) {
-        this.assertCurated(target);
-        const stored = await this.candidate(tx, target);
+        const lockedTarget = await this.repository.lockVersion(tx, article.id, version);
+        if (!lockedTarget) throw new KnowledgeArticleNotFoundError();
+        this.assertCurated(lockedTarget);
+        const stored = await this.candidate(tx, lockedTarget);
         if (!isDeepStrictEqual(stored, candidate)) {
           throw new KnowledgePublicationConflictError('同一知识版本的候选内容不一致');
         }
-        await this.auditMutation(tx, actor.id, 'knowledge_draft_created', target, 'no_change', now);
+        await this.auditMutation(
+          tx,
+          actor.id,
+          'knowledge_draft_created',
+          lockedTarget,
+          'no_change',
+          now,
+        );
         return {
           disposition: 'no_change' as const,
-          state: workflowState(article, target, versions),
+          state: workflowState(article, lockedTarget, replaceVersion(versions, lockedTarget)),
         };
       }
       const highest = versions.at(-1);
@@ -379,7 +388,7 @@ export class AdminKnowledgeService {
     now: Date,
   ) {
     try {
-      return await this.repository.transaction(async (tx) => {
+      return await this.repository.readTransaction(async (tx) => {
         await this.authorizer.authorizeAnyWithinTransaction(tx, actor, KNOWLEDGE_PERMISSIONS);
         const exact = await this.loadExact(tx, articleKey, version);
         await this.auditRead(
@@ -407,7 +416,7 @@ export class AdminKnowledgeService {
     now: Date,
   ) {
     try {
-      return await this.repository.transaction(async (tx) => {
+      return await this.repository.readTransaction(async (tx) => {
         await this.authorizer.authorizeWithinTransaction(tx, actor, permission);
         const exact = await this.loadExact(tx, articleKey, version);
         if (
@@ -438,11 +447,15 @@ export class AdminKnowledgeService {
   private async lockExact(tx: AppTransaction, articleKey: string, version: number) {
     const article = await this.repository.lockArticle(tx, articleKey);
     if (!article) throw new KnowledgeArticleNotFoundError();
-    return this.resolveExact(tx, article, version);
+    const target = await this.repository.lockVersion(tx, article.id, version);
+    if (!target) throw new KnowledgeArticleNotFoundError();
+    this.assertCurated(target);
+    const versions = await this.repository.listVersions(tx, article.id);
+    return { article, target, versions: replaceVersion(versions, target) };
   }
 
   private async loadExact(tx: AppTransaction, articleKey: string, version: number) {
-    const article = await this.repository.lockArticle(tx, articleKey);
+    const article = await this.repository.findArticle(tx, articleKey);
     if (!article) throw new KnowledgeArticleNotFoundError();
     return this.resolveExact(tx, article, version);
   }

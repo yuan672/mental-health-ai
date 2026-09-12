@@ -116,17 +116,35 @@ export const adminKnowledgeCandidateDataSchema = z
   })
   .strict();
 
-export const adminKnowledgeSourceReviewDataSchema = z
-  .object({
-    disposition: z.enum(['applied', 'no_change']),
-    articleKey: knowledgeArticleKeySchema,
-    version: z.number().int().positive(),
-    draftRevision: z.number().int().positive(),
-    reviewStatus: z.literal('source_verified'),
-    reviewedBy: z.string().uuid(),
-    reviewedAt: z.string().datetime({ offset: true }),
-  })
-  .strict();
+const adminKnowledgeSourceReviewResultBase = {
+  articleKey: knowledgeArticleKeySchema,
+  version: z.number().int().positive(),
+  draftRevision: z.number().int().positive(),
+  reviewStatus: z.literal('source_verified'),
+  reviewedAt: z.string().datetime({ offset: true }),
+};
+
+const adminKnowledgeStoredReviewerIdentitySchema = z
+  .string()
+  .refine((value) => value.trim().length > 0, '核验人标识不能为空')
+  .refine((value) => Array.from(value).length <= 128, '核验人标识过长');
+
+export const adminKnowledgeSourceReviewDataSchema = z.discriminatedUnion('disposition', [
+  z
+    .object({
+      disposition: z.literal('applied'),
+      ...adminKnowledgeSourceReviewResultBase,
+      reviewedBy: z.string().uuid(),
+    })
+    .strict(),
+  z
+    .object({
+      disposition: z.literal('no_change'),
+      ...adminKnowledgeSourceReviewResultBase,
+      reviewedBy: adminKnowledgeStoredReviewerIdentitySchema,
+    })
+    .strict(),
+]);
 
 export const adminKnowledgePublicationSourceSchema = knowledgeSourceInputSchema.omit({
   sourceUrl: true,

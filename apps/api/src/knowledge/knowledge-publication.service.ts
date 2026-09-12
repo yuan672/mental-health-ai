@@ -31,6 +31,13 @@ function sameDate(record: Date | null, value: string | null): boolean {
   return record === null ? value === null : record.toISOString() === value;
 }
 
+function replaceVersion(
+  versions: KnowledgeVersionRecord[],
+  replacement: KnowledgeVersionRecord,
+): KnowledgeVersionRecord[] {
+  return versions.map((version) => (version.id === replacement.id ? replacement : version));
+}
+
 function immutableManifestMatches(
   version: KnowledgeVersionRecord,
   sources: KnowledgeSourceEvidenceRecord[],
@@ -102,12 +109,22 @@ export class KnowledgePublicationService {
       }
 
       const target = versions.find((version) => version.version === manifest.version);
-      if (target) return this.publishExisting(transaction, versions, target, manifest, now);
+      if (target) {
+        const lockedTarget = await this.repository.lockVersion(
+          transaction,
+          article.id,
+          manifest.version,
+        );
+        if (!lockedTarget) throw new KnowledgeArticleNotFoundError();
+        const refreshedVersions = replaceVersion(versions, lockedTarget);
+        return this.publishExisting(transaction, refreshedVersions, lockedTarget, manifest, now);
+      }
 
       const highest = versions.at(-1)?.version ?? 0;
       if (manifest.version !== highest + 1) {
         throw new KnowledgePublicationConflictError('知识内容版本必须按顺序发布');
       }
+      this.assertPublicationOrder(versions, manifest.version);
 
       const current = versions.find((version) => version.publicationStatus === 'published');
       if (current) await this.repository.withdraw(transaction, current.id, now);
@@ -151,13 +168,8 @@ export class KnowledgePublicationService {
       };
     }
 
-    const unresolvedPredecessor = versions.some(
-      (version) => version.version < target.version && version.publicationStatus === 'draft',
-    );
     const current = versions.find((version) => version.publicationStatus === 'published');
-    if (unresolvedPredecessor || (current?.version ?? 0) > target.version) {
-      throw new KnowledgePublicationConflictError('知识内容版本必须按顺序发布');
-    }
+    this.assertPublicationOrder(versions, target.version);
     if (current) await this.repository.withdraw(transaction, current.id, now);
     const published = await this.repository.publishDraft(transaction, target.id, manifest, now);
     return {
@@ -168,6 +180,16 @@ export class KnowledgePublicationService {
     };
   }
 
+  private assertPublicationOrder(versions: KnowledgeVersionRecord[], targetVersion: number): void {
+    const unresolvedPredecessor = versions.some(
+      (version) => version.version < targetVersion && version.publicationStatus === 'draft',
+    );
+    const current = versions.find((version) => version.publicationStatus === 'published');
+    if (unresolvedPredecessor || (current?.version ?? 0) > targetVersion) {
+      throw new KnowledgePublicationConflictError('知识内容版本必须按顺序发布');
+    }
+  }
+
   async withdraw(
     articleKey: string,
     version: number,
@@ -176,8 +198,7 @@ export class KnowledgePublicationService {
     return this.repository.runInTransaction(async (transaction) => {
       const article = await this.repository.lockArticle(transaction, articleKey);
       if (!article) throw new KnowledgeArticleNotFoundError();
-      const versions = await this.repository.listVersions(transaction, article.id);
-      const target = versions.find((candidate) => candidate.version === version);
+      const target = await this.repository.lockVersion(transaction, article.id, version);
       if (!target) throw new KnowledgeArticleNotFoundError();
       if (target.publicationStatus === 'draft') {
         throw new KnowledgePublicationConflictError('草稿不能通过撤下命令处理');

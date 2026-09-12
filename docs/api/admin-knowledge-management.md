@@ -249,8 +249,11 @@ Permission: `knowledge:source_review`.
 }
 ```
 
-No identity or timestamp is accepted. The server binds the current Staff principal
-ID and clock only after reloading the exact candidate at revision 7 under lock.
+No identity or timestamp is accepted. For an applied review, the server binds the
+current Staff principal UUID and clock only after reloading the exact candidate at
+revision 7 under the article-then-exact-version lock. Body, revision, ordered
+sources, review state, and the required Audit are evaluated in one short
+transaction.
 
 ```json
 {
@@ -267,10 +270,13 @@ ID and clock only after reloading the exact candidate at revision 7 under lock.
 }
 ```
 
-`reviewedBy` is the opaque Staff principal ID, not an email or a professional
-credential claim. An already frozen source-verified version at the exact requested
-revision returns `no_change` with the original evidence, including after
-publication or withdrawal; it does not replace or add the caller as reviewer.
+For `disposition=applied`, `reviewedBy` is the current Staff principal UUID, not an
+email or a professional credential claim. An already frozen source-verified
+version at the exact requested revision returns `no_change` with its original
+bounded accountable-reviewer identity and time, including after publication or
+withdrawal. Restricted CLI evidence may therefore contain a non-UUID opaque
+reviewer identifier. The HTTP caller is recorded as the actor of the new
+`no_change` Audit, but never replaces or impersonates the original reviewer.
 
 ## 6. Publisher contract
 
@@ -296,9 +302,12 @@ Permission: `knowledge:publish`.
 ```
 
 The service rechecks curated origin, complete source evidence, exact review state,
-revision, unresolved predecessors, and current published version under the article
-lock. A higher draft does not block publishing the next eligible predecessor, but
-it cannot publish before that predecessor is published or explicitly retired.
+revision, unresolved predecessors, and current published version under the
+article-then-exact-version lock. The restricted CLI applies the same predecessor
+check when it creates and publishes a previously absent target; it cannot skip an
+unresolved lower HTTP draft. A higher draft does not block publishing the next
+eligible predecessor, but it cannot publish before that predecessor is published
+or explicitly retired.
 Response disposition is `applied` or `no_change`; `no_change` applies only while
 the exact target remains current published at that revision. Original `reviewedAt`
 and `publishedAt` are never overwritten by a retry. An already withdrawn target
@@ -358,6 +367,12 @@ Synthetic exact targets receive the same 404 unavailable response for Admin read
 and mutations in every environment. Staging/Production therefore do not reveal
 their identity or URLs; Development/Test synthetic setup remains available only
 through the protected fixture path.
+
+Admin directory, status, candidate, and publication-state responses are assembled
+inside short `REPEATABLE READ` transactions. They remain `READ WRITE` because the
+required access Audit must commit in the same transaction before sensitive data is
+returned. This is a response-consistency boundary, not a long-lived editorial
+snapshot.
 
 ## 8. Audit and privacy behavior
 

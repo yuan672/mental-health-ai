@@ -258,6 +258,12 @@ BEGIN
 COMMIT
 ```
 
+The exact-version lock is the same row locked by the database source-evidence
+trigger. A direct supported source mutation that starts first must commit its new
+opaque revision before review can decide; a review that locks first freezes the
+candidate and causes the later source mutation to fail. Review can therefore
+never validate revision A and freeze a different candidate B.
+
 If the exact version is already verified at that same revision, return
 `no_change` with the original evidence and append a bounded no-change Audit. It
 does not assert that the retrying principal performed the original review.
@@ -289,6 +295,17 @@ not treated as an exact manifest replay and the command conflicts. The operator
 must finish that candidate through the reviewed Admin workflow, or use a valid
 later version after resolving the open candidate. Conversely, Admin HTTP cannot
 edit, re-review, or relabel a version already created and verified by the CLI.
+When the CLI target does not yet exist, it also rejects the operation before any
+withdraw/insert/publish side effect if any lower version remains a draft. The
+target-existing and target-absent branches therefore enforce the same predecessor
+rule without changing exact published replay behavior.
+
+An HTTP-applied review records the server-authenticated Staff UUID. A later
+`no_change` review returns the frozen original reviewer identity and time. That
+identity can be a legal non-UUID opaque identifier from the restricted CLI trust
+path; it is not replaced by the retrying Staff actor and is not a professional
+credential claim. The retrying Staff UUID appears only as the actor of its own
+transactional Audit.
 
 There is no state where publication commits but the required HTTP Audit rolls back,
 or Audit commits while publication rolls back.
@@ -543,6 +560,11 @@ Only protected `_test` databases may be used.
   recovers through an exact read; current-revision same content gets `no_change`;
 - reviewer opens revision A, editor commits B, late review of A returns 409;
 - review locks first, then a competing edit cannot alter verified evidence;
+- a low-level source mutation that locks the exact version first advances the
+  revision and makes a waiting review stale, while a review that locks first
+  rejects the waiting source mutation after freeze;
+- candidate state and ordered sources are returned from one short repeatable-read
+  view even when a source update commits between the two repository reads;
 - Audit failure rolls back create, edit, and review; and
 - no source can be moved, appended, edited, or deleted after verification.
 
@@ -571,8 +593,13 @@ Only protected `_test` databases may be used.
 - CLI and Admin HTTP operations use a controlled barrier to prove article-row
   serialization in both execution orders;
 - CLI exact retry and old-version protections remain valid;
+- CLI creation of a new target cannot skip an unresolved lower HTTP draft, and
+  resolving or retiring that predecessor makes the successor eligible;
 - HTTP reviewer/time are always server-derived even though the restricted CLI
   keeps its reviewed-manifest trust boundary;
+- HTTP `no_change` source-review responses preserve legal non-UUID CLI reviewer
+  evidence before and after withdrawal, while applied HTTP reviews remain bound to
+  the authenticated Staff UUID;
 - public list/detail and Knowledge AI exact citations remain unchanged through
   publish/withdraw; and
 - no AI, Conversation, Consent, Incognito, Mood, Quota, or Safety regression.
