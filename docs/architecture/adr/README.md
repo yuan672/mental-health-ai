@@ -25,7 +25,7 @@ Accepted decisions:
 
 Proposed decisions:
 
-- None
+- ADR-021 Minimum HTTP Rate Limiting and Abuse Protection
 
 New decisions should use the next sequential ADR number. Existing accepted ADRs should not be silently rewritten; supersede them with a new ADR when the decision materially changes.
 

@@ -215,6 +215,9 @@ controls.
 - Replacement frontend design and implementation are user-owned and outside this
   backend task. No uncommitted AI-B work was present when the backend Admin design
   branch was created.
+- A minimum process-local HTTP rate-limit and credential-work protection design is
+  proposed in ADR-021 for review. It is documentation only and is not implemented
+  or accepted yet.
 
 ## Immediate Next Step
 
