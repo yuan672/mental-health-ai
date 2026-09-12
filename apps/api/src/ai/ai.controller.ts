@@ -10,7 +10,7 @@ import type { Response } from 'express';
 import { AuthenticatedSessionGuard } from '../auth/authenticated-session.guard';
 import type { AuthenticatedRequest } from '../auth/authenticated-request';
 import { CsrfGuard } from '../auth/csrf.guard';
-import { AIProviderTimeoutError, AppError, ERROR_CODES } from '../common/errors';
+import { AIProviderTimeoutError, AppError, ConflictError, ERROR_CODES } from '../common/errors';
 import {
   applyKnowledgeReferenceResponseHeaders,
   parseKnowledgeReferenceCapability,
@@ -146,6 +146,8 @@ export class AiController {
     @Body(new ZodValidationPipe(aiChatRequestSchema)) body: AiChatRequest,
   ): Promise<void> {
     const userId = request.authenticatedSession.userId;
+    const representation = parseKnowledgeReferenceCapability(knowledgeCapability);
+    response.vary('X-MH-Knowledge-References');
     const requestLifecycle = createHttpDisconnectLifecycle(request, response);
     try {
       this.assertRequestActive(requestLifecycle);
@@ -153,6 +155,9 @@ export class AiController {
       if (body.mode === 'persistent' && body.conversationId) {
         const existing = await this.aiTurns.findByClientRequestId(userId, body.clientRequestId);
         this.assertRequestActive(requestLifecycle);
+        if (existing && existing.conversationId !== body.conversationId) {
+          throw new ConflictError('客户端请求与原对话不一致');
+        }
         this.httpAdmission.admit(existing ? 'control_recovery' : 'ai_new_work', userId, 'user');
       } else {
         this.httpAdmission.admit('ai_new_work', userId, 'user');
@@ -162,8 +167,6 @@ export class AiController {
       requestLifecycle.dispose();
       throw error;
     }
-    response.vary('X-MH-Knowledge-References');
-    const representation = parseKnowledgeReferenceCapability(knowledgeCapability);
 
     if (body.mode === 'incognito') {
       await this.streamIncognito(request, response, body, requestLifecycle, representation);

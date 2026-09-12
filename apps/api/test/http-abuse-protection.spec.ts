@@ -6,7 +6,7 @@ import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, Reflector } from '@nestjs/core'
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
-import { RateLimitError } from '../src/common/errors';
+import { ConflictError, RateLimitError } from '../src/common/errors';
 import { SecurityLoggingService } from '../src/security/security-logging.service';
 import { CredentialWorkAdmissionService } from '../src/http-abuse/credential-work-admission.service';
 import { HttpAbuseAdmissionService } from '../src/http-abuse/http-abuse-admission.service';
@@ -480,6 +480,103 @@ describe('minimum HTTP abuse protection', () => {
     expect(orchestration.preparePersistentTurn).not.toHaveBeenCalled();
   });
 
+  it('rejects a bound clientRequestId from another conversation before recovery admission', async () => {
+    const orchestration = { preparePersistentTurn: jest.fn() };
+    const admission = { admit: jest.fn() };
+    const turns = {
+      findByClientRequestId: jest.fn().mockResolvedValue({
+        id: 'old-turn',
+        conversationId: '22222222-2222-4222-8222-222222222201',
+      }),
+    };
+    const controller = new AiController(
+      orchestration as never,
+      {} as never,
+      admission as never,
+      turns as never,
+    );
+
+    await expect(
+      controller.streamChat(
+        Object.assign(new EventEmitter(), {
+          authenticatedSession: { userId: 'user-1', id: 'session-1' },
+          aborted: false,
+        }) as never,
+        Object.assign(new EventEmitter(), {
+          destroyed: false,
+          writableEnded: false,
+          vary: jest.fn(),
+        }) as never,
+        undefined,
+        {
+          mode: 'persistent',
+          clientRequestId: '11111111-1111-4111-8111-111111111201',
+          conversationId: '22222222-2222-4222-8222-222222222202',
+          message: 'synthetic mismatched recovery',
+        },
+      ),
+    ).rejects.toBeInstanceOf(ConflictError);
+
+    expect(admission.admit.mock.calls.map(([policy]) => policy)).toEqual(['classification_probe']);
+    expect(orchestration.preparePersistentTurn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      mode: 'persistent' as const,
+      body: {
+        mode: 'persistent' as const,
+        clientRequestId: '11111111-1111-4111-8111-111111111211',
+        message: 'synthetic invalid capability',
+      },
+    },
+    {
+      mode: 'incognito' as const,
+      body: {
+        mode: 'incognito' as const,
+        clientRequestId: '11111111-1111-4111-8111-111111111212',
+        contextId: '22222222-2222-4222-8222-222222222212',
+        message: 'synthetic invalid capability',
+      },
+    },
+  ])(
+    'rejects an invalid reference capability before installing $mode listeners',
+    async ({ body }) => {
+      const orchestration = {
+        preparePersistentTurn: jest.fn(),
+        prepareIncognitoTurn: jest.fn(),
+      };
+      const admission = { admit: jest.fn() };
+      const turns = { findByClientRequestId: jest.fn() };
+      const requestEvents = Object.assign(new EventEmitter(), {
+        authenticatedSession: { userId: 'user-1', id: 'session-1' },
+        aborted: false,
+      });
+      const responseEvents = Object.assign(new EventEmitter(), {
+        destroyed: false,
+        writableEnded: false,
+        vary: jest.fn(),
+      });
+      const controller = new AiController(
+        orchestration as never,
+        {} as never,
+        admission as never,
+        turns as never,
+      );
+
+      await expect(
+        controller.streamChat(requestEvents as never, responseEvents as never, 'unsupported', body),
+      ).rejects.toMatchObject({ code: 'VALIDATION_ERROR', statusCode: 400 });
+
+      expect(requestEvents.listenerCount('aborted')).toBe(0);
+      expect(responseEvents.listenerCount('close')).toBe(0);
+      expect(admission.admit).not.toHaveBeenCalled();
+      expect(turns.findByClientRequestId).not.toHaveBeenCalled();
+      expect(orchestration.preparePersistentTurn).not.toHaveBeenCalled();
+      expect(orchestration.prepareIncognitoTurn).not.toHaveBeenCalled();
+    },
+  );
+
   it('rejects a disconnected bound AI lookup before orchestration and releases listeners', async () => {
     let releaseLookup!: () => void;
     let markLookupStarted!: () => void;
@@ -589,7 +686,12 @@ describe('minimum HTTP abuse protection', () => {
         throw new RateLimitError();
       }),
     };
-    const turns = { findByClientRequestId: jest.fn().mockResolvedValue({ id: 'turn-1' }) };
+    const turns = {
+      findByClientRequestId: jest.fn().mockResolvedValue({
+        id: 'turn-1',
+        conversationId: '22222222-2222-4222-8222-222222222222',
+      }),
+    };
     const controller = new AiController(
       orchestration as never,
       {} as never,

@@ -10,6 +10,7 @@ import {
   migrate,
   messages,
   quotaConsumptions,
+  riskEvents,
   sessions,
   users,
 } from '@mental-health/database';
@@ -53,10 +54,16 @@ import { AiTurnService } from '../src/ai/turns/ai-turn.service';
 import { AiExecutionTotalTimeoutError } from '../src/ai/runtime/active-ai-execution.registry';
 import { AppModule } from '../src/app.module';
 import { hashSessionToken, SessionsService } from '../src/auth/sessions.service';
+import { RateLimitError } from '../src/common/errors';
 import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
 import { env } from '../src/config/env';
 import { ConversationService } from '../src/conversations/conversation.service';
 import { DatabaseService } from '../src/database/database.service';
+import { HttpAbuseAdmissionService } from '../src/http-abuse/http-abuse-admission.service';
+import {
+  HTTP_RATE_LIMIT_CONFIG,
+  type HttpRateLimitConfiguration,
+} from '../src/http-abuse/http-abuse.types';
 import { MessageService } from '../src/messages/message.service';
 import { QuotaService } from '../src/quota/quota.service';
 
@@ -66,6 +73,29 @@ const PROVIDER_METADATA = {
   model: 'fake-stream-model',
   requestId: 'safe-fake-trace',
 } as const;
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+async function bounded<T>(promise: Promise<T>, label: string, timeoutMs = 10_000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 type FakeMode =
   | 'success'
   | 'fail-before-segment'
@@ -241,6 +271,8 @@ describe('Phase 3 AI foundation integration', () => {
   let messagesService: MessageService;
   let orchestration: AiOrchestrationService;
   let quotaService: QuotaService;
+  let httpAdmission: HttpAbuseAdmissionService;
+  let httpRateLimitConfig: HttpRateLimitConfiguration;
   let sessionsService: SessionsService;
   let turnsService: AiTurnService;
   let incognitoStore: InMemoryIncognitoContextStore;
@@ -286,6 +318,8 @@ describe('Phase 3 AI foundation integration', () => {
     messagesService = moduleRef.get(MessageService);
     orchestration = moduleRef.get(AiOrchestrationService);
     quotaService = moduleRef.get(QuotaService);
+    httpAdmission = moduleRef.get(HttpAbuseAdmissionService);
+    httpRateLimitConfig = moduleRef.get(HTTP_RATE_LIMIT_CONFIG);
     sessionsService = moduleRef.get(SessionsService);
     turnsService = moduleRef.get(AiTurnService);
     incognitoStore = moduleRef.get(InMemoryIncognitoContextStore);
@@ -645,6 +679,134 @@ describe('Phase 3 AI foundation integration', () => {
     expect(provider.streamCalls).toBe(1);
     expect(await quotaService.getUsage(userId, BASE_NOW)).toMatchObject({ usedCount: 1 });
     expect(await messagesService.readMessages(userId, unrelated.id, BASE_NOW)).toHaveLength(0);
+  });
+
+  it('rejects a stale bound recovery snapshot after its original conversation is purged', async () => {
+    const userId = await createUser();
+    const originalConversation = await conversationsService.create(userId, BASE_NOW);
+    const requestedConversation = await conversationsService.create(userId, BASE_NOW);
+    const clientRequestId = randomUUID();
+    const original = await orchestration.preparePersistentTurn(
+      { userId, sessionId: randomUUID() },
+      {
+        clientRequestId,
+        conversationId: originalConversation.id,
+        message: 'synthetic original recovery binding',
+      },
+      new AbortController().signal,
+      BASE_NOW,
+    );
+    await collect(original);
+    expect(provider.streamCalls).toBe(1);
+
+    const rawToken = `synthetic-recovery-binding-${randomUUID()}`;
+    const csrfToken = 'synthetic-recovery-binding-csrf';
+    await databaseService.database.insert(sessions).values({
+      id: randomUUID(),
+      userId,
+      tokenHash: hashSessionToken(rawToken),
+      createdAt: BASE_NOW,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+
+    for (let index = 0; index < httpRateLimitConfig.policies.ai_new_work.capacity; index += 1) {
+      httpAdmission.admit('ai_new_work', userId, 'user');
+    }
+    expect(() => httpAdmission.admit('ai_new_work', userId, 'user')).toThrow(RateLimitError);
+
+    const lookupStarted = deferred<void>();
+    const releaseLookup = deferred<void>();
+    const originalFind = turnsService.findByClientRequestId.bind(turnsService);
+    const findSpy = jest
+      .spyOn(turnsService, 'findByClientRequestId')
+      .mockImplementationOnce(async (...input) => {
+        const snapshot = await originalFind(...input);
+        lookupStarted.resolve(undefined);
+        await releaseLookup.promise;
+        return snapshot;
+      });
+    const prepareSpy = jest.spyOn(orchestration, 'preparePersistentTurn');
+    const preGateSpy = jest.spyOn(preGate, 'check');
+    const postGateSpy = jest.spyOn(postGate, 'approve');
+    const [quotaBefore] = await databaseService.database
+      .select({ value: count() })
+      .from(quotaConsumptions)
+      .where(eq(quotaConsumptions.userId, userId));
+    const [riskBefore] = await databaseService.database
+      .select({ value: count() })
+      .from(riskEvents)
+      .where(eq(riskEvents.userId, userId));
+    const responsePromise = request(app.getHttpServer())
+      .post('/ai/chat/stream')
+      .set('Origin', 'http://localhost:5173')
+      .set('Cookie', `mh_session=${rawToken}; mh_csrf=${csrfToken}`)
+      .set('x-csrf-token', csrfToken)
+      .send({
+        mode: 'persistent',
+        clientRequestId,
+        conversationId: requestedConversation.id,
+        message: 'synthetic mismatched recovery after purge',
+      })
+      .then((response) => response);
+
+    let response: Awaited<typeof responsePromise> | undefined;
+    let prepareCallCount: number | undefined;
+    let preGateCallCount: number | undefined;
+    let postGateCallCount: number | undefined;
+    try {
+      await bounded(lookupStarted.promise, 'bound recovery classification lookup');
+      await request(app.getHttpServer())
+        .delete(`/conversations/${originalConversation.id}`)
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', `mh_session=${rawToken}; mh_csrf=${csrfToken}`)
+        .set('x-csrf-token', csrfToken)
+        .expect(200);
+      await conversationsService.purgeExpired(new Date(), 1_000);
+      await expect(originalFind(userId, clientRequestId)).resolves.toBeNull();
+      await request(app.getHttpServer())
+        .get(`/conversations/${requestedConversation.id}`)
+        .set('Cookie', `mh_session=${rawToken}`)
+        .expect(200);
+
+      releaseLookup.resolve(undefined);
+      response = await bounded(responsePromise, 'bound recovery conflict response');
+      prepareCallCount = prepareSpy.mock.calls.length;
+      preGateCallCount = preGateSpy.mock.calls.length;
+      postGateCallCount = postGateSpy.mock.calls.length;
+    } finally {
+      releaseLookup.resolve(undefined);
+      await Promise.allSettled([responsePromise]);
+      findSpy.mockRestore();
+      prepareSpy.mockRestore();
+      preGateSpy.mockRestore();
+      postGateSpy.mockRestore();
+    }
+
+    expect(response?.status).toBe(409);
+    expect(response?.body).toEqual({
+      success: false,
+      error: { code: 'CONFLICT', message: '客户端请求与原对话不一致' },
+    });
+    expect(prepareCallCount).toBe(0);
+    expect(preGateCallCount).toBe(0);
+    expect(postGateCallCount).toBe(0);
+    expect(provider.streamCalls).toBe(1);
+    expect(
+      await databaseService.database
+        .select()
+        .from(aiTurns)
+        .where(eq(aiTurns.conversationId, requestedConversation.id)),
+    ).toHaveLength(0);
+    const [quotaAfter] = await databaseService.database
+      .select({ value: count() })
+      .from(quotaConsumptions)
+      .where(eq(quotaConsumptions.userId, userId));
+    const [riskAfter] = await databaseService.database
+      .select({ value: count() })
+      .from(riskEvents)
+      .where(eq(riskEvents.userId, userId));
+    expect(quotaAfter?.value).toBe(quotaBefore?.value);
+    expect(riskAfter?.value).toBe(riskBefore?.value);
   });
 
   it('never recreates a purged new-chat conversation when recovery binds its original id', async () => {

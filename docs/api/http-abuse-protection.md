@@ -30,8 +30,10 @@ unknown-result protocol.
   authentication guards. IDs remain ephemeral process-memory limiter keys.
 - Consent mutation and bound persistent AI recovery use a bounded classification
   probe and an owner-scoped lookup. Only that server lookup can select a recovery
-  lane; unbound persistent and Incognito requests are creation-capable new work,
-  and no request flag or header can select a privileged lane.
+  lane, and a found turn must match the request's exact `conversationId`; a mismatch
+  returns the existing conflict response before recovery admission. Unbound
+  persistent and Incognito requests are creation-capable new work, and no request
+  flag or header can select a privileged lane.
 - All HTTP-reachable Argon2 work shares one non-queued concurrency bound. Once a
   native operation starts, its permit is held until the Promise actually settles,
   even if the request disconnects.
