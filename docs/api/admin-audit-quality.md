@@ -1,7 +1,7 @@
 # Admin Audit Read and AI Turn Metadata API Draft
 
 - Status: Accepted engineering contract; Batch 4A Audit Read implementation
-  merged in PR #33, Batch 4B AI Turn metadata implementation in review
+  merged in PR #33, Batch 4B AI Turn metadata implementation in review in PR #34
 - Base paths: `/admin/audit-logs` and `/admin/ai-quality`
 - Authentication: current Staff Session only
 - Transport: JSON over HTTPS with `Cache-Control: private, no-store`
