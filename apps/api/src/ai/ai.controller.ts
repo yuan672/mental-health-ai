@@ -19,11 +19,15 @@ import {
 import { ZodValidationPipe } from '../common/validation/zod-validation.pipe';
 import { AiOrchestrationService } from './ai-orchestration.service';
 import {
+  ActiveAiExecutionCapacityError,
   AiExecutionTotalTimeoutError,
   type ConsentBoundExecution,
 } from './runtime/active-ai-execution.registry';
 import { ConsentExecutionCoordinator } from '../consents/runtime/consent-execution.coordinator';
 import { aiChatRequestSchema, type AiChatRequest } from './ai.schemas';
+import { HttpAbuseAdmissionService } from '../http-abuse/http-abuse-admission.service';
+import { HttpIngress, HttpPrincipal } from '../http-abuse/http-abuse.metadata';
+import { AiTurnService } from './turns/ai-turn.service';
 import {
   parseAiStreamEventV2,
   toAiStreamEventV1,
@@ -123,9 +127,13 @@ export class AiController {
   constructor(
     private readonly orchestration: AiOrchestrationService,
     private readonly consentExecutions: ConsentExecutionCoordinator,
+    private readonly httpAdmission: HttpAbuseAdmissionService,
+    private readonly aiTurns: AiTurnService,
   ) {}
 
   @Post('chat/stream')
+  @HttpIngress('mixed')
+  @HttpPrincipal('manual')
   @UseGuards(AuthenticatedSessionGuard, CsrfGuard)
   async streamChat(
     @Req() request: AuthenticatedRequest,
@@ -133,6 +141,14 @@ export class AiController {
     @Headers('x-mh-knowledge-references') knowledgeCapability: string | undefined,
     @Body(new ZodValidationPipe(aiChatRequestSchema)) body: AiChatRequest,
   ): Promise<void> {
+    const userId = request.authenticatedSession.userId;
+    this.httpAdmission.admit('classification_probe', userId, 'user');
+    if (body.mode === 'persistent') {
+      const existing = await this.aiTurns.findByClientRequestId(userId, body.clientRequestId);
+      this.httpAdmission.admit(existing ? 'control_recovery' : 'ai_new_work', userId, 'user');
+    } else {
+      this.httpAdmission.admit('ai_new_work', userId, 'user');
+    }
     response.vary('X-MH-Knowledge-References');
     const representation = parseKnowledgeReferenceCapability(knowledgeCapability);
     const abortController = new AbortController();
@@ -162,6 +178,9 @@ export class AiController {
       );
     } catch (error) {
       response.removeListener('close', onClose);
+      if (error instanceof ActiveAiExecutionCapacityError) {
+        this.httpAdmission.rejectConcurrency('ai_new_work', 'user');
+      }
       throw error;
     }
 
@@ -361,6 +380,9 @@ export class AiController {
       );
     } catch (error) {
       response.removeListener('close', onClose);
+      if (error instanceof ActiveAiExecutionCapacityError) {
+        this.httpAdmission.rejectConcurrency('ai_new_work', 'user');
+      }
       throw error;
     }
 

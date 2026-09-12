@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { argon2id, hash, verify } from 'argon2';
+import { CredentialWorkAdmissionService } from '../http-abuse/credential-work-admission.service';
 
 const ARGON2_OPTIONS = {
   type: argon2id,
@@ -13,15 +14,23 @@ const ARGON2_OPTIONS = {
 export class PasswordHasherService {
   private readonly dummyHash = hash('not-a-real-user-password-9F!pQ2', ARGON2_OPTIONS);
 
-  hash(password: string): Promise<string> {
-    return hash(password, ARGON2_OPTIONS);
+  constructor(@Optional() private readonly credentialWork?: CredentialWorkAdmissionService) {}
+
+  hash(password: string, signal?: AbortSignal): Promise<string> {
+    return this.run(signal, () => hash(password, ARGON2_OPTIONS));
   }
 
-  verify(passwordHash: string, password: string): Promise<boolean> {
-    return verify(passwordHash, password);
+  verify(passwordHash: string, password: string, signal?: AbortSignal): Promise<boolean> {
+    return this.run(signal, () => verify(passwordHash, password));
   }
 
-  async verifyDummy(password: string): Promise<void> {
-    await verify(await this.dummyHash, password);
+  async verifyDummy(password: string, signal?: AbortSignal): Promise<void> {
+    await this.run(signal, async () => verify(await this.dummyHash, password));
+  }
+
+  private run<T>(signal: AbortSignal | undefined, work: () => Promise<T>): Promise<T> {
+    if (!signal) return work();
+    if (!this.credentialWork) throw new Error('HTTP credential admission is unavailable');
+    return this.credentialWork.run(signal, work);
   }
 }

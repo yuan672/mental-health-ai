@@ -189,7 +189,12 @@ describe('pre-stream response lifecycle', () => {
         enforcePreparedExecutionDeadline: jest.fn(),
         preProviderTerminationError,
       } as unknown as AiOrchestrationService;
-      const controller = new AiController(orchestration, {} as ConsentExecutionCoordinator);
+      const controller = new AiController(
+        orchestration,
+        {} as ConsentExecutionCoordinator,
+        { admit: jest.fn() } as never,
+        { findByClientRequestId: jest.fn().mockResolvedValue(null) } as never,
+      );
 
       await expect(
         controller.streamChat(
@@ -252,7 +257,12 @@ describe('pre-stream response lifecycle', () => {
         enforcePreparedExecutionDeadline: jest.fn(),
         preProviderTerminationError: jest.fn(() => typedTermination),
       } as unknown as AiOrchestrationService;
-      const controller = new AiController(orchestration, {} as ConsentExecutionCoordinator);
+      const controller = new AiController(
+        orchestration,
+        {} as ConsentExecutionCoordinator,
+        { admit: jest.fn() } as never,
+        { findByClientRequestId: jest.fn().mockResolvedValue(null) } as never,
+      );
 
       await expect(
         controller.streamChat(
@@ -294,7 +304,12 @@ describe('pre-stream response lifecycle', () => {
         };
       }),
     } as unknown as AiOrchestrationService;
-    const controller = new AiController(orchestration, {} as ConsentExecutionCoordinator);
+    const controller = new AiController(
+      orchestration,
+      {} as ConsentExecutionCoordinator,
+      { admit: jest.fn() } as never,
+      { findByClientRequestId: jest.fn().mockResolvedValue(null) } as never,
+    );
 
     await expect(
       controller.streamChat(request, response as unknown as Response, undefined, {

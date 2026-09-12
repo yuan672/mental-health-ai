@@ -18,6 +18,7 @@ import { QuotaModule } from './quota/quota.module';
 import { SecurityModule } from './security/security.module';
 import { safeOperationalPath } from './common/http/safe-request-path';
 import { AdminModule } from './admin/admin.module';
+import { HttpAbuseProtectionModule } from './http-abuse/http-abuse-protection.module';
 
 export const LOG_REDACT_PATHS = [
   'req.headers.authorization',
@@ -129,6 +130,7 @@ export function applicationLogProperties(request: IncomingMessage) {
       },
     }),
     DatabaseModule,
+    HttpAbuseProtectionModule,
     AdminModule,
     SecurityModule,
     HealthModule,

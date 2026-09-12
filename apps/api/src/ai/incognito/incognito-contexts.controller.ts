@@ -12,6 +12,7 @@ import {
 import { AuthenticatedSessionGuard } from '../../auth/authenticated-session.guard';
 import type { AuthenticatedRequest } from '../../auth/authenticated-request';
 import { CsrfGuard } from '../../auth/csrf.guard';
+import { HttpIngress, HttpPrincipal } from '../../http-abuse/http-abuse.metadata';
 import { IncognitoContextsService } from './incognito-contexts.service';
 
 @Controller('incognito-contexts')
@@ -19,6 +20,7 @@ export class IncognitoContextsController {
   constructor(private readonly contexts: IncognitoContextsService) {}
 
   @Post()
+  @HttpPrincipal('ai_new_work')
   @Header('Cache-Control', 'private, no-store')
   @UseGuards(AuthenticatedSessionGuard, CsrfGuard)
   async create(@Req() request: AuthenticatedRequest) {
@@ -30,6 +32,8 @@ export class IncognitoContextsController {
   }
 
   @Delete(':contextId')
+  @HttpIngress('control')
+  @HttpPrincipal('control_recovery')
   @HttpCode(200)
   @Header('Cache-Control', 'private, no-store')
   @UseGuards(AuthenticatedSessionGuard, CsrfGuard)

@@ -19,6 +19,7 @@ import {
 } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/authenticated-request';
 import { AuthenticatedSessionGuard } from '../auth/authenticated-session.guard';
+import { HttpIngress, HttpPrincipal } from '../http-abuse/http-abuse.metadata';
 import { CsrfGuard } from '../auth/csrf.guard';
 import { ZodValidationPipe } from '../common/validation/zod-validation.pipe';
 import {
@@ -36,6 +37,7 @@ import { MoodService } from './mood.service';
 
 @Controller('mood-entries')
 @UseGuards(AuthenticatedSessionGuard)
+@HttpPrincipal('principal_general')
 export class MoodController {
   constructor(private readonly mood: MoodService) {}
 
@@ -60,6 +62,8 @@ export class MoodController {
   }
 
   @Get('creation-status/:clientRequestId')
+  @HttpIngress('control')
+  @HttpPrincipal('control_recovery')
   @Header('Cache-Control', 'private, no-store')
   creationStatus(
     @Req() request: AuthenticatedRequest,
@@ -70,6 +74,8 @@ export class MoodController {
   }
 
   @Get(':id')
+  @HttpIngress('control')
+  @HttpPrincipal('control_recovery')
   @Header('Cache-Control', 'private, no-store')
   get(
     @Req() request: AuthenticatedRequest,
@@ -92,6 +98,8 @@ export class MoodController {
   }
 
   @Delete(':id')
+  @HttpIngress('control')
+  @HttpPrincipal('control_recovery')
   @HttpCode(200)
   @UseGuards(CsrfGuard)
   @Header('Cache-Control', 'private, no-store')
@@ -104,6 +112,8 @@ export class MoodController {
   }
 
   @Delete()
+  @HttpIngress('control')
+  @HttpPrincipal('control_recovery')
   @HttpCode(200)
   @UseGuards(CsrfGuard)
   @Header('Cache-Control', 'private, no-store')

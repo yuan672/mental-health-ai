@@ -24,7 +24,7 @@ export function createCorsOptions(
     callback(null, {
       origin: allowed ? requestOrigin : false,
       credentials: true,
-      exposedHeaders: ['X-MH-Knowledge-References'],
+      exposedHeaders: ['X-MH-Knowledge-References', 'Retry-After'],
     });
   };
 }

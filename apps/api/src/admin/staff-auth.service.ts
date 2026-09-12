@@ -36,15 +36,20 @@ export class StaffAuthService {
     }
   }
 
-  async login(email: string, password: string, now = new Date()): Promise<CreatedStaffSession> {
+  async login(
+    email: string,
+    password: string,
+    now = new Date(),
+    signal?: AbortSignal,
+  ): Promise<CreatedStaffSession> {
     this.assertEnabled();
     const credential = await this.repository.findCredentialByEmail(email);
     if (!credential) {
-      await this.passwordHasher.verifyDummy(password);
+      await this.passwordHasher.verifyDummy(password, signal);
       this.logger.staffLoginFailed('invalid_credentials');
       throw new InvalidCredentialsError();
     }
-    if (!(await this.passwordHasher.verify(credential.passwordHash, password))) {
+    if (!(await this.passwordHasher.verify(credential.passwordHash, password, signal))) {
       this.logger.staffLoginFailed('invalid_credentials');
       throw new InvalidCredentialsError();
     }

@@ -13,7 +13,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { ZodValidationPipe } from '../common/validation/zod-validation.pipe';
 import { AdminAiTurnMetadataService } from './admin-ai-turn-metadata.service';
 import {
@@ -88,6 +88,9 @@ import {
   type AdminReviewQueueResolveRequest,
   type AdminRiskEventListQuery,
 } from './admin-safety-review.schemas';
+import { env } from '../config/env';
+import { createHttpRequestLifecycle } from '../http-abuse/http-request-lifecycle';
+import { HttpIngress, HttpPrincipal } from '../http-abuse/http-abuse.metadata';
 
 function principalView(principal: StaffPrincipalState) {
   return staffPrincipalViewSchema.parse({
@@ -115,6 +118,7 @@ function sessionView(session: StaffSessionView) {
 @Controller('admin')
 @UseGuards(AdminAuthEnabledGuard, StaffTrustedOriginGuard)
 @UseInterceptors(AdminNoStoreInterceptor)
+@HttpPrincipal('staff_sensitive', 'staff')
 export class AdminController {
   constructor(
     private readonly auth: StaffAuthService,
@@ -126,23 +130,44 @@ export class AdminController {
   ) {}
 
   @Post('auth/login')
+  @HttpIngress('standard', 'staff_credential')
+  @HttpPrincipal('manual', 'staff')
   @HttpCode(200)
   async login(
+    @Req() request: Request,
     @Body(new ZodValidationPipe(staffLoginSchema)) body: StaffLoginRequest,
     @Res({ passthrough: true }) response: Response,
   ) {
-    const session = await this.auth.login(body.email, body.password);
-    setStaffCookies(response, session.rawToken, session.csrfToken, session.expiresAt);
-    return { success: true, data: sessionView(session) };
+    const lifecycle = createHttpRequestLifecycle(
+      request,
+      response,
+      env.HTTP_CREDENTIAL_OPERATION_TIMEOUT_MS,
+    );
+    try {
+      const session = await this.auth.login(
+        body.email,
+        body.password,
+        new Date(),
+        lifecycle.signal,
+      );
+      setStaffCookies(response, session.rawToken, session.csrfToken, session.expiresAt);
+      return { success: true, data: sessionView(session) };
+    } finally {
+      lifecycle.dispose();
+    }
   }
 
   @Get('auth/session')
+  @HttpIngress('control')
+  @HttpPrincipal('control_recovery', 'staff')
   @UseGuards(StaffSessionGuard)
   session(@Req() request: StaffAuthenticatedRequest) {
     return { success: true, data: sessionView(request.staffSession) };
   }
 
   @Post('auth/logout')
+  @HttpIngress('control')
+  @HttpPrincipal('control_recovery', 'staff')
   @HttpCode(200)
   @UseGuards(StaffSessionGuard, StaffCsrfGuard)
   async logout(
@@ -158,13 +183,28 @@ export class AdminController {
   @UseGuards(StaffSessionGuard, StaffCsrfGuard)
   async create(
     @Req() request: StaffAuthenticatedRequest,
+    @Res({ passthrough: true }) response: Response,
     @Body(new ZodValidationPipe(createStaffPrincipalSchema)) body: CreateStaffPrincipalRequest,
   ) {
-    const result = await this.access.create(request.staffSession, body);
-    return {
-      success: true,
-      data: { outcome: result.outcome, principal: principalView(result.principal) },
-    };
+    const lifecycle = createHttpRequestLifecycle(
+      request,
+      response,
+      env.HTTP_CREDENTIAL_OPERATION_TIMEOUT_MS,
+    );
+    try {
+      const result = await this.access.create(
+        request.staffSession,
+        body,
+        new Date(),
+        lifecycle.signal,
+      );
+      return {
+        success: true,
+        data: { outcome: result.outcome, principal: principalView(result.principal) },
+      };
+    } finally {
+      lifecycle.dispose();
+    }
   }
 
   @Get('staff-principals')
@@ -181,6 +221,8 @@ export class AdminController {
   }
 
   @Get('staff-principals/:id')
+  @HttpIngress('control')
+  @HttpPrincipal('control_recovery', 'staff')
   @UseGuards(StaffSessionGuard)
   async get(
     @Req() request: StaffAuthenticatedRequest,
@@ -212,6 +254,8 @@ export class AdminController {
   }
 
   @Delete('staff-principals/:id/roles/:roleKey')
+  @HttpIngress('control')
+  @HttpPrincipal('control_recovery', 'staff')
   @UseGuards(StaffSessionGuard, StaffCsrfGuard)
   async revokeRole(
     @Req() request: StaffAuthenticatedRequest,
@@ -231,6 +275,8 @@ export class AdminController {
   }
 
   @Post('staff-principals/:id/disable')
+  @HttpIngress('control')
+  @HttpPrincipal('control_recovery', 'staff')
   @UseGuards(StaffSessionGuard, StaffCsrfGuard)
   async disable(
     @Req() request: StaffAuthenticatedRequest,
@@ -247,6 +293,8 @@ export class AdminController {
   }
 
   @Post('staff-principals/:id/revoke-sessions')
+  @HttpIngress('control')
+  @HttpPrincipal('control_recovery', 'staff')
   @UseGuards(StaffSessionGuard, StaffCsrfGuard)
   async revokeSessions(
     @Req() request: StaffAuthenticatedRequest,
@@ -392,6 +440,8 @@ export class AdminController {
   }
 
   @Get('knowledge/articles/:articleKey/versions/:version/status')
+  @HttpIngress('control')
+  @HttpPrincipal('control_recovery', 'staff')
   @UseGuards(StaffSessionGuard)
   async getKnowledgeVersionStatus(
     @Req() request: StaffAuthenticatedRequest,
@@ -501,6 +551,8 @@ export class AdminController {
   }
 
   @Get('knowledge/articles/:articleKey/versions/:version/publication-state')
+  @HttpIngress('control')
+  @HttpPrincipal('control_recovery', 'staff')
   @UseGuards(StaffSessionGuard)
   async getKnowledgePublicationState(
     @Req() request: StaffAuthenticatedRequest,

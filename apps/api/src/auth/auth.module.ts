@@ -12,9 +12,16 @@ import { PasswordHasherService } from './password-hasher.service';
 import { SessionsService } from './sessions.service';
 import { TrustedOriginGuard } from './trusted-origin.guard';
 import { RegistrationRequirementsService } from './registration-requirements.service';
+import { HttpAbuseProtectionModule } from '../http-abuse/http-abuse-protection.module';
 
 @Module({
-  imports: [AgeVerificationModule, ConsentsModule, IncognitoRuntimeModule, UsersModule],
+  imports: [
+    AgeVerificationModule,
+    ConsentsModule,
+    IncognitoRuntimeModule,
+    UsersModule,
+    HttpAbuseProtectionModule,
+  ],
   controllers: [AuthController, ConsentsController],
   providers: [
     AuthService,
