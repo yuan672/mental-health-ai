@@ -26,13 +26,20 @@ confirmation paths.
 Use bounded in-memory token buckets driven by a monotonic clock. A synchronous
 consume operation is atomic within the Node.js event loop. Every policy has a fixed
 code-owned key, capacity/refill configuration, idle TTL, and bounded key count.
-Expired cleanup is bounded and timers are released at shutdown. Process restart
-resets counters; multiple instances do not share them.
+Hard-partition standard, control, and mixed-route ingress token/key capacity. The
+process maximum is the validated sum of partitions, not a first-come map that
+ordinary traffic can fill. Expired cleanup is bounded and timers are released at
+shutdown. Process restart resets counters; multiple instances do not share them.
 
-Add a non-queued global credential-work semaphore around ordinary/Staff Argon2 and
-registration work. Do not add another AI semaphore: retain the existing
-`ActiveAiExecutionRegistry` and map its capacity failures to the bounded public
-`RATE_LIMITED` contract.
+Add a non-queued global credential-work semaphore around every HTTP-reachable
+Argon2 operation: ordinary registration/login, Staff login, and Staff-principal
+creation. Once native work starts, it owns the permit until its actual Promise
+settles; request cancellation suppresses downstream work but cannot release the
+permit early because the current hasher accepts no `AbortSignal`. Startup dummy-hash
+initialization and restricted offline bootstrap remain separate explicit scopes.
+
+Do not add another AI semaphore: retain the existing `ActiveAiExecutionRegistry`
+and map its capacity failures to the bounded public `RATE_LIMITED` contract.
 
 ### Identity boundary
 
@@ -47,21 +54,41 @@ A production proxy-address trust decision is explicitly deferred.
 
 ### Policy boundary
 
-Use a small set of fixed policies: coarse network, public read, ordinary credential,
-registration, Staff credential, principal general, new AI work, Staff sensitive,
-and control/recovery. A request may consume both network and principal buckets.
+Use a small set of fixed policies: standard network, control network, mixed-route
+network probe, public read, ordinary credential, registration, Staff credential,
+mixed-request classification probe, principal general, new AI work, Staff
+sensitive, and control/recovery. A request may consume both network and principal
+buckets.
 
 Control/recovery capacity is independent from new-work/general capacity but is not
 unlimited. It covers logout, Consent withdrawal/exact replay, Incognito end,
-privacy deletion, Staff authority reduction, and authoritative unknown-result
-reads. Saturation returns 429; no route bypasses Auth, Origin, CSRF, ownership, or
-Staff permission.
+privacy deletion, Staff authority reduction, and fixed authoritative-result reads.
+Pure control routes use the reserved control ingress. Mixed Consent/AI POST routes
+use a separately reserved mixed ingress, then Auth, CSRF, strict union parsing, a
+bounded owner-scoped lookup, and only then a server-selected downstream policy.
+The server does not trust a client "recovery" marker. Saturation returns 429; no
+route bypasses Auth, Origin, CSRF, ownership, Staff permission, or required Audit.
+
+Standard-route traffic cannot consume control or mixed-route token/key reservations.
+A direct flood of a control or mixed route can still exhaust that route's finite
+lane; this design does not claim unconditional termination availability.
 
 New AI admission occurs before durable resource creation, quota consumption, Risk
 classification, or Provider dispatch. No admitted AI path skips Safety. A request
 rejected before admission is not safety-assessed and must not be represented as a
 crisis-service response. Once SSE begins, no HTTP limiter converts it to JSON 429;
 existing deadlines, cancellation, backpressure, and Safety govern the stream.
+
+The current persistent orchestration registers and Consent-binds an active AI
+execution before it repeats the existing-turn lookup. The HTTP classifier does not
+bypass that accepted lifecycle. Therefore an admitted metadata replay can still
+receive bounded 429 while `ActiveAiExecutionRegistry` is full. This proposal accepts
+that limitation for the local/demo target rather than adding another AI semaphore,
+reordering Accepted lifecycle checks, or adding a recovery endpoint. Bound
+Conversation recovery and Incognito non-replay semantics remain unchanged.
+Consent exact replay likewise remains subject to ADR-016's bounded coordination
+queue, deadline, and dependency-scoped cleanup; the HTTP lane is not an unlimited
+shortcut around those controls.
 
 ### Response and logging
 
@@ -86,9 +113,11 @@ it becomes a readiness requirement.
 
 ### Benefits
 
-- protects Argon2 and common request paths from local bursts;
+- protects every HTTP Argon2 path and common request paths from local bursts;
 - composes with existing quota, Consent, AI concurrency, Incognito, and Staff
   controls rather than replacing them;
+- prevents unrelated standard traffic from consuming reserved control/mixed-route
+  tokens or key slots;
 - keeps limiter identity data bounded and ephemeral;
 - leaves authority-reducing and recovery work separately reachable; and
 - can be tested deterministically with a fake monotonic clock and synthetic data.
@@ -97,8 +126,10 @@ it becomes a readiness requirement.
 
 - restart resets counters and each API instance enforces only its own limits;
 - direct-address keying behind an unconfigured proxy can over-limit all clients;
-- shared NATs share the coarse network bucket;
-- application guards do not protect connection/TLS/slow-body exhaustion; and
+- shared NATs share each applicable network-lane bucket;
+- application guards do not protect connection/TLS/slow-body exhaustion;
+- a direct control/mixed-route flood or existing AI-registry saturation can still
+  return 429 on a recovery attempt; and
 - no per-email key means distributed account-specific guessing still needs a
   production edge/identity strategy.
 
@@ -131,6 +162,9 @@ An independent refillable lane provides availability without removing limits.
 ## Adoption boundary
 
 Accepting this ADR would authorize only the bounded single-process backend control
-described above and its synthetic tests. It would not approve production thresholds,
-proxy trust, address-processing policy, distributed enforcement, deployment, a real
-attack evaluation, Production AI, Knowledge publication, or frontend work.
+described above and its synthetic tests, including the finite recovery limitations
+and the rule that a started Argon2 Promise retains its permit until settlement. It
+would not approve a persistent-turn lookup reorder or recovery API, production
+thresholds, proxy trust, address-processing policy, distributed enforcement,
+deployment, a real attack evaluation, Production AI, Knowledge publication, or
+frontend work.
