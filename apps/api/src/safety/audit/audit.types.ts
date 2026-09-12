@@ -15,6 +15,9 @@ export const auditResourceTypeSchema = z.enum([
   'staff_principal_query',
   'risk_event_query',
   'review_queue_query',
+  'knowledge_article_query',
+  'knowledge_article',
+  'knowledge_article_version',
 ]);
 export const auditActionSchema = z.enum([
   'conversation_deleted',
@@ -39,6 +42,16 @@ export const auditActionSchema = z.enum([
   'staff_directory_accessed',
   'risk_event_list_accessed',
   'review_queue_list_accessed',
+  'knowledge_directory_accessed',
+  'knowledge_version_status_viewed',
+  'knowledge_draft_viewed',
+  'knowledge_review_candidate_viewed',
+  'knowledge_publication_state_viewed',
+  'knowledge_draft_created',
+  'knowledge_draft_updated',
+  'knowledge_source_verified',
+  'knowledge_version_published',
+  'knowledge_version_withdrawn',
 ]);
 
 export type AuditActorType = z.infer<typeof auditActorTypeSchema>;
@@ -124,6 +137,28 @@ const reviewQueueListMetadataSchema = z
     returnedCount: z.number().int().nonnegative(),
   })
   .strict();
+const knowledgeDirectoryMetadataSchema = z
+  .object({
+    filterCategory: z.literal('all'),
+    returnedCount: z.number().int().nonnegative(),
+  })
+  .strict();
+const knowledgeReadMetadataSchema = z
+  .object({
+    accessCategory: z.enum(['status', 'draft', 'review', 'publication']),
+    version: z.number().int().positive(),
+  })
+  .strict();
+const knowledgeMutationMetadataSchema = z
+  .object({
+    disposition: z.enum(['applied', 'no_change']),
+    version: z.number().int().positive(),
+    resultingDraftRevision: z.number().int().positive(),
+  })
+  .strict();
+const knowledgePublicationMutationMetadataSchema = knowledgeMutationMetadataSchema
+  .extend({ publicationStatus: z.enum(['published', 'withdrawn']) })
+  .strict();
 
 export function parseAuditMetadata(
   action: AuditAction,
@@ -167,6 +202,27 @@ export function parseAuditMetadata(
   }
   if (action === 'review_queue_list_accessed') {
     return reviewQueueListMetadataSchema.parse(metadata);
+  }
+  if (action === 'knowledge_directory_accessed') {
+    return knowledgeDirectoryMetadataSchema.parse(metadata);
+  }
+  if (
+    action === 'knowledge_version_status_viewed' ||
+    action === 'knowledge_draft_viewed' ||
+    action === 'knowledge_review_candidate_viewed' ||
+    action === 'knowledge_publication_state_viewed'
+  ) {
+    return knowledgeReadMetadataSchema.parse(metadata);
+  }
+  if (
+    action === 'knowledge_draft_created' ||
+    action === 'knowledge_draft_updated' ||
+    action === 'knowledge_source_verified'
+  ) {
+    return knowledgeMutationMetadataSchema.parse(metadata);
+  }
+  if (action === 'knowledge_version_published' || action === 'knowledge_version_withdrawn') {
+    return knowledgePublicationMutationMetadataSchema.parse(metadata);
   }
   return emptyMetadataSchema.parse(metadata);
 }

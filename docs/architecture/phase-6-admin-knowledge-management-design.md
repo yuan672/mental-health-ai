@@ -1,6 +1,6 @@
 # Phase 6 Admin Knowledge Management Backend Design
 
-- Status: Accepted for Batch 3 implementation; implementation pending
+- Status: Accepted; Batch 3 implementation delivered for review and not yet merged
 - Date: 2026-09-12
 - Accepted: 2026-09-12
 - Scope: staff-only Knowledge editorial, source-review, publication, withdrawal,

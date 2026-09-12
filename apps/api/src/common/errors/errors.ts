@@ -169,6 +169,12 @@ export class AdminAuthDisabledError extends AppError {
   }
 }
 
+export class AdminKnowledgeResultUnknownError extends AppError {
+  constructor(message = '知识内容操作结果暂时无法确认，请读取当前状态') {
+    super(ERROR_CODES.ADMIN_KNOWLEDGE_RESULT_UNKNOWN, 503, message);
+  }
+}
+
 export class StaffAuthorizationChangedError extends AppError {
   constructor(message = '管理权限状态已发生变化，请重新登录后重试') {
     super(ERROR_CODES.STAFF_AUTHORIZATION_CHANGED, 409, message);

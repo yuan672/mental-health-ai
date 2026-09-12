@@ -85,6 +85,20 @@ export const LOG_REDACT_PATHS = [
   '*.citationPayload',
   'sourceUrl',
   '*.sourceUrl',
+  'title',
+  '*.title',
+  'summary',
+  '*.summary',
+  'contentBlocks',
+  '*.contentBlocks',
+  'sources',
+  '*.sources',
+  'publisherName',
+  '*.publisherName',
+  'sourceTitle',
+  '*.sourceTitle',
+  'sourceLocator',
+  '*.sourceLocator',
 ] as const;
 
 @Module({

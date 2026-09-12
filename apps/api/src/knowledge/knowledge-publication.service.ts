@@ -151,14 +151,13 @@ export class KnowledgePublicationService {
       };
     }
 
-    const higher = versions.some((version) => version.version > target.version);
-    const previousHighest = versions
-      .filter((version) => version.version < target.version)
-      .at(-1)?.version;
-    if (higher || target.version !== (previousHighest ?? 0) + 1) {
+    const unresolvedPredecessor = versions.some(
+      (version) => version.version < target.version && version.publicationStatus === 'draft',
+    );
+    const current = versions.find((version) => version.publicationStatus === 'published');
+    if (unresolvedPredecessor || (current?.version ?? 0) > target.version) {
       throw new KnowledgePublicationConflictError('知识内容版本必须按顺序发布');
     }
-    const current = versions.find((version) => version.publicationStatus === 'published');
     if (current) await this.repository.withdraw(transaction, current.id, now);
     const published = await this.repository.publishDraft(transaction, target.id, manifest, now);
     return {

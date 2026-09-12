@@ -39,6 +39,27 @@ import {
   type StaffLoginRequest,
 } from './staff.schemas';
 import type { StaffPrincipalState } from './staff.repository';
+import { AdminKnowledgeService } from './admin-knowledge.service';
+import {
+  adminKnowledgeCandidateDataSchema,
+  adminKnowledgeCandidateSchema,
+  adminKnowledgeDirectoryDataSchema,
+  adminKnowledgeExpectedRevisionSchema,
+  adminKnowledgeListQuerySchema,
+  adminKnowledgeMutationDataSchema,
+  adminKnowledgePublicationStateDataSchema,
+  adminKnowledgeReplaceSchema,
+  adminKnowledgeSourceReviewDataSchema,
+  adminKnowledgeSourceReviewSchema,
+  adminKnowledgeStatusDataSchema,
+  adminKnowledgeVersionParamsSchema,
+  type AdminKnowledgeCandidate,
+  type AdminKnowledgeExpectedRevisionRequest,
+  type AdminKnowledgeListQuery,
+  type AdminKnowledgeReplaceRequest,
+  type AdminKnowledgeSourceReviewRequest,
+  type AdminKnowledgeVersionParams,
+} from './admin-knowledge.schemas';
 import {
   adminResourceIdSchema,
   adminReviewQueueClaimSchema,
@@ -85,6 +106,7 @@ export class AdminController {
     private readonly auth: StaffAuthService,
     private readonly access: StaffAccessService,
     private readonly safetyReview: AdminSafetyReviewService,
+    private readonly knowledge: AdminKnowledgeService,
   ) {}
 
   @Post('auth/login')
@@ -294,6 +316,192 @@ export class AdminController {
       success: true,
       data: adminReviewQueueMutationDataSchema.parse(
         await this.safetyReview.resolve(request.staffSession, id, body.resolutionCode),
+      ),
+    };
+  }
+
+  @Get('knowledge/articles')
+  @UseGuards(StaffSessionGuard)
+  async listKnowledgeArticles(
+    @Req() request: StaffAuthenticatedRequest,
+    @Query(new ZodValidationPipe(adminKnowledgeListQuerySchema)) query: AdminKnowledgeListQuery,
+  ) {
+    return {
+      success: true,
+      data: adminKnowledgeDirectoryDataSchema.parse(
+        await this.knowledge.list(request.staffSession, query),
+      ),
+    };
+  }
+
+  @Get('knowledge/articles/:articleKey/versions/:version/status')
+  @UseGuards(StaffSessionGuard)
+  async getKnowledgeVersionStatus(
+    @Req() request: StaffAuthenticatedRequest,
+    @Param(new ZodValidationPipe(adminKnowledgeVersionParamsSchema))
+    params: AdminKnowledgeVersionParams,
+  ) {
+    return {
+      success: true,
+      data: adminKnowledgeStatusDataSchema.parse(
+        await this.knowledge.getStatus(request.staffSession, params.articleKey, params.version),
+      ),
+    };
+  }
+
+  @Post('knowledge/articles/:articleKey/versions/:version')
+  @UseGuards(StaffSessionGuard, StaffCsrfGuard)
+  async createKnowledgeDraft(
+    @Req() request: StaffAuthenticatedRequest,
+    @Param(new ZodValidationPipe(adminKnowledgeVersionParamsSchema))
+    params: AdminKnowledgeVersionParams,
+    @Body(new ZodValidationPipe(adminKnowledgeCandidateSchema)) body: AdminKnowledgeCandidate,
+  ) {
+    return {
+      success: true,
+      data: adminKnowledgeMutationDataSchema.parse(
+        await this.knowledge.create(request.staffSession, params.articleKey, params.version, body),
+      ),
+    };
+  }
+
+  @Get('knowledge/articles/:articleKey/versions/:version/draft')
+  @UseGuards(StaffSessionGuard)
+  async getKnowledgeDraft(
+    @Req() request: StaffAuthenticatedRequest,
+    @Param(new ZodValidationPipe(adminKnowledgeVersionParamsSchema))
+    params: AdminKnowledgeVersionParams,
+  ) {
+    return {
+      success: true,
+      data: adminKnowledgeCandidateDataSchema.parse(
+        await this.knowledge.getDraft(request.staffSession, params.articleKey, params.version),
+      ),
+    };
+  }
+
+  @Put('knowledge/articles/:articleKey/versions/:version/draft')
+  @UseGuards(StaffSessionGuard, StaffCsrfGuard)
+  async replaceKnowledgeDraft(
+    @Req() request: StaffAuthenticatedRequest,
+    @Param(new ZodValidationPipe(adminKnowledgeVersionParamsSchema))
+    params: AdminKnowledgeVersionParams,
+    @Body(new ZodValidationPipe(adminKnowledgeReplaceSchema)) body: AdminKnowledgeReplaceRequest,
+  ) {
+    return {
+      success: true,
+      data: adminKnowledgeMutationDataSchema.parse(
+        await this.knowledge.replace(
+          request.staffSession,
+          params.articleKey,
+          params.version,
+          body.expectedDraftRevision,
+          body.candidate,
+        ),
+      ),
+    };
+  }
+
+  @Get('knowledge/articles/:articleKey/versions/:version/review-candidate')
+  @UseGuards(StaffSessionGuard)
+  async getKnowledgeReviewCandidate(
+    @Req() request: StaffAuthenticatedRequest,
+    @Param(new ZodValidationPipe(adminKnowledgeVersionParamsSchema))
+    params: AdminKnowledgeVersionParams,
+  ) {
+    return {
+      success: true,
+      data: adminKnowledgeCandidateDataSchema.parse(
+        await this.knowledge.getReviewCandidate(
+          request.staffSession,
+          params.articleKey,
+          params.version,
+        ),
+      ),
+    };
+  }
+
+  @Post('knowledge/articles/:articleKey/versions/:version/source-review')
+  @UseGuards(StaffSessionGuard, StaffCsrfGuard)
+  async verifyKnowledgeSources(
+    @Req() request: StaffAuthenticatedRequest,
+    @Param(new ZodValidationPipe(adminKnowledgeVersionParamsSchema))
+    params: AdminKnowledgeVersionParams,
+    @Body(new ZodValidationPipe(adminKnowledgeSourceReviewSchema))
+    body: AdminKnowledgeSourceReviewRequest,
+  ) {
+    return {
+      success: true,
+      data: adminKnowledgeSourceReviewDataSchema.parse(
+        await this.knowledge.sourceReview(
+          request.staffSession,
+          params.articleKey,
+          params.version,
+          body.expectedDraftRevision,
+        ),
+      ),
+    };
+  }
+
+  @Get('knowledge/articles/:articleKey/versions/:version/publication-state')
+  @UseGuards(StaffSessionGuard)
+  async getKnowledgePublicationState(
+    @Req() request: StaffAuthenticatedRequest,
+    @Param(new ZodValidationPipe(adminKnowledgeVersionParamsSchema))
+    params: AdminKnowledgeVersionParams,
+  ) {
+    return {
+      success: true,
+      data: adminKnowledgePublicationStateDataSchema.parse(
+        await this.knowledge.getPublicationState(
+          request.staffSession,
+          params.articleKey,
+          params.version,
+        ),
+      ),
+    };
+  }
+
+  @Post('knowledge/articles/:articleKey/versions/:version/publish')
+  @UseGuards(StaffSessionGuard, StaffCsrfGuard)
+  async publishKnowledgeVersion(
+    @Req() request: StaffAuthenticatedRequest,
+    @Param(new ZodValidationPipe(adminKnowledgeVersionParamsSchema))
+    params: AdminKnowledgeVersionParams,
+    @Body(new ZodValidationPipe(adminKnowledgeExpectedRevisionSchema))
+    body: AdminKnowledgeExpectedRevisionRequest,
+  ) {
+    return {
+      success: true,
+      data: adminKnowledgeMutationDataSchema.parse(
+        await this.knowledge.publish(
+          request.staffSession,
+          params.articleKey,
+          params.version,
+          body.expectedDraftRevision,
+        ),
+      ),
+    };
+  }
+
+  @Post('knowledge/articles/:articleKey/versions/:version/withdraw')
+  @UseGuards(StaffSessionGuard, StaffCsrfGuard)
+  async withdrawKnowledgeVersion(
+    @Req() request: StaffAuthenticatedRequest,
+    @Param(new ZodValidationPipe(adminKnowledgeVersionParamsSchema))
+    params: AdminKnowledgeVersionParams,
+    @Body(new ZodValidationPipe(adminKnowledgeExpectedRevisionSchema))
+    body: AdminKnowledgeExpectedRevisionRequest,
+  ) {
+    return {
+      success: true,
+      data: adminKnowledgeMutationDataSchema.parse(
+        await this.knowledge.withdraw(
+          request.staffSession,
+          params.articleKey,
+          params.version,
+          body.expectedDraftRevision,
+        ),
       ),
     };
   }
