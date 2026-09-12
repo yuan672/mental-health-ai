@@ -25,6 +25,10 @@ export type TokenConsumeResult =
 @Injectable()
 export class ProcessLocalTokenBucketStore implements OnModuleDestroy {
   private readonly buckets = new Map<HttpRateLimitPolicy, Map<string, Bucket>>();
+  private readonly sweepIterators = new Map<
+    HttpRateLimitPolicy,
+    IterableIterator<[string, Bucket]>
+  >();
   private readonly cleanupTimer: NodeJS.Timeout;
   private sweepPolicyIndex = 0;
 
@@ -91,16 +95,38 @@ export class ProcessLocalTokenBucketStore implements OnModuleDestroy {
     this.sweepPolicyIndex = (this.sweepPolicyIndex + 1) % HTTP_RATE_LIMIT_POLICIES.length;
     const policyBuckets = this.buckets.get(policy);
     if (!policyBuckets) return;
+    const policyConfig = this.config.policies[policy];
+    let iterator = this.sweepIterators.get(policy);
+    if (!iterator) {
+      iterator = policyBuckets.entries();
+      this.sweepIterators.set(policy, iterator);
+    }
     let inspected = 0;
-    for (const [key, bucket] of policyBuckets) {
-      if (inspected >= this.config.sweepBatchSize) break;
+    while (inspected < this.config.sweepBatchSize) {
+      const next = iterator.next();
+      if (next.done) {
+        this.sweepIterators.delete(policy);
+        break;
+      }
+      const [key, bucket] = next.value;
       inspected += 1;
-      if (now - bucket.lastSeenMonotonic >= this.config.keyTtlMs) policyBuckets.delete(key);
+      const elapsedMs = Math.max(0, now - bucket.lastRefillMonotonic);
+      const availableTokens = Math.min(
+        policyConfig.capacity,
+        bucket.tokens + (elapsedMs / 1_000) * policyConfig.refillTokensPerSecond,
+      );
+      if (
+        now - bucket.lastSeenMonotonic >= this.config.keyTtlMs &&
+        availableTokens >= policyConfig.capacity
+      ) {
+        policyBuckets.delete(key);
+      }
     }
   }
 
   onModuleDestroy(): void {
     clearInterval(this.cleanupTimer);
+    this.sweepIterators.clear();
     for (const bucket of this.buckets.values()) bucket.clear();
   }
 }

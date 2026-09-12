@@ -33,6 +33,7 @@ import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
 import { env } from '../src/config/env';
 import { DatabaseService } from '../src/database/database.service';
 import { createCorsOptions } from '../src/common/http/cors-options';
+import { CredentialWorkAdmissionService } from '../src/http-abuse/credential-work-admission.service';
 import { AuditLogRepository } from '../src/safety/audit/audit-log.repository';
 import { HumanReviewQueueService } from '../src/safety/review/human-review-queue.service';
 
@@ -82,6 +83,7 @@ describe('Admin identity and least-privilege backend', () => {
   let reviewer: DatabaseStaffSafetyReviewerAuthorizer;
   let audits: AuditLogRepository;
   let reviewQueue: HumanReviewQueueService;
+  let credentialWork: CredentialWorkAdmissionService;
   let adminId: string;
   let adminEmail: string;
   let adminSession: Awaited<ReturnType<StaffAuthService['login']>>;
@@ -132,6 +134,7 @@ describe('Admin identity and least-privilege backend', () => {
     reviewer = moduleRef.get(DatabaseStaffSafetyReviewerAuthorizer);
     audits = moduleRef.get(AuditLogRepository);
     reviewQueue = moduleRef.get(HumanReviewQueueService);
+    credentialWork = moduleRef.get(CredentialWorkAdmissionService);
     failedAuditBootstrapId = randomUUID();
     const bootstrapAuditFailure = jest
       .spyOn(audits, 'appendWithinTransaction')
@@ -250,6 +253,7 @@ describe('Admin identity and least-privilege backend', () => {
   });
 
   it('uses separate strict cookies, trusted origin, CSRF, and indistinguishable login failures', async () => {
+    const admittedWork = jest.spyOn(credentialWork, 'run');
     const unknown = await request(app.getHttpServer())
       .post('/admin/auth/login')
       .set('Origin', ADMIN_ORIGIN)
@@ -273,6 +277,9 @@ describe('Admin identity and least-privilege backend', () => {
     expect(cookies.join('\n')).toContain('mh_staff_csrf=');
     expect(cookies.join('\n')).toContain('SameSite=Strict');
     expect(cookies.join('\n')).toContain('Path=/admin');
+    expect(admittedWork).toHaveBeenCalledTimes(3);
+    expect(admittedWork.mock.calls.every(([signal]) => signal instanceof AbortSignal)).toBe(true);
+    admittedWork.mockRestore();
 
     const staffSession = cookieValue(cookies, 'mh_staff_session');
     await request(app.getHttpServer())
@@ -281,6 +288,47 @@ describe('Admin identity and least-privilege backend', () => {
       .set('Cookie', `mh_staff_session=${staffSession}`)
       .send({ expectedAuthorizationRevision: 1 })
       .expect(403);
+  });
+
+  it('binds Staff creation and an exact no-change request to credential-work admission', async () => {
+    const targetId = randomUUID();
+    const body = {
+      staffPrincipalId: targetId,
+      email: `http-create-${targetId}@example.test`,
+      initialPassword: PASSWORD,
+    };
+    const admittedWork = jest.spyOn(credentialWork, 'run');
+    const authenticated = () =>
+      request(app.getHttpServer())
+        .post('/admin/staff-principals')
+        .set('Origin', ADMIN_ORIGIN)
+        .set(
+          'Cookie',
+          `mh_staff_session=${adminSession.rawToken}; mh_staff_csrf=${adminSession.csrfToken}`,
+        )
+        .set('x-staff-csrf-token', adminSession.csrfToken)
+        .send(body);
+
+    await authenticated()
+      .expect(201)
+      .expect((response) => {
+        expect(response.body.data).toMatchObject({
+          outcome: 'applied',
+          principal: { id: targetId },
+        });
+      });
+    await authenticated()
+      .expect(201)
+      .expect((response) => {
+        expect(response.body.data).toMatchObject({
+          outcome: 'no_change',
+          principal: { id: targetId },
+        });
+      });
+
+    expect(admittedWork).toHaveBeenCalledTimes(2);
+    expect(admittedWork.mock.calls.every(([signal]) => signal instanceof AbortSignal)).toBe(true);
+    admittedWork.mockRestore();
   });
 
   it('keeps the one-time bootstrap invariant after committed initialization', async () => {

@@ -1,5 +1,7 @@
 import { Controller, Get, INestApplication, UseGuards } from '@nestjs/common';
 import { EventEmitter } from 'node:events';
+import { request as createHttpRequest } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, Reflector } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -31,6 +33,10 @@ import { ConsentsController } from '../src/consents/consents.controller';
 import { AiController } from '../src/ai/ai.controller';
 import { ActiveAiExecutionCapacityError } from '../src/ai/runtime/active-ai-execution.registry';
 import { AuthController } from '../src/auth/auth.controller';
+import { AuthenticatedSessionGuard } from '../src/auth/authenticated-session.guard';
+import { CsrfGuard } from '../src/auth/csrf.guard';
+import { SessionsService } from '../src/auth/sessions.service';
+import { TrustedOriginGuard } from '../src/auth/trusted-origin.guard';
 import { ConversationAccessController } from '../src/conversation-access/conversation-access.controller';
 import { MoodController } from '../src/mood/mood.controller';
 import { IncognitoContextsController } from '../src/ai/incognito/incognito-contexts.controller';
@@ -38,12 +44,16 @@ import { AdminController } from '../src/admin/admin.controller';
 import { createCorsOptions } from '../src/common/http/cors-options';
 import { AppModule } from '../src/app.module';
 import { env } from '../src/config/env';
+import { AiOrchestrationService } from '../src/ai/ai-orchestration.service';
+import { AiTurnService } from '../src/ai/turns/ai-turn.service';
+import { ConsentExecutionCoordinator } from '../src/consents/runtime/consent-execution.coordinator';
 
 function configuration(
   overrides: Partial<
     Record<(typeof HTTP_RATE_LIMIT_POLICIES)[number], { capacity: number; refill: number }>
   > = {},
   maxKeys = 4,
+  sweepBatchSize = 64,
 ): HttpRateLimitConfiguration {
   const policies = Object.fromEntries(
     HTTP_RATE_LIMIT_POLICIES.map((policy) => {
@@ -55,7 +65,7 @@ function configuration(
     policies,
     keyTtlMs: 1_000,
     sweepIntervalMs: 500,
-    sweepBatchSize: 64,
+    sweepBatchSize,
     retryAfterMaximumSeconds: 30,
     credentialMaxConcurrency: 1,
     credentialOperationTimeoutMs: 1_000,
@@ -64,6 +74,30 @@ function configuration(
 
 function loggerDouble(): jest.Mocked<Pick<SecurityLoggingService, 'httpRateLimited'>> {
   return { httpRateLimited: jest.fn() };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+async function bounded<T>(promise: Promise<T>, label: string, timeoutMs = 5_000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 @Controller('limited')
@@ -164,6 +198,80 @@ describe('minimum HTTP abuse protection', () => {
     }
   });
 
+  it('advances a 64-key sweep past an active head and eventually releases an expired tail', () => {
+    let monotonicNow = 0;
+    const clock: MonotonicClock = { now: () => monotonicNow };
+    const store = new ProcessLocalTokenBucketStore(
+      configuration({ public_read: { capacity: 2, refill: 1 } }, 70, 64),
+      clock,
+    );
+    const sweepPublicReadOnce = (): void => {
+      for (let index = 0; index < HTTP_RATE_LIMIT_POLICIES.length; index += 1) {
+        store.sweepExpired(monotonicNow);
+      }
+    };
+    try {
+      for (let index = 0; index < 70; index += 1) {
+        expect(store.consume('public_read', `peer-${index}`)).toEqual({ allowed: true });
+      }
+      monotonicNow = 500;
+      for (let index = 0; index < 64; index += 1) {
+        expect(store.consume('public_read', `peer-${index}`)).toEqual({ allowed: true });
+      }
+      // Establish and then finish a pass while no key is expired, so the expiry
+      // assertion begins at the map head instead of depending on setup consumes.
+      sweepPublicReadOnce();
+      const sweepState = store as unknown as {
+        sweepIterators: Map<string, IterableIterator<unknown>>;
+      };
+      while (sweepState.sweepIterators.has('public_read')) sweepPublicReadOnce();
+
+      monotonicNow = 1_200;
+      sweepPublicReadOnce();
+      // The first bounded batch inspected exactly the active 64-key head.
+      expect(store.size('public_read')).toBe(70);
+      sweepPublicReadOnce();
+      expect(store.size('public_read')).toBe(64);
+      expect(store.consume('public_read', 'replacement')).toEqual({ allowed: true });
+    } finally {
+      store.onModuleDestroy();
+    }
+  });
+
+  it('does not reset token debt until a bucket is both full and idle', () => {
+    let monotonicNow = 0;
+    const clock: MonotonicClock = { now: () => monotonicNow };
+    const config = configuration({ registration: { capacity: 3, refill: 1 / 60 } }, 2);
+    const store = new ProcessLocalTokenBucketStore(
+      { ...config, keyTtlMs: 10_000, sweepIntervalMs: 1_000 },
+      clock,
+    );
+    const sweepRegistration = (): void => {
+      for (let index = 0; index < HTTP_RATE_LIMIT_POLICIES.length; index += 1) {
+        store.sweepExpired(monotonicNow);
+      }
+    };
+    try {
+      expect(store.consume('registration', 'peer')).toEqual({ allowed: true });
+      expect(store.consume('registration', 'peer')).toEqual({ allowed: true });
+      expect(store.consume('registration', 'peer')).toEqual({ allowed: true });
+      monotonicNow = 10_001;
+      sweepRegistration();
+      expect(store.size('registration')).toBe(1);
+      expect(store.consume('registration', 'peer')).toMatchObject({
+        allowed: false,
+        reason: 'token_exhausted',
+      });
+
+      monotonicNow = 190_001;
+      sweepRegistration();
+      expect(store.size('registration')).toBe(0);
+      expect(store.consume('registration', 'peer')).toEqual({ allowed: true });
+    } finally {
+      store.onModuleDestroy();
+    }
+  });
+
   it('normalizes only the direct peer and ignores forwarded identity headers', () => {
     const socket = { remoteAddress: '::ffff:127.0.0.1' };
     expect(directNetworkIdentity({ socket } as never)).toBe('127.0.0.1');
@@ -184,6 +292,33 @@ describe('minimum HTTP abuse protection', () => {
     expect(directNetworkIdentity({ socket: { remoteAddress: '2001:db8::1' } } as never)).toBe(
       '2001:db8::1',
     );
+    for (const address of ['::ffff:127.0.0.1', '::ffff:7f00:1', '0:0:0:0:0:ffff:7f00:1']) {
+      expect(directNetworkIdentity({ socket: { remoteAddress: address } } as never)).toBe(
+        '127.0.0.1',
+      );
+    }
+  });
+
+  it('separates identical user and Staff identifiers inside a shared policy', () => {
+    const store = new ProcessLocalTokenBucketStore(
+      configuration({ control_recovery: { capacity: 1, refill: 0.5 } }),
+      { now: () => 0 },
+    );
+    const logs = loggerDouble();
+    const admission = new HttpAbuseAdmissionService(
+      store,
+      logs as unknown as SecurityLoggingService,
+    );
+    try {
+      admission.admit('control_recovery', 'same-uuid', 'user');
+      admission.admit('control_recovery', 'same-uuid', 'staff');
+      expect(() => admission.admit('control_recovery', 'same-uuid', 'user')).toThrow(
+        RateLimitError,
+      );
+      expect(store.size('control_recovery')).toBe(2);
+    } finally {
+      store.onModuleDestroy();
+    }
   });
 
   it('logs only allowlisted limiter metadata and never the identity key', () => {
@@ -245,6 +380,33 @@ describe('minimum HTTP abuse protection', () => {
     expect(responseEvents.listenerCount('close')).toBe(0);
   });
 
+  it('fails a credential request closed when the request was already disconnected', async () => {
+    const requestEvents = Object.assign(new EventEmitter(), { aborted: true, destroyed: true });
+    const responseEvents = Object.assign(new EventEmitter(), {
+      destroyed: true,
+      writableEnded: false,
+    });
+    const lifecycle = createHttpRequestLifecycle(
+      requestEvents as never,
+      responseEvents as never,
+      1_000,
+    );
+    const work = jest.fn(async () => undefined);
+    const admission = new CredentialWorkAdmissionService(
+      configuration(),
+      loggerDouble() as unknown as SecurityLoggingService,
+    );
+    try {
+      await expect(admission.run(lifecycle.signal, work)).rejects.toThrow('client_disconnect');
+      expect(work).not.toHaveBeenCalled();
+      expect(admission.activeCount).toBe(0);
+    } finally {
+      lifecycle.dispose();
+    }
+    expect(requestEvents.listenerCount('aborted')).toBe(0);
+    expect(responseEvents.listenerCount('close')).toBe(0);
+  });
+
   it('selects a Consent mutation lane only from the bounded server-side lookup', async () => {
     const calls: string[] = [];
     const service = {
@@ -276,14 +438,14 @@ describe('minimum HTTP abuse protection', () => {
     ]);
   });
 
-  it('rejects new AI work before orchestration or any durable/provider side effect', async () => {
+  it('always charges an unbound creation-capable AI request to new work', async () => {
     const orchestration = { preparePersistentTurn: jest.fn() };
     const admission = {
       admit: jest.fn((policy: string) => {
         if (policy === 'ai_new_work') throw new RateLimitError();
       }),
     };
-    const turns = { findByClientRequestId: jest.fn().mockResolvedValue(null) };
+    const turns = { findByClientRequestId: jest.fn().mockResolvedValue({ id: 'old-turn' }) };
     const controller = new AiController(
       orchestration as never,
       {} as never,
@@ -292,10 +454,16 @@ describe('minimum HTTP abuse protection', () => {
     );
     await expect(
       controller.streamChat(
-        {
+        Object.assign(new EventEmitter(), {
           authenticatedSession: { userId: 'user-1', id: 'session-1' },
-        } as never,
-        {} as never,
+          aborted: false,
+          destroyed: false,
+        }) as never,
+        Object.assign(new EventEmitter(), {
+          destroyed: false,
+          writableEnded: false,
+          vary: jest.fn(),
+        }) as never,
         undefined,
         {
           mode: 'persistent',
@@ -308,8 +476,98 @@ describe('minimum HTTP abuse protection', () => {
       'classification_probe',
       'ai_new_work',
     ]);
-    expect(turns.findByClientRequestId).toHaveBeenCalledTimes(1);
+    expect(turns.findByClientRequestId).not.toHaveBeenCalled();
     expect(orchestration.preparePersistentTurn).not.toHaveBeenCalled();
+  });
+
+  it('rejects a disconnected bound AI lookup before orchestration and releases listeners', async () => {
+    let releaseLookup!: () => void;
+    let markLookupStarted!: () => void;
+    const lookupStarted = new Promise<void>((resolve) => {
+      markLookupStarted = resolve;
+    });
+    const lookup = new Promise<null>((resolve) => {
+      releaseLookup = () => resolve(null);
+    });
+    const orchestration = { preparePersistentTurn: jest.fn() };
+    const turns = {
+      findByClientRequestId: jest.fn(async () => {
+        markLookupStarted();
+        return lookup;
+      }),
+    };
+    const requestEvents = Object.assign(new EventEmitter(), {
+      authenticatedSession: { userId: 'user-1', id: 'session-1' },
+      aborted: false,
+      destroyed: false,
+    });
+    const responseEvents = Object.assign(new EventEmitter(), {
+      destroyed: false,
+      writableEnded: false,
+      vary: jest.fn(),
+    });
+    const controller = new AiController(
+      orchestration as never,
+      {} as never,
+      { admit: jest.fn() } as never,
+      turns as never,
+    );
+    const pending = controller.streamChat(
+      requestEvents as never,
+      responseEvents as never,
+      undefined,
+      {
+        mode: 'persistent',
+        clientRequestId: '11111111-1111-4111-8111-111111111111',
+        conversationId: '22222222-2222-4222-8222-222222222222',
+        message: 'synthetic message',
+      },
+    );
+    await lookupStarted;
+    responseEvents.destroyed = true;
+    responseEvents.emit('close');
+    releaseLookup();
+    await expect(pending).rejects.toThrow('client_disconnect');
+    expect(orchestration.preparePersistentTurn).not.toHaveBeenCalled();
+    expect(requestEvents.listenerCount('aborted')).toBe(0);
+    expect(responseEvents.listenerCount('close')).toBe(0);
+  });
+
+  it('releases bound AI lookup listeners when the lookup fails', async () => {
+    const lookupFailure = new Error('synthetic lookup failure');
+    const orchestration = { preparePersistentTurn: jest.fn() };
+    const turns = {
+      findByClientRequestId: jest.fn().mockRejectedValue(lookupFailure),
+    };
+    const requestEvents = Object.assign(new EventEmitter(), {
+      authenticatedSession: { userId: 'user-1', id: 'session-1' },
+      aborted: false,
+      destroyed: false,
+    });
+    const responseEvents = Object.assign(new EventEmitter(), {
+      destroyed: false,
+      writableEnded: false,
+      vary: jest.fn(),
+    });
+    const controller = new AiController(
+      orchestration as never,
+      {} as never,
+      { admit: jest.fn() } as never,
+      turns as never,
+    );
+
+    await expect(
+      controller.streamChat(requestEvents as never, responseEvents as never, undefined, {
+        mode: 'persistent',
+        clientRequestId: '11111111-1111-4111-8111-111111111112',
+        conversationId: '22222222-2222-4222-8222-222222222112',
+        message: 'synthetic lookup failure',
+      }),
+    ).rejects.toBe(lookupFailure);
+
+    expect(orchestration.preparePersistentTurn).not.toHaveBeenCalled();
+    expect(requestEvents.listenerCount('aborted')).toBe(0);
+    expect(responseEvents.listenerCount('close')).toBe(0);
   });
 
   it('maps existing active-execution saturation to the bounded public rate-limit boundary', async () => {
@@ -340,7 +598,11 @@ describe('minimum HTTP abuse protection', () => {
     );
     await expect(
       controller.streamChat(
-        { authenticatedSession: { userId: 'user-1', id: 'session-1' } } as never,
+        Object.assign(new EventEmitter(), {
+          authenticatedSession: { userId: 'user-1', id: 'session-1' },
+          aborted: false,
+          destroyed: false,
+        }) as never,
         response as never,
         undefined,
         {
@@ -513,5 +775,191 @@ describe('application HTTP abuse protection wiring', () => {
     await request(server).get('/auth/registration-requirements').expect(429);
     await request(server).get('/health').expect(200);
     await request(server).get('/health').expect(200);
+  });
+});
+
+describe('AI admission through the real HTTP controller and Auth/CSRF guards', () => {
+  let app: INestApplication;
+  let admission: HttpAbuseAdmissionService;
+  const turns = { findByClientRequestId: jest.fn() };
+  const orchestration = {
+    preparePersistentTurn: jest.fn(),
+    prepareIncognitoTurn: jest.fn(),
+  };
+  let observedResponseClose: ReturnType<typeof deferred<void>> | null = null;
+  let observedHandlerError: ReturnType<typeof deferred<unknown>> | null = null;
+
+  beforeAll(async () => {
+    const securityLogger = {
+      httpRateLimited: jest.fn(),
+      csrfRejected: jest.fn(),
+    };
+    const moduleRef = await Test.createTestingModule({
+      controllers: [AiController],
+      providers: [
+        AuthenticatedSessionGuard,
+        CsrfGuard,
+        TrustedOriginGuard,
+        {
+          provide: SessionsService,
+          useValue: {
+            validate: jest.fn(async (rawToken: string | undefined) => ({
+              id: `session-${rawToken ?? 'missing'}`,
+              userId: rawToken ?? 'missing',
+              expiresAt: new Date(Date.now() + 60_000),
+            })),
+          },
+        },
+        { provide: SecurityLoggingService, useValue: securityLogger },
+        {
+          provide: HTTP_RATE_LIMIT_CONFIG,
+          useValue: configuration({ ai_new_work: { capacity: 1, refill: 0.01 } }, 100),
+        },
+        { provide: MONOTONIC_CLOCK, useValue: { now: () => 0 } satisfies MonotonicClock },
+        ProcessLocalTokenBucketStore,
+        HttpAbuseAdmissionService,
+        { provide: AiTurnService, useValue: turns },
+        { provide: ConsentExecutionCoordinator, useValue: {} },
+        { provide: AiOrchestrationService, useValue: orchestration },
+        { provide: APP_GUARD, useClass: IngressRateLimitGuard },
+        { provide: APP_INTERCEPTOR, useClass: PrincipalRateLimitInterceptor },
+      ],
+    }).compile();
+    app = moduleRef.createNestApplication();
+    app.use(
+      (request: { headers: Record<string, unknown> }, response: EventEmitter, next: () => void) => {
+        if (request.headers['x-synthetic-close-probe'] === '1') {
+          response.once('close', () => observedResponseClose?.resolve());
+        }
+        next();
+      },
+    );
+    const exceptionFilter = new AppExceptionFilter();
+    app.useGlobalFilters({
+      catch: (error: unknown, host: Parameters<AppExceptionFilter['catch']>[1]) => {
+        observedHandlerError?.resolve(error);
+        exceptionFilter.catch(error, host);
+      },
+    });
+    await app.listen(0, '127.0.0.1');
+    admission = moduleRef.get(HttpAbuseAdmissionService);
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(() => {
+    turns.findByClientRequestId.mockReset();
+    orchestration.preparePersistentTurn.mockReset();
+    orchestration.prepareIncognitoTurn.mockReset();
+    observedResponseClose = null;
+    observedHandlerError = null;
+  });
+
+  function authenticatedRequest(userId: string) {
+    return request(app.getHttpServer())
+      .post('/ai/chat/stream')
+      .set('Origin', 'http://localhost:5173')
+      .set('Cookie', `mh_session=${userId}; mh_csrf=synthetic-csrf`)
+      .set('x-csrf-token', 'synthetic-csrf');
+  }
+
+  it('rejects an unbound request from the new-work bucket even when an old turn exists', async () => {
+    const userId = '00000000-0000-4000-8000-000000000101';
+    admission.admit('ai_new_work', userId, 'user');
+    turns.findByClientRequestId.mockResolvedValue({ id: 'old-turn' });
+
+    await authenticatedRequest(userId)
+      .send({
+        mode: 'persistent',
+        clientRequestId: '11111111-1111-4111-8111-111111111101',
+        message: 'synthetic unbound request',
+      })
+      .expect(429)
+      .expect({
+        success: false,
+        error: { code: 'RATE_LIMITED', message: '请求过于频繁，请稍后重试' },
+      });
+
+    expect(turns.findByClientRequestId).not.toHaveBeenCalled();
+    expect(orchestration.preparePersistentTurn).not.toHaveBeenCalled();
+  });
+
+  it('keeps a bound existing turn on recovery capacity', async () => {
+    const userId = '00000000-0000-4000-8000-000000000102';
+    const conversationId = '22222222-2222-4222-8222-222222222102';
+    const turn = {
+      id: '33333333-3333-4333-8333-333333333102',
+      conversationId,
+      status: 'completed',
+      assistantMessageId: '44444444-4444-4444-8444-444444444102',
+    };
+    admission.admit('ai_new_work', userId, 'user');
+    turns.findByClientRequestId.mockResolvedValue(turn);
+    orchestration.preparePersistentTurn.mockResolvedValue({
+      kind: 'existing',
+      turn,
+      deadlineAt: new Date(Date.now() + 60_000),
+    });
+
+    await authenticatedRequest(userId)
+      .send({
+        mode: 'persistent',
+        clientRequestId: '11111111-1111-4111-8111-111111111102',
+        conversationId,
+        message: 'synthetic bound recovery',
+      })
+      .expect(200);
+
+    expect(turns.findByClientRequestId).toHaveBeenCalledTimes(1);
+    expect(orchestration.preparePersistentTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it('observes a real socket close during the bound lookup and never enters orchestration', async () => {
+    const lookupStarted = deferred<void>();
+    const releaseLookup = deferred<void>();
+    observedResponseClose = deferred<void>();
+    observedHandlerError = deferred<unknown>();
+    turns.findByClientRequestId.mockImplementation(async () => {
+      lookupStarted.resolve();
+      await releaseLookup.promise;
+      return null;
+    });
+    const address = app.getHttpServer().address() as AddressInfo;
+    const body = JSON.stringify({
+      mode: 'persistent',
+      clientRequestId: '11111111-1111-4111-8111-111111111103',
+      conversationId: '22222222-2222-4222-8222-222222222103',
+      message: 'synthetic disconnected lookup',
+    });
+    const clientFinished = deferred<void>();
+    const client = createHttpRequest({
+      hostname: '127.0.0.1',
+      port: address.port,
+      path: '/ai/chat/stream',
+      method: 'POST',
+      headers: {
+        Origin: 'http://localhost:5173',
+        Cookie: 'mh_session=00000000-0000-4000-8000-000000000103; mh_csrf=synthetic-csrf',
+        'x-csrf-token': 'synthetic-csrf',
+        'x-synthetic-close-probe': '1',
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(body).toString(),
+      },
+    });
+    client.once('error', () => clientFinished.resolve());
+    client.end(body);
+
+    await bounded(lookupStarted.promise, 'AI classification lookup');
+    client.destroy(new Error('synthetic client disconnect'));
+    await bounded(observedResponseClose.promise, 'server response close');
+    releaseLookup.resolve();
+    const observed = await bounded(observedHandlerError.promise, 'controller termination');
+    await bounded(clientFinished.promise, 'client close');
+
+    expect(observed).toBeInstanceOf(Error);
+    expect((observed as Error).message).toBe('client_disconnect');
+    expect(orchestration.preparePersistentTurn).not.toHaveBeenCalled();
   });
 });

@@ -146,9 +146,11 @@ describe('pre-stream response lifecycle', () => {
     return response;
   }
 
-  const request = {
+  const request = Object.assign(new EventEmitter(), {
     authenticatedSession: { id: 'session-1', userId: 'user-1' },
-  } as AuthenticatedRequest;
+    aborted: false,
+    destroyed: false,
+  }) as unknown as AuthenticatedRequest;
 
   it.each(['persistent', 'incognito'] as const)(
     'does not raise a late %s error when the response closes during cleanup',

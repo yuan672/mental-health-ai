@@ -12,7 +12,7 @@ export class HttpAbuseAdmissionService {
   ) {}
 
   admit(policy: HttpRateLimitPolicy, key: string, identityKind: HttpRateLimitIdentityKind): void {
-    const result = this.buckets.consume(policy, key);
+    const result = this.buckets.consume(policy, `${identityKind}:${key}`);
     if (result.allowed) return;
     this.securityLogger.httpRateLimited(policy, identityKind, result.reason);
     throw new RateLimitError(undefined, result.retryAfterSeconds);

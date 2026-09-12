@@ -28,9 +28,10 @@ unknown-result protocol.
   additionally consume their fixed network policy.
 - Authenticated routes consume a user or Staff principal policy after the existing
   authentication guards. IDs remain ephemeral process-memory limiter keys.
-- Consent mutation and AI chat use a bounded classification probe and an
-  owner-scoped lookup. Only that server lookup selects recovery versus ordinary/new
-  work; no request flag or header can select a privileged lane.
+- Consent mutation and bound persistent AI recovery use a bounded classification
+  probe and an owner-scoped lookup. Only that server lookup can select a recovery
+  lane; unbound persistent and Incognito requests are creation-capable new work,
+  and no request flag or header can select a privileged lane.
 - All HTTP-reachable Argon2 work shares one non-queued concurrency bound. Once a
   native operation starts, its permit is held until the Promise actually settles,
   even if the request disconnects.
@@ -41,10 +42,12 @@ Session, CSRF, Consent, Quota, Safety, Audit, and persistence boundary.
 
 ## Privacy and logging
 
-The limiter uses the normalized direct socket peer before authentication and the
-internal user/Staff principal ID after authentication. It does not trust
-`Forwarded` or `X-Forwarded-For`. These values are not persisted, audited, returned,
-or written to operational logs.
+The limiter uses the normalized direct socket peer before authentication and a
+server-owned identity-domain prefix plus the internal user/Staff principal ID after
+authentication. Equivalent IPv4-mapped IPv6 peer spellings share the IPv4 bucket,
+while equal UUID text in the user and Staff domains remains isolated. It does not
+trust `Forwarded` or `X-Forwarded-For`. These values are not persisted, audited,
+returned, or written to operational logs.
 
 A rejection log contains only the fixed event, policy group, identity kind, and
 saturation reason. It contains no address, principal ID, route, query, body,
@@ -72,5 +75,8 @@ Counters and keys are process-local, bounded, and erased on shutdown/restart. Ea
 API instance enforces independently. Direct peer identity behind an unapproved
 proxy can group unrelated users. This layer does not protect TLS, connection,
 slow-body, or distributed volumetric capacity and is not production DoS evidence.
+Bounded cleanup advances across successive batches and removes a key only after it
+is both idle past the configured TTL and fully refilled, so cleanup neither starves
+tail entries nor restores token debt early.
 Production thresholds, proxy trust, privacy review of address processing, edge
 controls, multi-instance enforcement, and load evaluation remain blockers.
