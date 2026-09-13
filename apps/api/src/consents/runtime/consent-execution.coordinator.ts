@@ -10,7 +10,7 @@ import {
   type ActiveAiExecution,
   type ConsentBoundExecution,
 } from '../../ai/runtime/active-ai-execution.registry';
-import { ConsentRequiredError } from '../../common/errors';
+import { AccountDeletionInProgressError, ConsentRequiredError } from '../../common/errors';
 import { env } from '../../config/env';
 import {
   CONSENT_AUTHORIZATION_SNAPSHOT,
@@ -55,11 +55,24 @@ export type WithdrawnConsentDependency = Readonly<{
   consentVersion: string;
 }>;
 
+export type AccountTerminationCoordinationOutcome<T> =
+  | Readonly<{ status: 'committed'; value: T }>
+  | Readonly<{ status: 'rolled_back'; error: unknown }>
+  | Readonly<{ status: 'unknown'; error: unknown }>;
+
+export class AccountTerminationCapacityError extends Error {
+  constructor() {
+    super('Account termination marker capacity reached');
+    this.name = AccountTerminationCapacityError.name;
+  }
+}
+
 @Injectable()
 export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
   private readonly epochs = new Map<string, Map<string, number>>();
   private readonly pending = new Map<string, PendingExecution>();
   private readonly revoked = new Map<string, RevokedMarker>();
+  private readonly accountTerminals = new Map<string, string>();
 
   constructor(
     private readonly activeExecutions: ActiveAiExecutionRegistry,
@@ -94,6 +107,7 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
     if (!pending) throw new ConsentRequiredError();
     return this.runExecutionExclusive(execution, execution.signal, async () => {
       this.assertExecutionTime(execution);
+      this.assertAccountAvailable(execution.userId);
       for (const policy of pending.requiredPolicyKeys) {
         if (
           pending.observedEpochs.get(consentPolicyKey(policy)) !==
@@ -103,6 +117,7 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
         }
       }
       const dependencies = await this.authorization.loadRequiredDependencies(execution.userId);
+      this.assertAccountAvailable(execution.userId);
       this.assertDependenciesMatchPolicies(pending.requiredPolicyKeys, dependencies);
       this.assertNotRevoked(execution.userId, dependencies);
       this.assertExecutionTime(execution);
@@ -123,8 +138,10 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
   }): Promise<IncognitoContext> {
     return this.userLock.runExclusive(input.userId, input.signal, input.deadlineAt, async () => {
       this.assertRequestTime(input.signal, input.deadlineAt);
+      this.assertAccountAvailable(input.userId);
       const dependencies = await this.authorization.loadRequiredDependencies(input.userId);
       this.assertRequestTime(input.signal, input.deadlineAt);
+      this.assertAccountAvailable(input.userId);
       this.assertNotRevoked(input.userId, dependencies);
       return this.incognitoContexts.create(
         input.userId,
@@ -173,6 +190,7 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
   ): Promise<{ readonly transport: T }> {
     return this.runExecutionExclusive(execution, dispatchSignal, async () => {
       this.assertExecutionTime(execution);
+      this.assertAccountAvailable(execution.userId);
       if (dispatchSignal.aborted) throw dispatchSignal.reason;
       this.pruneRevokedMarkers();
       this.assertNotRevoked(execution.userId, execution.dependencies);
@@ -182,6 +200,7 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
       );
       if (!active) throw new ConsentRequiredError();
       this.assertExecutionTime(execution);
+      this.assertAccountAvailable(execution.userId);
       if (dispatchSignal.aborted) throw dispatchSignal.reason;
       const transport = startTransport(dispatchSignal);
       this.activeExecutions.markDispatched(execution.id, kind);
@@ -192,6 +211,7 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
   async assertStillUsable(execution: ConsentBoundExecution): Promise<void> {
     await this.runExecutionExclusive(execution, execution.signal, () => {
       this.assertExecutionTime(execution);
+      this.assertAccountAvailable(execution.userId);
       this.pruneRevokedMarkers();
       this.assertNotRevoked(execution.userId, execution.dependencies);
     });
@@ -203,6 +223,7 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
   ): Promise<T> {
     return this.runExecutionExclusive(execution, execution.signal, async () => {
       this.assertExecutionTime(execution);
+      this.assertAccountAvailable(execution.userId);
       this.pruneRevokedMarkers();
       this.assertNotRevoked(execution.userId, execution.dependencies);
       const active = await this.authorization.dependenciesRemainActive(
@@ -211,10 +232,57 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
       );
       if (!active) throw new ConsentRequiredError();
       this.assertExecutionTime(execution);
+      this.assertAccountAvailable(execution.userId);
       const result = await operation();
       this.assertExecutionTime(execution);
+      this.assertAccountAvailable(execution.userId);
       return result;
     });
+  }
+
+  async coordinateAccountTermination<T>(
+    input: {
+      userId: string;
+      attemptToken: string;
+      signal: AbortSignal;
+      deadlineAt: Date;
+    },
+    operation: () => Promise<AccountTerminationCoordinationOutcome<T>>,
+  ): Promise<AccountTerminationCoordinationOutcome<T>> {
+    return this.userLock.runExclusive(input.userId, input.signal, input.deadlineAt, async () => {
+      const existing = this.accountTerminals.get(input.userId);
+      if (existing && existing !== input.attemptToken) {
+        throw new AccountDeletionInProgressError();
+      }
+      if (!existing) {
+        if (this.accountTerminals.size >= env.ACCOUNT_DELETION_MAX_UNRESOLVED_GLOBAL) {
+          throw new AccountTerminationCapacityError();
+        }
+        this.accountTerminals.set(input.userId, input.attemptToken);
+      }
+
+      try {
+        this.activeExecutions.abortUser(input.userId, 'account_deletion');
+        this.incognitoContexts.clearUser(input.userId);
+      } catch (error) {
+        return { status: 'unknown', error };
+      }
+
+      let outcome: AccountTerminationCoordinationOutcome<T>;
+      try {
+        outcome = await operation();
+      } catch (error) {
+        outcome = { status: 'unknown', error };
+      }
+      if (outcome.status !== 'unknown') {
+        this.releaseAccountTerminal(input.userId, input.attemptToken);
+      }
+      return outcome;
+    });
+  }
+
+  accountTerminationDiagnostics(): Readonly<{ terminals: number }> {
+    return { terminals: this.accountTerminals.size };
   }
 
   async coordinateMutation<T>(
@@ -364,6 +432,16 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
     for (const dependency of dependencies) {
       const marker = this.revoked.get(dependency.acceptanceDecisionId);
       if (marker?.userId === userId) throw new ConsentRequiredError();
+    }
+  }
+
+  private assertAccountAvailable(userId: string): void {
+    if (this.accountTerminals.has(userId)) throw new AccountDeletionInProgressError();
+  }
+
+  private releaseAccountTerminal(userId: string, attemptToken: string): void {
+    if (this.accountTerminals.get(userId) === attemptToken) {
+      this.accountTerminals.delete(userId);
     }
   }
 

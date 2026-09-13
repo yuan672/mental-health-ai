@@ -8,7 +8,7 @@ import { AuthenticatedSessionGuard } from './authenticated-session.guard';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { CsrfGuard } from './csrf.guard';
-import { PasswordHasherService } from './password-hasher.service';
+import { PASSWORD_HASH_VERIFIER, PasswordHasherService } from './password-hasher.service';
 import { SessionsService } from './sessions.service';
 import { TrustedOriginGuard } from './trusted-origin.guard';
 import { RegistrationRequirementsService } from './registration-requirements.service';
@@ -28,10 +28,17 @@ import { HttpAbuseProtectionModule } from '../http-abuse/http-abuse-protection.m
     AuthenticatedSessionGuard,
     CsrfGuard,
     PasswordHasherService,
+    { provide: PASSWORD_HASH_VERIFIER, useExisting: PasswordHasherService },
     RegistrationRequirementsService,
     SessionsService,
     TrustedOriginGuard,
   ],
-  exports: [AuthenticatedSessionGuard, CsrfGuard, SessionsService, TrustedOriginGuard],
+  exports: [
+    AuthenticatedSessionGuard,
+    CsrfGuard,
+    PASSWORD_HASH_VERIFIER,
+    SessionsService,
+    TrustedOriginGuard,
+  ],
 })
 export class AuthModule {}

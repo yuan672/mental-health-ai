@@ -54,6 +54,12 @@ const environmentSchema = z
       .enum(['true', 'false'])
       .default('false')
       .transform((value) => value === 'true'),
+    ACCOUNT_DELETION_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+    ACCOUNT_DELETION_MAX_UNRESOLVED_GLOBAL: z.coerce.number().int().min(1).max(10_000).default(128),
+    ACCOUNT_DELETION_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(30_000),
     ADMIN_WEB_ORIGINS: z
       .string()
       .default('http://localhost:5174')
@@ -142,6 +148,17 @@ const environmentSchema = z
       .transform((value) => value === 'true'),
   })
   .superRefine((value, context) => {
+    if (
+      value.ACCOUNT_DELETION_ENABLED &&
+      value.APP_ENV !== 'development' &&
+      value.APP_ENV !== 'test'
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['ACCOUNT_DELETION_ENABLED'],
+        message: 'Account deletion is restricted to development and test',
+      });
+    }
     if (value.ADMIN_AUTH_ENABLED && value.APP_ENV !== 'development' && value.APP_ENV !== 'test') {
       context.addIssue({
         code: 'custom',

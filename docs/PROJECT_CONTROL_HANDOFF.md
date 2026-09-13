@@ -227,18 +227,19 @@ controls.
   deployment, or production enablement.
 - ADR-022 accepts the NF-02 data-lifecycle and account-deletion architecture only
   for a Development/Test, controlled single-process local/demo backend. PR #38 is
-  the pending design delivery. No account-deletion API, schema, migration,
-  scheduler, production retention policy, crash/rolling-overlap protection, or
-  production recovery guarantee is delivered by the design.
+  merged; the separate `feature/account-deletion-backend` implementation adds the
+  bounded API and tests without a Schema/Migration or frontend change and remains
+  pending review. No scheduler, production retention policy, crash/rolling-overlap
+  protection, or production recovery guarantee is delivered.
 
 ## Immediate Next Step
 
 Use `docs/backend-integration-handoff.md` as the backend capability and protocol
 index for the user-owned replacement frontend. Knowledge AI-B and every Admin UI
 remain pending client work; keep augmentation and Admin HTTP disabled by default,
-and retain the v2 reader plus v1 history guard. Merge the accepted NF-02 design only
-after its exact-head review and CI, then review the separately authorized local/demo
-backend implementation; account deletion does not exist yet. The three candidate
+and retain the v2 reader plus v1 history guard. Review the separate bounded NF-02
+local/demo backend implementation; it must remain disabled by default and outside
+Staging/Production. The three candidate
 articles remain unverified and
 unpublished, and production policy/content review and real-model evaluation remain
 separate work.

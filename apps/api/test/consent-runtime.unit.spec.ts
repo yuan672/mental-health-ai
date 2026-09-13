@@ -83,6 +83,7 @@ class TrackingContexts {
   createCalls = 0;
   dependencies = new Set<string>();
   throwOnClear = false;
+  clearUserCalls = 0;
 
   create(): never {
     this.createCalls += 1;
@@ -93,6 +94,12 @@ class TrackingContexts {
     this.cleared.push(acceptanceDecisionId);
     if (this.throwOnClear) throw new Error('synthetic_context_cleanup_failure');
     this.dependencies.delete(acceptanceDecisionId);
+    return 1;
+  }
+
+  clearUser(): number {
+    this.clearUserCalls += 1;
+    this.dependencies.clear();
     return 1;
   }
 
@@ -511,5 +518,83 @@ describe('Consent runtime coordination', () => {
     release.resolve();
     await firstOperation;
     expect(lock.diagnostics()).toEqual({ users: 0, waiters: 0 });
+  });
+
+  it('keeps an unresolved account terminal fail closed for dispatch and context creation', async () => {
+    const execution = await boundExecution();
+    const attemptToken = 'synthetic-attempt-token';
+    const outcome = await coordinator.coordinateAccountTermination(
+      {
+        userId: USER_ID,
+        attemptToken,
+        signal: new AbortController().signal,
+        deadlineAt: new Date(Date.now() + 5_000),
+      },
+      () => Promise.resolve({ status: 'unknown', error: new Error('synthetic_unknown') }),
+    );
+    expect(outcome.status).toBe('unknown');
+    expect(execution.signal.aborted).toBe(true);
+    expect(contexts.clearUserCalls).toBe(1);
+    expect(coordinator.accountTerminationDiagnostics()).toEqual({ terminals: 1 });
+
+    const pending = coordinator.registerPending({
+      userId: USER_ID,
+      sessionId: SESSION_ID,
+      clientSignal: new AbortController().signal,
+    });
+    await expect(coordinator.bindRequired(pending)).rejects.toBeDefined();
+    pending.dispose();
+    await expect(
+      coordinator.createIncognitoContext({
+        userId: USER_ID,
+        sessionId: SESSION_ID,
+        sessionExpiresAt: new Date(Date.now() + 10_000),
+        signal: new AbortController().signal,
+        deadlineAt: new Date(Date.now() + 5_000),
+      }),
+    ).rejects.toBeDefined();
+
+    await expect(
+      coordinator.coordinateAccountTermination(
+        {
+          userId: USER_ID,
+          attemptToken,
+          signal: new AbortController().signal,
+          deadlineAt: new Date(Date.now() + 5_000),
+        },
+        () => Promise.resolve({ status: 'committed', value: undefined }),
+      ),
+    ).resolves.toEqual({ status: 'committed', value: undefined });
+    expect(coordinator.accountTerminationDiagnostics()).toEqual({ terminals: 0 });
+    execution.dispose();
+  });
+
+  it('releases a confirmed rollback marker without reviving already-aborted work', async () => {
+    const original = await boundExecution();
+    await expect(
+      coordinator.coordinateAccountTermination(
+        {
+          userId: USER_ID,
+          attemptToken: 'synthetic-rolled-back-attempt',
+          signal: new AbortController().signal,
+          deadlineAt: new Date(Date.now() + 5_000),
+        },
+        () => Promise.resolve({ status: 'rolled_back', error: new Error('synthetic_rollback') }),
+      ),
+    ).resolves.toMatchObject({ status: 'rolled_back' });
+    expect(original.signal.aborted).toBe(true);
+    expect(coordinator.accountTerminationDiagnostics()).toEqual({ terminals: 0 });
+
+    const replacement = await boundExecution();
+    let dispatches = 0;
+    await expect(
+      coordinator.start(replacement, 'generation', () => {
+        dispatches += 1;
+        return 'synthetic-transport';
+      }),
+    ).resolves.toEqual({ transport: 'synthetic-transport' });
+    expect(dispatches).toBe(1);
+    original.dispose();
+    replacement.dispose();
   });
 });

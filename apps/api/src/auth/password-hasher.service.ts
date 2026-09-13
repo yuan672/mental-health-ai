@@ -2,6 +2,12 @@ import { Injectable, Optional } from '@nestjs/common';
 import { argon2id, hash, verify } from 'argon2';
 import { CredentialWorkAdmissionService } from '../http-abuse/credential-work-admission.service';
 
+export const PASSWORD_HASH_VERIFIER = Symbol('PASSWORD_HASH_VERIFIER');
+
+export interface PasswordHashVerifier {
+  verify(passwordHash: string, password: string, signal?: AbortSignal): Promise<boolean>;
+}
+
 const ARGON2_OPTIONS = {
   type: argon2id,
   memoryCost: 65_536,
@@ -11,7 +17,7 @@ const ARGON2_OPTIONS = {
 } as const;
 
 @Injectable()
-export class PasswordHasherService {
+export class PasswordHasherService implements PasswordHashVerifier {
   private readonly dummyHash = hash('not-a-real-user-password-9F!pQ2', ARGON2_OPTIONS);
 
   constructor(@Optional() private readonly credentialWork?: CredentialWorkAdmissionService) {}

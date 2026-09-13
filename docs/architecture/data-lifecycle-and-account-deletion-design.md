@@ -14,6 +14,13 @@ This document separates current engineering facts from a candidate account-delet
 contract. It is not a legal-retention conclusion, a production privacy promise, or
 evidence that account deletion already exists.
 
+Implementation note: the later `feature/account-deletion-backend` delivery follows
+this accepted contract with a disabled-by-default Development/Test API, bounded
+single-process coordination, and synthetic tests. Sections 2 and 9 deliberately
+retain the pre-implementation design-baseline facts; current delivery status is in
+`docs/PROJECT_CONTROL_HANDOFF.md` and the concrete contract is in
+`docs/api/account-deletion.md`.
+
 ## 1. Scope and terminology
 
 This review covers User identity, Consent, Conversation, AI, Mood, Quota, Safety,
@@ -38,7 +45,7 @@ The following terms are deliberately distinct:
 remain sensitive because its bounded metadata, timestamps, resource identifiers,
 and surrounding records may still be linkable.
 
-## 2. Current implementation facts
+## 2. Design-baseline implementation facts
 
 ### 2.1 Existing user-visible lifecycle operations
 
@@ -629,7 +636,7 @@ Consent-evidence treatment, backup restore/deletion, provider/log-sink handling,
 database encryption/key management, multi-instance coordination, and reviewed
 account re-registration/recovery policy.
 
-## 9. Status and evidence index
+## 9. Design-baseline status and evidence index
 
 At the design baseline commit:
 
