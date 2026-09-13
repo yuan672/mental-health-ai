@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import { createDatabaseClient } from '@mental-health/database';
 import {
@@ -8,7 +8,11 @@ import {
 } from '../nf04/nf04-contract';
 import { assertLiveNf04DockerEvidence, Nf04DockerInspector } from '../nf04/nf04-docker';
 import { loadNf04Fixture } from '../nf04/nf04-fixture';
-import { assertNf04ContainerEvidence, assertNf04ManifestBoundary } from '../nf04/nf04-guards';
+import {
+  assertNf04ContainerEvidence,
+  assertNf04ManifestBoundary,
+  readNf04ProtectedFile,
+} from '../nf04/nf04-guards';
 import { readNf04MigrationHashes } from '../nf04/nf04-migrations';
 import { NodeNf04ProcessRunner } from '../nf04/nf04-process';
 
@@ -62,8 +66,15 @@ async function run(): Promise<void> {
   const names = deriveNf04ExpectedNames(manifest.runId);
 
   const secretsPath = resolve(manifest.files.fixtureSecrets);
-  await assertProtectedSecretFile(secretsPath);
-  const secrets = nf04FixtureSecretsSchema.parse(JSON.parse(await readFile(secretsPath, 'utf8')));
+  const secrets = nf04FixtureSecretsSchema.parse(
+    JSON.parse(
+      await readNf04ProtectedFile({
+        repositoryRoot: manifest.repositoryRoot,
+        artifactRoot: manifest.artifactRoot,
+        candidatePath: secretsPath,
+      }),
+    ),
+  );
   const secretDatabaseName = decodeURIComponent(new URL(secrets.databaseUrl).pathname.slice(1));
   const secretUrl = new URL(secrets.databaseUrl);
   if (secretDatabaseName !== names.sourceDatabase) {
@@ -105,14 +116,6 @@ async function run(): Promise<void> {
     });
   } finally {
     await client.pool.end();
-  }
-}
-
-async function assertProtectedSecretFile(path: string): Promise<void> {
-  const file = await stat(path);
-  if (!file.isFile()) throw new Error('NF-04 fixture secret path is not a regular file');
-  if (process.platform !== 'win32' && (file.mode & 0o077) !== 0) {
-    throw new Error('NF-04 fixture secret file permissions are too broad');
   }
 }
 

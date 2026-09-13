@@ -254,15 +254,22 @@ The repository now contains a narrow NF-04 implementation under review:
   deletion or restore result. Each real side effect remains an injected action so
   unit tests cannot accidentally start Docker or call the deletion endpoint.
 - `Nf04ArchiveManager` constructs fixed `pg_dump` and `pg_restore --list`
-  argument arrays, rejects pre-existing output, enforces the size and timeout
-  boundaries, verifies the first archive before allowing the second, enforces the
-  512 MiB aggregate budget, and uses a same-directory no-clobber publication
-  before recording size and SHA-256 evidence.
+  argument arrays, rejects pre-existing output, monitors the partial archive
+  against the remaining aggregate budget while the exact writer is active,
+  keeps one caller/deadline signal through listing and final evidence, verifies
+  content through a stable file handle before and after listing, verifies the
+  first archive before allowing the second, and uses a same-directory no-clobber
+  publication before recording size and SHA-256 evidence. A writer
+  whose exit cannot be proved remains quarantined and its partial file cannot be
+  listed, published, restored, or removed by the normal cleanup path.
 - `Nf04RestoreCoordinator` treats timeout, client loss, and nonzero completion as
-  unknown. It first settles the exact local launcher, then delegates exact
-  backend identity, cancellation, termination, and independent absence proof to
-  a bounded monitor. Caller cancellation stops the launcher but cannot cancel
-  this bounded writer cleanup. The coordinator never labels reconciliation as a
+  unknown. It identifies the exact Docker exec object rather than treating the
+  host Docker CLI PID as writer-exit proof. An independent unified reconciliation
+  deadline covers stopping and inspecting that exec plus database scans,
+  cancellation, termination, and the final absence proof. PostgreSQL
+  `backend_start` remains a lossless microsecond-precision string in every
+  identity comparison. Caller cancellation requests writer stop but cannot cancel
+  the bounded reconciliation. The coordinator never labels reconciliation as a
   successful restore.
 - `Nf04DockerInspector` reads only exact recorded container/network IDs and the
   recorded volume name. It compares live IDs, labels, image, mounts, loopback
@@ -273,6 +280,17 @@ The repository now contains a narrow NF-04 implementation under review:
   Stable synthetic
   IDs cover the relationships in section 5. Exact re-entry validates the whole
   fixture; partial or conflicting state fails without being overwritten.
+- Protected secret and archive paths are checked using the selected platform path
+  semantics and then against the real filesystem root, parent, link type, and
+  file identity. Archive operations additionally require the exact run directory
+  derived from the repository root and run ID, with its real path outside the
+  repository. Windows drive and UNC roots are not interchangeable. An absent
+  output is accepted only after its real parent is verified; only `ENOENT` means
+  absent. Publication rechecks the captured boundary and file identity; any future
+  cleanup adapter must do the same before it is wired.
+- Harness failures expose only bounded code/stage metadata. Raw exception text,
+  credentials, connection strings, and filesystem paths are not copied into the
+  report or quarantine action.
 
 The only installed command entry is deliberately narrow:
 
@@ -285,17 +303,37 @@ The command reads no repository `.env`, accepts no connection string or password
 on the command line, emits only allowlisted run metadata, and obtains credentials
 from the exact protected run-local file named by the redacted manifest. Loading
 also performs a fresh exact Docker inspection and database identity query. The
-full harness is not exposed as an executable command in this batch because its
-real resource-creation, account-deletion HTTP, and database-backend-monitor
-adapters have not yet received execution review. This is a fail-closed staged
-delivery, not an invitation to call internal classes manually.
+full harness is not exposed as an executable command in this batch. Real resource
+creation, source migration, Session/CSRF account deletion, exact Docker exec
+integration, stable-handle archive publication, restored-data validation, and
+verified resource cleanup remain unwired and have not received execution review.
+This is a fail-closed staged delivery, not an invitation to call internal classes
+manually.
 
-Tests use fake process/Docker/backend adapters and temporary filesystem paths for
-archive and restore failure paths. One integration suite creates a uniquely
+Tests use fake process/Docker-exec/backend/archive-publication adapters and
+task-specific temporary filesystem paths for archive and restore failure paths.
+They exercise the writer budget, identity, timeout, cancellation,
+late-completion, path-replacement, and report-redaction contracts without
+starting Docker, `pg_dump`, or `pg_restore`.
+One integration suite creates a uniquely
 named database ending in `_test` on an already protected test server, migrates it
 from zero, loads or rejects the fixture, and drops only that exact generated
 database after rechecking the PostgreSQL system identity. That limited database
 test is not the two-container drill and does not produce an archive.
+
+The exact-exec port is a safety contract, not a concrete production adapter in
+this batch. Its `stop` operation must synchronize with any in-flight `start`: when
+`stop` resolves, that same exec cannot start later, and `waitForExit` must then
+return a definite exit code for that exec. If an adapter cannot prove those
+properties it must reject, leaving the run quarantined. Fake barrier tests cover
+this ordering; a real Docker Engine adapter and real engine behavior remain Not
+verified.
+
+Archive publication has the same staged boundary. The manager requires a port
+that binds no-clobber publication and partial-name removal to already captured
+root, parent, and file identities using platform-safe relative-handle primitives.
+No pathname-only production adapter is included; the current adapter exists only
+inside tests and writes within its generated temporary run directory.
 
 ## 6. Consistency point and process quiescence
 
@@ -433,16 +471,20 @@ the original restore writer has been proven absent and all exact identity and
 label guards are rerun.
 
 Before launch, the initialization manager records the exact target database OID
-and proves that no session uses the unique application name. The harness records
-the local `pg_restore` child-process identity at launch. Because parallel jobs are
-disabled, one server backend performs each restore. As soon as it appears in
+and proves that no session uses the unique application name. The harness allocates
+and records the exact Docker exec identity before it starts the container command;
+the host Docker CLI PID is diagnostic only and cannot prove that `pg_restore` has
+exited. Because parallel jobs are disabled, one server backend performs each
+restore. As soon as it appears in
 `pg_stat_activity`, the manager records its `pid`, `backend_start`, target database
 OID/name, restore role OID/name, unique `application_name`, and connection
-endpoint. The manager does not read or record the `query` column. A PID without
-the matching `backend_start` and every other field is not the original writer and
-must never be signaled. If the command completes before observation, its known
-local exit result still requires proof that no backend with the unique identity
-remains before validation; an unknown client result always follows section 9.1.
+endpoint. `backend_start` is preserved at PostgreSQL microsecond precision and is
+never round-tripped through a JavaScript `Date`. The manager does not read or
+record the `query` column. A PID without the matching lossless `backend_start` and
+every other field is not the original writer and must never be signaled. Even an
+exact Docker exec exit requires a final proof that no backend with the unique
+identity remains before validation; an unknown client result always follows
+section 9.1.
 
 ### G. Quarantine, validate, and clean up
 
@@ -523,14 +565,16 @@ insufficient evidence of rollback.
 ### 9.1 Restore-writer reconciliation
 
 Each restore has a 180-second operation deadline and the exact server-side identity
-recorded in section 7F. On timeout, client loss, termination, or an otherwise
-unknown outcome:
+recorded in section 7F. Unknown-result reconciliation receives its own single,
+monotonic deadline; it is not reset for each sub-operation and is not cancelled by
+the original caller. On timeout, client loss, termination, or an otherwise unknown
+outcome:
 
 1. stop all new work for that target and keep the target and restore server
    quarantined;
-2. stop or cancel the exact recorded local launcher/Docker exec process and wait
-   within the bounded deadline until it exits, so it cannot create a later server
-   connection;
+2. stop the exact recorded Docker exec object and inspect/wait for that same exec
+   to exit within the shared deadline, so a host CLI exit cannot hide a later
+   container writer or server connection;
 3. connect as the run-local initialization manager through the verified restore
    control database and revalidate the restore container ID and system ID;
 4. query `pg_stat_activity` without selecting `query`, restricting by the recorded
@@ -538,9 +582,9 @@ unknown outcome:
    a single still-active match was not recorded earlier, record its `pid` and
    `backend_start` now; more than one match is an anomaly and no backend is
    signaled;
-5. if the exact backend still exists, request cancellation and wait within the
-   bounded reconciliation deadline for that exact `(pid, backend_start)` to
-   disappear;
+5. if the exact backend still exists, request cancellation using the lossless
+   `(pid, backend_start)` identity and wait within the same reconciliation deadline
+   for that exact backend to disappear;
 6. if it remains, and only while all identity fields still match, use
    `pg_terminate_backend(pid, positive_timeout_ms)` as initialization manager, then
    independently query until the exact backend is absent; and
@@ -550,7 +594,7 @@ unknown outcome:
 PostgreSQL documents that `pg_terminate_backend` with its default zero timeout
 returns true when the signal was sent, whether or not the process has actually
 terminated. This runbook therefore requires a positive timeout and an independent
-absence check. If the local launcher cannot be proven exited, the PID has been
+absence check. If the exact Docker exec cannot be proven exited, the PID has been
 reused, `backend_start` differs, another field does not match, the server cannot be
 reached, or absence cannot be proven before the reconciliation deadline, do not
 signal an uncertain backend and do not inspect or reuse the target. Preserve

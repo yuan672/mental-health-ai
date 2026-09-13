@@ -21,6 +21,18 @@ export type Nf04AccountDeletionResult =
   | Readonly<{ status: 'confirmed'; operationId: string }>
   | Readonly<{ status: 'unknown'; operationId: string }>;
 
+export type Nf04HarnessFailureCode =
+  | 'ACTION_FAILED'
+  | 'ACCOUNT_DELETION_RESULT_UNKNOWN'
+  | 'PRE_DELETE_RESTORE_RESULT_UNKNOWN'
+  | 'POST_DELETE_RESTORE_RESULT_UNKNOWN'
+  | 'QUARANTINE_FAILED';
+
+export type Nf04HarnessFailure = Readonly<{
+  code: Nf04HarnessFailureCode;
+  stage: Nf04HarnessStep;
+}>;
+
 export interface Nf04DrillActions {
   preflight(): Promise<void>;
   createResources(): Promise<void>;
@@ -34,23 +46,42 @@ export interface Nf04DrillActions {
   restore(kind: Nf04ArchiveKind, evidence: Nf04ArchiveEvidence): Promise<'completed' | 'unknown'>;
   validateRestores(): Promise<void>;
   cleanup(): Promise<void>;
-  quarantine(reason: string): Promise<void>;
+  quarantine(failure: Nf04HarnessFailure): Promise<void>;
 }
 
-export type Nf04HarnessReport = Readonly<{
-  status: 'passed' | 'quarantined';
-  completedSteps: readonly Nf04HarnessStep[];
-  reason?: string;
-}>;
+export type Nf04HarnessReport =
+  | Readonly<{
+      status: 'passed';
+      completedSteps: readonly Nf04HarnessStep[];
+    }>
+  | Readonly<{
+      status: 'quarantined' | 'failed';
+      completedSteps: readonly Nf04HarnessStep[];
+      failure: Nf04HarnessFailure;
+    }>;
 
 export class Nf04DrillHarness {
   constructor(private readonly actions: Nf04DrillActions) {}
 
   async run(): Promise<Nf04HarnessReport> {
     const completedSteps: Nf04HarnessStep[] = [];
+    let currentStage: Nf04HarnessStep = 'preflight';
     const step = async (name: Nf04HarnessStep, work: () => Promise<void>) => {
+      currentStage = name;
       await work();
       completedSteps.push(name);
+    };
+    const stop = async (failure: Nf04HarnessFailure): Promise<Nf04HarnessReport> => {
+      try {
+        await this.actions.quarantine(failure);
+        return { status: 'quarantined', completedSteps, failure };
+      } catch {
+        return {
+          status: 'failed',
+          completedSteps,
+          failure: { code: 'QUARANTINE_FAILED', stage: failure.stage },
+        };
+      }
     };
 
     try {
@@ -60,49 +91,37 @@ export class Nf04DrillHarness {
       await step('source_migrated', () => this.actions.migrateSourceFromZero());
       await step('fixture_loaded', () => this.actions.loadFixture());
       await step('pre_delete_validated', () => this.actions.validateSource('pre_delete'));
+      currentStage = 'pre_delete_archive_completed';
       const preDeleteArchive = await this.actions.createArchive('pre-delete');
       completedSteps.push('pre_delete_archive_completed');
 
+      currentStage = 'account_deleted';
       const deletion = await this.actions.deleteSyntheticAccount();
       if (deletion.status === 'unknown') {
-        await this.actions.quarantine('account deletion result unknown');
-        return {
-          status: 'quarantined',
-          completedSteps,
-          reason: 'account deletion result unknown',
-        };
+        return stop({ code: 'ACCOUNT_DELETION_RESULT_UNKNOWN', stage: currentStage });
       }
       completedSteps.push('account_deleted');
       await step('post_delete_validated', () => this.actions.validateSource('post_delete'));
+      currentStage = 'post_delete_archive_completed';
       const postDeleteArchive = await this.actions.createArchive('post-delete');
       completedSteps.push('post_delete_archive_completed');
       await step('source_stopped', () => this.actions.stopSource());
 
+      currentStage = 'pre_delete_restored';
       if ((await this.actions.restore('pre-delete', preDeleteArchive)) !== 'completed') {
-        await this.actions.quarantine('pre-delete restore result unknown');
-        return {
-          status: 'quarantined',
-          completedSteps,
-          reason: 'pre-delete restore result unknown',
-        };
+        return stop({ code: 'PRE_DELETE_RESTORE_RESULT_UNKNOWN', stage: currentStage });
       }
       completedSteps.push('pre_delete_restored');
+      currentStage = 'post_delete_restored';
       if ((await this.actions.restore('post-delete', postDeleteArchive)) !== 'completed') {
-        await this.actions.quarantine('post-delete restore result unknown');
-        return {
-          status: 'quarantined',
-          completedSteps,
-          reason: 'post-delete restore result unknown',
-        };
+        return stop({ code: 'POST_DELETE_RESTORE_RESULT_UNKNOWN', stage: currentStage });
       }
       completedSteps.push('post_delete_restored');
       await step('restores_validated', () => this.actions.validateRestores());
       await step('cleanup_completed', () => this.actions.cleanup());
       return { status: 'passed', completedSteps };
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'unknown NF-04 failure';
-      await this.actions.quarantine(reason);
-      return { status: 'quarantined', completedSteps, reason };
+    } catch {
+      return stop({ code: 'ACTION_FAILED', stage: currentStage });
     }
   }
 }

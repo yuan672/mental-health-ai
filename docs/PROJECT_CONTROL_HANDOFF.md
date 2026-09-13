@@ -238,10 +238,16 @@ controls.
 - NF-04 has an accepted local synthetic PostgreSQL backup/restore drill contract.
   A protected synthetic fixture loader and minimum injected orchestration harness
   are implemented on a feature branch for review; they include exact manifest,
-  Docker/database identity, archive handoff, and unknown restore-writer guards.
-  Only fake-adapter/unit coverage and a uniquely named protected `_test` fixture
-  database have been exercised. No `pg_dump`, `pg_restore`, account deletion,
-  backup, or restore has been executed. The plan uses two
+  Docker/database identity, real-filesystem path ownership, bounded archive
+  writing, exact Docker-exec lifecycle, lossless PostgreSQL backend identity,
+  archive handoff, and unknown restore-writer guards. Only fake-adapter/unit
+  coverage and a uniquely named protected `_test` fixture database have been
+  exercised. The CLI still exposes only `validate-manifest` and `load-fixture`;
+  real resource creation, source migration, Session/CSRF account deletion,
+  exact Docker-exec and stable-handle archive-publication adapters, restore
+  validation, and resource cleanup actions remain unwired. No Docker resource
+  creation, `pg_dump`, `pg_restore`, account deletion, backup, or restore has been
+  executed. The plan uses two
   isolated PostgreSQL 18.6 instances, synthetic data, guarded `_test` targets, and
   pre-/post-account-deletion recovery points; production backup, restore, deletion
   suppression, retention, encryption, and recovery objectives remain unresolved.

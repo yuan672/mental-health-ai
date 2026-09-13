@@ -1,3 +1,5 @@
+import { constants, type BigIntStats } from 'node:fs';
+import { lstat, open, realpath } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 import type { Pool } from '@mental-health/database';
 import {
@@ -25,6 +27,29 @@ export type Nf04DatabaseIdentity = Readonly<{
   databaseOid: number;
   systemIdentifier: string;
   currentUser: string;
+}>;
+
+export type Nf04FilesystemIdentity = Readonly<{
+  device: bigint;
+  inode: bigint;
+}>;
+
+export type Nf04PathOwnershipSnapshot = Readonly<{
+  rootPath: string;
+  rootRealPath: string;
+  rootIdentity: Nf04FilesystemIdentity;
+  parentPath: string;
+  parentRealPath: string;
+  parentIdentity: Nf04FilesystemIdentity;
+  targetPath: string;
+  targetRealPath?: string;
+  targetIdentity?: Nf04FilesystemIdentity;
+}>;
+
+type Nf04ProtectedFileInput = Readonly<{
+  repositoryRoot: string;
+  artifactRoot: string;
+  candidatePath: string;
 }>;
 
 export function assertNf04ManifestBoundary(manifest: Nf04Manifest): void {
@@ -74,6 +99,216 @@ export function assertNf04ManifestBoundary(manifest: Nf04Manifest): void {
   if (observed.sourceDatabase && observed.sourceDatabase.name !== expected.sourceDatabase) {
     throw new Nf04GuardError('Observed source database name does not match this run');
   }
+}
+
+export async function assertNf04PathOwnedByRoot(
+  artifactRoot: string,
+  targetPath: string,
+  expectation: 'absent' | 'file',
+): Promise<Nf04PathOwnershipSnapshot> {
+  const artifactPath = resolve(artifactRoot);
+  const candidatePath = resolve(targetPath);
+
+  if (!isPathWithin(artifactPath, candidatePath)) {
+    throw new Nf04GuardError('NF-04 filesystem target must remain inside the artifact root');
+  }
+
+  const [artifactStats, artifactRealPath] = await Promise.all([
+    lstat(artifactPath, { bigint: true }),
+    realpath(artifactPath),
+  ]);
+  if (!artifactStats.isDirectory() || artifactStats.isSymbolicLink()) {
+    throw new Nf04GuardError('NF-04 artifact root must be a real directory');
+  }
+
+  const parentPath = dirname(candidatePath);
+  const parentStats = await lstat(parentPath, { bigint: true });
+  if (!parentStats.isDirectory() || parentStats.isSymbolicLink()) {
+    throw new Nf04GuardError('NF-04 filesystem target parent must be a real directory');
+  }
+  const parentRealPath = await realpath(parentPath);
+  if (parentRealPath !== artifactRealPath && !isPathWithin(artifactRealPath, parentRealPath)) {
+    throw new Nf04GuardError('NF-04 filesystem target parent escapes the real artifact root');
+  }
+
+  const candidateStats = await lstatIfExists(candidatePath);
+  let candidateRealPath: string | undefined;
+
+  if (expectation === 'absent') {
+    if (candidateStats) {
+      throw new Nf04GuardError('NF-04 filesystem target must not already exist');
+    }
+  } else {
+    if (!candidateStats) {
+      throw new Nf04GuardError('NF-04 protected file does not exist');
+    }
+    if (!candidateStats.isFile() || candidateStats.isSymbolicLink()) {
+      throw new Nf04GuardError('NF-04 protected path must be a real regular file');
+    }
+    candidateRealPath = await realpath(candidatePath);
+    if (!isPathWithin(artifactRealPath, candidateRealPath)) {
+      throw new Nf04GuardError('NF-04 protected file escapes the real artifact root');
+    }
+  }
+
+  const [stableArtifactStats, stableArtifactRealPath, stableParentStats, stableParentRealPath] =
+    await Promise.all([
+      lstat(artifactPath, { bigint: true }),
+      realpath(artifactPath),
+      lstat(parentPath, { bigint: true }),
+      realpath(parentPath),
+    ]);
+  if (
+    !hasSameFilesystemIdentity(artifactStats, stableArtifactStats) ||
+    artifactRealPath !== stableArtifactRealPath
+  ) {
+    throw new Nf04GuardError('NF-04 artifact root changed during validation');
+  }
+  if (
+    !hasSameFilesystemIdentity(parentStats, stableParentStats) ||
+    parentRealPath !== stableParentRealPath
+  ) {
+    throw new Nf04GuardError('NF-04 filesystem target parent changed during validation');
+  }
+  const stableCandidateStats = await lstatIfExists(candidatePath);
+  if (expectation === 'absent') {
+    if (stableCandidateStats) {
+      throw new Nf04GuardError('NF-04 filesystem target appeared during validation');
+    }
+  } else if (
+    !candidateStats ||
+    !stableCandidateStats ||
+    !hasSameFilesystemIdentity(candidateStats, stableCandidateStats) ||
+    candidateRealPath !== (await realpath(candidatePath))
+  ) {
+    throw new Nf04GuardError('NF-04 protected file changed during validation');
+  }
+
+  return {
+    rootPath: artifactPath,
+    rootRealPath: artifactRealPath,
+    rootIdentity: toFilesystemIdentity(artifactStats),
+    parentPath,
+    parentRealPath,
+    parentIdentity: toFilesystemIdentity(parentStats),
+    targetPath: candidatePath,
+    ...(candidateRealPath ? { targetRealPath: candidateRealPath } : {}),
+    ...(candidateStats ? { targetIdentity: toFilesystemIdentity(candidateStats) } : {}),
+  };
+}
+
+export async function assertNf04TrustedArtifactRoot(input: {
+  repositoryRoot: string;
+  artifactRoot: string;
+  runId: string;
+}): Promise<Nf04FilesystemIdentity> {
+  if (!/^\d{8}-\d{6}-[a-f0-9]{8}$/.test(input.runId)) {
+    throw new Nf04GuardError('NF-04 run ID is invalid');
+  }
+  const repositoryPath = resolve(input.repositoryRoot);
+  const artifactPath = resolve(input.artifactRoot);
+  const expectedArtifactPath = resolve(
+    dirname(repositoryPath),
+    'handoff',
+    NF04_ARTIFACT_ROOT_NAME,
+    input.runId,
+  );
+  if (artifactPath !== expectedArtifactPath) {
+    throw new Nf04GuardError('NF-04 artifact root is not the exact task run directory');
+  }
+  const [repositoryStats, repositoryRealPath, artifactStats, artifactRealPath] = await Promise.all([
+    lstat(repositoryPath, { bigint: true }),
+    realpath(repositoryPath),
+    lstat(artifactPath, { bigint: true }),
+    realpath(artifactPath),
+  ]);
+  if (
+    !repositoryStats.isDirectory() ||
+    repositoryStats.isSymbolicLink() ||
+    !artifactStats.isDirectory() ||
+    artifactStats.isSymbolicLink()
+  ) {
+    throw new Nf04GuardError('NF-04 repository and artifact roots must be real directories');
+  }
+  if (
+    artifactRealPath === repositoryRealPath ||
+    isPathWithin(repositoryRealPath, artifactRealPath) ||
+    isPathWithin(artifactRealPath, repositoryRealPath)
+  ) {
+    throw new Nf04GuardError('NF-04 real artifact root must remain outside the repository');
+  }
+  return toFilesystemIdentity(artifactStats);
+}
+
+export async function readNf04ProtectedFile(input: Nf04ProtectedFileInput): Promise<string> {
+  const boundary = await assertNf04PathOwnedByRoot(input.artifactRoot, input.candidatePath, 'file');
+  const repositoryRealPath = await realpath(resolve(input.repositoryRoot));
+  if (
+    boundary.rootRealPath === repositoryRealPath ||
+    isPathWithin(repositoryRealPath, boundary.rootRealPath) ||
+    isPathWithin(boundary.rootRealPath, repositoryRealPath)
+  ) {
+    throw new Nf04GuardError('NF-04 real artifact root must remain outside the repository');
+  }
+  const noFollow = constants.O_NOFOLLOW ?? 0;
+  const handle = await open(boundary.targetPath, constants.O_RDONLY | noFollow);
+  try {
+    const openedFileIdentity = await handle.stat({ bigint: true });
+    const pathIdentity = await lstat(boundary.targetPath, { bigint: true });
+    const parentIdentity = await lstat(boundary.parentPath, { bigint: true });
+    const rootIdentity = await lstat(boundary.rootPath, { bigint: true });
+    if (
+      !openedFileIdentity.isFile() ||
+      pathIdentity.isSymbolicLink() ||
+      !hasSameFilesystemIdentityValue(boundary.targetIdentity, openedFileIdentity) ||
+      !hasSameFilesystemIdentityValue(boundary.targetIdentity, pathIdentity) ||
+      !hasSameFilesystemIdentityValue(boundary.parentIdentity, parentIdentity) ||
+      !hasSameFilesystemIdentityValue(boundary.rootIdentity, rootIdentity) ||
+      boundary.parentRealPath !== (await realpath(boundary.parentPath)) ||
+      boundary.rootRealPath !== (await realpath(boundary.rootPath))
+    ) {
+      throw new Nf04GuardError('NF-04 protected file identity changed during validation');
+    }
+    if (process.platform !== 'win32' && (openedFileIdentity.mode & 0o077n) !== 0n) {
+      throw new Nf04GuardError('NF-04 fixture secret file permissions are too broad');
+    }
+    return await handle.readFile({ encoding: 'utf8' });
+  } finally {
+    await handle.close();
+  }
+}
+
+function hasSameFilesystemIdentity(left: BigIntStats, right: BigIntStats): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function hasSameFilesystemIdentityValue(
+  left: Nf04FilesystemIdentity | undefined,
+  right: BigIntStats,
+): boolean {
+  return left?.device === right.dev && left.inode === right.ino;
+}
+
+function toFilesystemIdentity(stats: BigIntStats): Nf04FilesystemIdentity {
+  return { device: stats.dev, inode: stats.ino };
+}
+
+async function lstatIfExists(path: string): Promise<BigIntStats | undefined> {
+  try {
+    return await lstat(path, { bigint: true });
+  } catch (error) {
+    if (!isFileNotFoundError(error)) throw error;
+    return undefined;
+  }
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as NodeJS.ErrnoException).code === 'ENOENT'
+  );
 }
 
 export function assertNf04PlannedResourcesAbsent(

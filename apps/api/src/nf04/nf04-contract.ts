@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { isAbsolute, posix, relative, resolve, sep, win32 } from 'node:path';
 import { z } from 'zod';
 
 export const NF04_POSTGRES_IMAGE = 'postgres:18.6-alpine';
@@ -215,9 +215,26 @@ export function deriveNf04ExpectedNames(runId: string): Nf04ExpectedNames {
   };
 }
 
-export function isPathWithin(parent: string, candidate: string): boolean {
-  const parentPath = resolve(parent);
-  const candidatePath = resolve(candidate);
-  const pathFromParent = relative(parentPath, candidatePath);
-  return pathFromParent !== '' && pathFromParent !== '..' && !pathFromParent.startsWith(`..${sep}`);
+export type Nf04PathSemantics = 'native' | 'posix' | 'win32';
+
+export function isPathWithin(
+  parent: string,
+  candidate: string,
+  semantics: Nf04PathSemantics = 'native',
+): boolean {
+  const pathImplementation =
+    semantics === 'win32'
+      ? win32
+      : semantics === 'posix'
+        ? posix
+        : { isAbsolute, relative, resolve, sep };
+  const parentPath = pathImplementation.resolve(parent);
+  const candidatePath = pathImplementation.resolve(candidate);
+  const pathFromParent = pathImplementation.relative(parentPath, candidatePath);
+  return (
+    pathFromParent !== '' &&
+    !pathImplementation.isAbsolute(pathFromParent) &&
+    pathFromParent !== '..' &&
+    !pathFromParent.startsWith(`..${pathImplementation.sep}`)
+  );
 }
