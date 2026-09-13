@@ -81,7 +81,7 @@ export class Nf04DockerInspector {
     manifest: Nf04Manifest,
     role: 'source' | 'restore',
     signal?: AbortSignal,
-    expectedState: 'running' | 'stopped' | 'any' = 'any',
+    expectedState: 'running' | 'stopped' = 'running',
   ): Promise<{
     container: Nf04ContainerEvidence;
     volume: Nf04VolumeEvidence;
@@ -105,7 +105,7 @@ export class Nf04DockerInspector {
 
   private async inspectRuntimeContainer(
     id: string,
-    expectedState: 'running' | 'stopped' | 'any',
+    expectedState: 'running' | 'stopped',
     signal?: AbortSignal,
   ): Promise<Nf04ContainerEvidence> {
     const record = await this.inspectContainerRecord(id, signal);

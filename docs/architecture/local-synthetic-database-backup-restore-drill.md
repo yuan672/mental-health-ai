@@ -483,8 +483,10 @@ the redacted manifest remains as non-secret evidence.
    `HostConfig.PortBindings`. This is configuration evidence only and is not
    described as a listening port. After `docker start`, require the container's
    real running state and the exact loopback mapping in `NetworkSettings.Ports`;
-   subsequent live checks continue to use runtime evidence. On Windows Docker
-   Desktop, bind sources may use only the exact
+   live checks while running continue to use runtime evidence. After the source
+   is intentionally stopped, require the exact exited state and revalidate its
+   recorded configuration from `HostConfig` without describing the port as
+   listening. On Windows Docker Desktop, bind sources may use only the exact
    `/run/desktop/mnt/host/<fixed-drive>/...` representation that canonically maps
    back to the already verified run-local host path. Unknown aliases, another
    drive/run, traversal, and access-mode mismatches are rejected.
