@@ -478,8 +478,16 @@ the redacted manifest remains as non-secret evidence.
 4. Start two fresh `postgres:18.6-alpine` containers with separate data volumes,
    with the artifact directory mounted read-write at `/nf04-output` in source and
    read-only at `/nf04-input` in restore.
-5. Re-inspect the actual resources and record container/volume/network IDs, image
-   digest, ports, mounts, and labels.
+5. Immediately after each `docker create`, inspect and record its exact ID, labels,
+   mounts, network configuration, and configured loopback binding from
+   `HostConfig.PortBindings`. This is configuration evidence only and is not
+   described as a listening port. After `docker start`, require the container's
+   real running state and the exact loopback mapping in `NetworkSettings.Ports`;
+   subsequent live checks continue to use runtime evidence. On Windows Docker
+   Desktop, bind sources may use only the exact
+   `/run/desktop/mnt/host/<fixed-drive>/...` representation that canonically maps
+   back to the already verified run-local host path. Unknown aliases, another
+   drive/run, traversal, and access-mode mismatches are rejected.
 6. Through each container-initialized, explicitly named `_test` control database,
    create the run-local roles and source database, but not the restore targets;
    then record each server's actual

@@ -16,7 +16,9 @@ import {
   assertNf04PathOwnedByRoot,
   assertNf04PlannedResourcesAbsent,
   assertNf04TrustedArtifactRoot,
+  matchesNf04DockerBindSource,
   readNf04ProtectedFile,
+  resolveNf04DockerBindSource,
 } from '../src/nf04/nf04-guards';
 
 const RUN_ID = '20260913-143000-a1b2c3d4';
@@ -62,6 +64,40 @@ describe('NF-04 phase-specific guards', () => {
     ).toBe(false);
     expect(isPathWithin('/srv/nf04/run', '/srv/nf04/run/fixture.json', 'posix')).toBe(true);
     expect(isPathWithin('/srv/nf04/run', '/srv/outside/fixture.json', 'posix')).toBe(false);
+  });
+
+  it('accepts only the exact Docker Desktop mapping for a fixed Windows host path', () => {
+    const expected =
+      'E:\\study-project\\handoff\\nf04-backup-restore\\20260913-143000-a1b2c3d4\\archives';
+    const observed =
+      '/run/desktop/mnt/host/e/study-project/handoff/nf04-backup-restore/20260913-143000-a1b2c3d4/archives';
+
+    expect(resolveNf04DockerBindSource(observed, 'win32')).toBe(expected);
+    expect(matchesNf04DockerBindSource(expected, observed, 'win32')).toBe(true);
+    expect(
+      matchesNf04DockerBindSource(expected, observed.replace('/host/e/', '/host/d/'), 'win32'),
+    ).toBe(false);
+    expect(
+      matchesNf04DockerBindSource(
+        expected,
+        observed.replace('20260913-143000-a1b2c3d4', '20260913-143000-deadbeef'),
+        'win32',
+      ),
+    ).toBe(false);
+    expect(
+      matchesNf04DockerBindSource(
+        expected,
+        '/run/desktop/mnt/host/e/study-project/handoff/../handoff/nf04-backup-restore/20260913-143000-a1bDea/archives',
+        'win32',
+      ),
+    ).toBe(false);
+    expect(
+      matchesNf04DockerBindSource(
+        expected,
+        '/host_mnt/e/study-project/handoff/nf04-backup-restore/20260913-143000-a1b2c3d4/archives',
+        'win32',
+      ),
+    ).toBe(false);
   });
 
   it('derives exact bounded resource names without inventing a volume object ID', () => {
@@ -165,6 +201,21 @@ describe('NF-04 phase-specific guards', () => {
               ...withEvidence.observed.sourceContainer!,
               id: 'same-name-replacement-id',
               labels: { 'mh.nf04.run': 'foreign-run', 'mh.nf04.role': 'source' },
+            },
+          },
+        },
+        'source',
+      ),
+    ).toThrow(/identity/i);
+    expect(() =>
+      assertNf04ContainerEvidence(
+        {
+          ...withEvidence,
+          observed: {
+            ...withEvidence.observed,
+            sourceContainer: {
+              ...withEvidence.observed.sourceContainer!,
+              hostPort: withEvidence.ports.sourceDatabase + 1,
             },
           },
         },

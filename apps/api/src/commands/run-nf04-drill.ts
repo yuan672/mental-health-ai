@@ -171,6 +171,8 @@ async function loadFixture(
   const live = await new Nf04DockerInspector(new NodeNf04ProcessRunner()).inspectRecorded(
     manifest,
     'source',
+    undefined,
+    'running',
   );
   assertLiveNf04DockerEvidence(recorded, live);
   const databaseEvidence = manifest.observed.sourceDatabase;

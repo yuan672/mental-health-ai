@@ -74,33 +74,6 @@ type ExecEvidence = NonNullable<
   NonNullable<Nf04Manifest['observed']['executions']>['preDeleteArchive']
 >;
 
-const dockerContainerInspectSchema = z
-  .array(
-    z.object({
-      Id: z.string(),
-      Name: z.string(),
-      Image: z.string(),
-      Config: z.object({ Image: z.string(), Labels: z.record(z.string(), z.string()).nullable() }),
-      Mounts: z.array(
-        z.object({
-          Type: z.enum(['bind', 'volume']),
-          Source: z.string(),
-          Destination: z.string(),
-          RW: z.boolean(),
-          Name: z.string().optional(),
-        }),
-      ),
-      NetworkSettings: z.object({
-        Ports: z.record(
-          z.string(),
-          z.array(z.object({ HostIp: z.string(), HostPort: z.string() })).nullable(),
-        ),
-        Networks: z.record(z.string(), z.unknown()),
-      }),
-    }),
-  )
-  .length(1);
-
 const dockerVolumeInspectSchema = z
   .array(
     z.object({
@@ -550,7 +523,8 @@ export class SystemNf04RealActionRuntime implements Nf04RealActionRuntime {
     }
     await recordPartial({ restoreVolume });
     const sourceId = await this.createPostgresContainer(manifest, 'source');
-    const sourceContainer = await this.inspectContainer(sourceId);
+    const sourceContainer = await this.dockerInspector.inspectConfiguredContainer(sourceId);
+    await recordPartial({ sourceContainer });
     assertNf04ContainerEvidence(
       {
         ...manifest,
@@ -558,9 +532,9 @@ export class SystemNf04RealActionRuntime implements Nf04RealActionRuntime {
       },
       'source',
     );
-    await recordPartial({ sourceContainer });
     const restoreId = await this.createPostgresContainer(manifest, 'restore');
-    const restoreContainer = await this.inspectContainer(restoreId);
+    const restoreContainer = await this.dockerInspector.inspectConfiguredContainer(restoreId);
+    await recordPartial({ restoreContainer });
     assertNf04ContainerEvidence(
       {
         ...manifest,
@@ -568,7 +542,6 @@ export class SystemNf04RealActionRuntime implements Nf04RealActionRuntime {
       },
       'restore',
     );
-    await recordPartial({ restoreContainer });
     await this.command('docker', ['start', sourceId, restoreId]);
 
     const source = await this.inspectProvisional(
@@ -608,11 +581,11 @@ export class SystemNf04RealActionRuntime implements Nf04RealActionRuntime {
     );
     await this.assertExclusiveDockerMembership(withEvidence);
     return {
-      sourceContainer,
-      restoreContainer,
-      sourceVolume,
-      restoreVolume,
-      network,
+      sourceContainer: source.container,
+      restoreContainer: restore.container,
+      sourceVolume: source.volume,
+      restoreVolume: restore.volume,
+      network: source.network,
     };
   }
 
@@ -902,13 +875,7 @@ export class SystemNf04RealActionRuntime implements Nf04RealActionRuntime {
     await this.assertLiveDocker(manifest, 'source');
     await this.assertSourceQuiescent(manifest);
     await this.command('docker', ['stop', '--time', '10', source.id]);
-    const running = await this.command('docker', [
-      'inspect',
-      '--format',
-      '{{.State.Running}}',
-      source.id,
-    ]);
-    if (running.trim() !== 'false') fail('source database stop could not be proven');
+    await this.assertLiveDocker(manifest, 'source', 'stopped');
   }
 
   async restore(
@@ -1062,8 +1029,8 @@ export class SystemNf04RealActionRuntime implements Nf04RealActionRuntime {
 
   async cleanup(manifest: Nf04ExecutableManifest): Promise<void> {
     await this.assertCleanCheckout(manifest.repositoryRoot);
-    await this.assertLiveDocker(manifest, 'source');
-    await this.assertLiveDocker(manifest, 'restore');
+    await this.assertLiveDocker(manifest, 'source', 'stopped');
+    await this.assertLiveDocker(manifest, 'restore', 'running');
     const source = this.requireContainer(manifest, 'source');
     const restore = this.requireContainer(manifest, 'restore');
     const executions = manifest.observed.executions;
@@ -1205,7 +1172,7 @@ export class SystemNf04RealActionRuntime implements Nf04RealActionRuntime {
     try {
       return (await this.command('docker', arguments_)).trim();
     } catch {
-      return (await this.inspectContainer(containerName)).id;
+      return (await this.dockerInspector.inspectConfiguredContainer(containerName)).id;
     }
   }
 
@@ -1225,35 +1192,7 @@ export class SystemNf04RealActionRuntime implements Nf04RealActionRuntime {
         network: { id: networkId },
       },
     } as unknown as Nf04Manifest;
-    return this.dockerInspector.inspectRecorded(provisional, role);
-  }
-
-  private async inspectContainer(id: string): Promise<Nf04ContainerEvidence> {
-    const record = dockerContainerInspectSchema.parse(
-      JSON.parse(await this.command('docker', ['container', 'inspect', id])),
-    )[0]!;
-    const binding = record.NetworkSettings.Ports['5432/tcp'];
-    if (!binding || binding.length !== 1 || binding[0]?.HostIp !== '127.0.0.1') {
-      fail('created PostgreSQL container does not have the exact loopback binding');
-    }
-    const hostPort = Number(binding[0].HostPort);
-    if (!Number.isInteger(hostPort)) fail('created PostgreSQL host port is invalid');
-    return {
-      id: record.Id,
-      name: record.Name.replace(/^\//u, ''),
-      imageId: record.Image,
-      imageReference: record.Config.Image as Nf04ContainerEvidence['imageReference'],
-      labels: record.Config.Labels ?? {},
-      mounts: record.Mounts.map((mount) => ({
-        type: mount.Type,
-        source: mount.Source,
-        destination: mount.Destination,
-        readWrite: mount.RW,
-        ...(mount.Name ? { volumeName: mount.Name } : {}),
-      })),
-      networkNames: Object.keys(record.NetworkSettings.Networks),
-      hostPort,
-    };
+    return this.dockerInspector.inspectRecorded(provisional, role, undefined, 'running');
   }
 
   private async inspectVolume(name: string): Promise<Nf04VolumeEvidence> {
@@ -1524,9 +1463,15 @@ export class SystemNf04RealActionRuntime implements Nf04RealActionRuntime {
   private async assertLiveDocker(
     manifest: Nf04ExecutableManifest,
     role: 'source' | 'restore',
+    expectedState: 'running' | 'stopped' = 'running',
   ): Promise<void> {
     this.assertDocker(manifest);
-    const live = await this.dockerInspector.inspectRecorded(manifest, role);
+    const live = await this.dockerInspector.inspectRecorded(
+      manifest,
+      role,
+      undefined,
+      expectedState,
+    );
     const recorded = {
       container:
         role === 'source'
