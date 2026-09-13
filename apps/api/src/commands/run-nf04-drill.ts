@@ -78,15 +78,20 @@ export async function runNf04DrillCommand(
   argv: readonly string[] = process.argv.slice(2),
   environment: NodeJS.ProcessEnv = process.env,
   workingDirectory: string = process.cwd(),
+  preparationService: Nf04PreparationService = new Nf04PreparationService(
+    new NodeNf04ProcessRunner(),
+  ),
 ): Promise<boolean> {
   const invocation = parseNf04CliInvocation(argv, environment);
   const repositoryRoot = resolve(workingDirectory, '../..');
 
   if (invocation.command === 'prepare-run') {
-    const prepared = await new Nf04PreparationService(new NodeNf04ProcessRunner()).prepare(
-      repositoryRoot,
-      invocation,
-    );
+    const prepared = await preparationService.prepare(repositoryRoot, {
+      runId: invocation.runId,
+      sourceDatabasePort: invocation.sourceDatabasePort,
+      restoreDatabasePort: invocation.restoreDatabasePort,
+      isolatedApiPort: invocation.isolatedApiPort,
+    });
     writeSafeResult({ event: 'nf04_run_prepared', runId: prepared.runId, state: 'planned' });
     return true;
   }

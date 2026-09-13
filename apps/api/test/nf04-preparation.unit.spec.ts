@@ -124,6 +124,20 @@ describe('NF-04 protected run preparation', () => {
     expect(runner.calls).toHaveLength(0);
   });
 
+  it('rejects unknown request fields before running any prerequisite', async () => {
+    const runner = new PreparationRunner();
+    await expect(
+      new Nf04PreparationService(runner, 'win32').prepare(join(temporaryRoot, 'repository'), {
+        runId: '20260913-143000-a1b2c3d4',
+        sourceDatabasePort: 61_001,
+        restoreDatabasePort: 61_002,
+        isolatedApiPort: 61_003,
+        command: 'prepare-run',
+      } as never),
+    ).rejects.toMatchObject({ name: 'ZodError' });
+    expect(runner.calls).toHaveLength(0);
+  });
+
   it('creates no run material from a dirty or untracked checkout', async () => {
     const runner = new PreparationRunner();
     runner.dirty = true;
