@@ -78,6 +78,8 @@ describe('NF-04 phase-specific guards', () => {
       postRestoreDatabase: 'mh_nf04_a1b2c3d4_post_restore_test',
       sourceRole: 'mh_nf04_a1b2c3d4_source_role',
       restoreRole: 'mh_nf04_a1b2c3d4_restore_role',
+      sourceManagerRole: 'mh_nf04_a1b2c3d4_source_manager',
+      restoreManagerRole: 'mh_nf04_a1b2c3d4_restore_manager',
     });
   });
 
@@ -169,6 +171,101 @@ describe('NF-04 phase-specific guards', () => {
         'source',
       ),
     ).toThrow(/identity/i);
+  });
+
+  it('keeps executable archives separate from role-specific read-only secret mounts', () => {
+    const legacy = manifest('resources_created');
+    const names = deriveNf04ExpectedNames(RUN_ID);
+    const archivesRoot = join(legacy.artifactRoot, 'archives');
+    const secretsRoot = join(legacy.artifactRoot, 'secrets');
+    const executable = nf04ManifestSchema.parse({
+      ...legacy,
+      archivesRoot,
+      repository: {
+        commitSha: 'a'.repeat(40),
+        migrationHashes: ['b'.repeat(64)],
+        migrationCreatedAt: [1],
+      },
+      files: {
+        fixtureSecrets: join(secretsRoot, 'fixture-secrets.json'),
+        sourcePgPass: join(secretsRoot, 'source.pgpass'),
+        restorePgPass: join(secretsRoot, 'restore.pgpass'),
+        sourceManagerPassword: join(secretsRoot, 'source-manager-password'),
+        restoreManagerPassword: join(secretsRoot, 'restore-manager-password'),
+        executionSecrets: join(secretsRoot, 'execution-secrets.json'),
+        isolatedApiEnvironment: join(secretsRoot, 'isolated-api.env'),
+      },
+      observed: {
+        sourceContainer: {
+          id: 'source-container-object-id',
+          name: names.sourceContainer,
+          imageId: legacy.image.expectedImageId,
+          imageReference: NF04_POSTGRES_IMAGE,
+          labels: { 'mh.nf04.run': RUN_ID, 'mh.nf04.role': 'source' },
+          mounts: [
+            {
+              type: 'volume',
+              source: '/docker/volumes/source',
+              destination: '/var/lib/postgresql',
+              readWrite: true,
+              volumeName: names.sourceVolume,
+            },
+            { type: 'bind', source: archivesRoot, destination: '/nf04-output', readWrite: true },
+            {
+              type: 'bind',
+              source: join(secretsRoot, 'source.pgpass'),
+              destination: '/run/secrets/nf04-source.pgpass',
+              readWrite: false,
+            },
+            {
+              type: 'bind',
+              source: join(secretsRoot, 'source-manager-password'),
+              destination: '/run/secrets/nf04-manager-password',
+              readWrite: false,
+            },
+          ],
+          networkNames: [names.network],
+          hostPort: legacy.ports.sourceDatabase,
+        },
+        sourceVolume: {
+          name: names.sourceVolume,
+          driver: 'local',
+          mountpoint: resolve(legacy.artifactRoot, '../docker-volume'),
+          labels: { 'mh.nf04.run': RUN_ID, 'mh.nf04.role': 'source' },
+        },
+        network: {
+          id: 'network-object-id',
+          name: names.network,
+          driver: 'bridge',
+          labels: { 'mh.nf04.run': RUN_ID, 'mh.nf04.role': 'network' },
+        },
+      },
+    });
+    expect(() => assertNf04ManifestBoundary(executable)).not.toThrow();
+    expect(() => assertNf04ContainerEvidence(executable, 'source')).not.toThrow();
+    expect(() =>
+      assertNf04ContainerEvidence(
+        {
+          ...executable,
+          observed: {
+            ...executable.observed,
+            sourceContainer: {
+              ...executable.observed.sourceContainer!,
+              mounts: [
+                ...executable.observed.sourceContainer!.mounts,
+                {
+                  type: 'bind',
+                  source: executable.files.restorePgPass,
+                  destination: '/run/secrets/nf04-restore.pgpass',
+                  readWrite: false,
+                },
+              ],
+            },
+          },
+        },
+        'source',
+      ),
+    ).toThrow(/secret mounts/i);
   });
 
   it('requires exact database name, OID, system identifier, and optional role', () => {

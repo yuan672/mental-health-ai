@@ -9,5 +9,6 @@ control status is summarized in `docs/PROJECT_CONTROL_HANDOFF.md`.
 Operational architecture designs and bounded runbooks include:
 
 - [`local-synthetic-database-backup-restore-drill.md`](local-synthetic-database-backup-restore-drill.md) —
-  documentation-only NF-04 plan for a future isolated synthetic PostgreSQL drill;
-  no backup or restore has been executed.
+  protected NF-04 implementation and runbook for a future isolated synthetic
+  PostgreSQL drill; the real execution adapters are connected, but no backup or
+  restore drill has been executed.

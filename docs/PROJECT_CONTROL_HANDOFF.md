@@ -240,15 +240,16 @@ controls.
   are delivered by [PR #41](https://github.com/yuan672/mental-health-ai/pull/41); they include exact manifest,
   Docker/database identity, real-filesystem path ownership, bounded archive
   writing, exact Docker-exec lifecycle, lossless PostgreSQL backend identity,
-  archive handoff, and unknown restore-writer guards. Only fake-adapter/unit
-  coverage and a uniquely named protected `_test` fixture database have been
-  exercised. The CLI still exposes only `validate-manifest` and `load-fixture`;
-  real resource creation, source migration, Session/CSRF account deletion,
-  exact Docker-exec and stable-handle archive-publication adapters, restore
-  validation, and resource cleanup actions remain unwired. No Docker resource
-  creation, `pg_dump`, `pg_restore`, account deletion, backup, or restore has been
-  executed. This is completion of the protected tooling foundation, not completion
-  of the full NF-04 drill. The plan uses two
+  archive handoff, and unknown restore-writer guards. The Windows Docker Engine
+  exact-exec adapter, stable-handle archive publication/cleanup, complete real
+  action flow, protected preparation, and explicitly gated full-run command are
+  now connected in the NF-04 real-execution delivery. The exact-exec adapter has
+  been exercised only with a uniquely labelled temporary container and controlled
+  shell commands; stable-handle adapters have been exercised only with generated
+  temporary files. Complete phase order remains substitute-driven. No
+  `pg_dump`, `pg_restore` (including `--list`), account deletion, backup, restore,
+  or full harness has been executed. This is completion of the NF-04 real
+  execution implementation, not completion of the full NF-04 drill. The plan uses two
   isolated PostgreSQL 18.6 instances, synthetic data, guarded `_test` targets, and
   pre-/post-account-deletion recovery points; production backup, restore, deletion
   suppression, retention, encryption, and recovery objectives remain unresolved.
@@ -262,6 +263,10 @@ and retain the v2 reader plus v1 history guard. Keep the bounded NF-02 account-
 deletion backend disabled by default and unavailable in Staging/Production. The
 three candidate articles remain unverified and unpublished, and production
 policy/content review and real-model evaluation remain separate work.
+NF-04's next step, only after another explicit user approval, is one execution of
+the protected isolated synthetic drill using the reviewed `prepare-run` and
+`execute-run` procedure. Until that run completes, backup/restore drill evidence
+remains Not verified.
 
 ## Source of Truth
 

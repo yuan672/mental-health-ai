@@ -2,9 +2,9 @@
 
 ## Status
 
-- Scope: NF-04 local learning/demo design plus protected tooling foundation
-- Delivery: fixture loader and minimum orchestration harness are implemented on a
-  feature branch; the first drill remains separately gated
+- Scope: NF-04 local learning/demo design plus protected real-execution tooling
+- Delivery: fixture, orchestration, Windows/Docker execution adapters, full action
+  flow, and protected CLI are implemented; the first drill remains separately gated
 - Drill execution: not performed
 - Production backup readiness: not established
 - Production Safety Lock: Enforced
@@ -13,7 +13,7 @@
 - Real model safety evaluation: Not evaluated
 
 This document defines a future, deliberately isolated PostgreSQL backup and
-restore exercise using synthetic data. It does not authorize a backup or restore
+restore exercise using synthetic data and its protected command path. It does not authorize a backup or restore
 against any existing development, staging, or production database. It also does
 not define production retention, recovery objectives, encryption, account-
 deletion replay, or operational access policy.
@@ -225,10 +225,9 @@ cleanup. The redacted manifest, checksums, and report may be retained.
 ## 5. Synthetic fixture boundary
 
 The repository's Phase 5B E2E seed is guarded and useful for its own browser
-tests, but it does not create every relationship required by this drill. Before
-the first execution, a separate implementation PR must add or approve one narrow
-NF-04 fixture loader. It must inherit every guard in section 4 and create only
-neutral synthetic values.
+tests, but it does not create every relationship required by this drill. NF-04
+therefore has its own narrow fixture loader. It inherits every guard in section 4
+and creates only neutral synthetic values.
 
 The fixture should contain stable, predeclared IDs for:
 
@@ -256,6 +255,9 @@ The repository now contains a narrow NF-04 protected tooling implementation:
 - `Nf04ArchiveManager` constructs fixed `pg_dump` and `pg_restore --list`
   argument arrays, rejects pre-existing output, monitors the partial archive
   against the remaining aggregate budget while the exact writer is active,
+  allocates and records a second exact container exec before archive-list
+  validation, and requires terminal evidence for both exec identities before
+  normal cleanup is eligible,
   keeps one caller/deadline signal through listing and final evidence, verifies
   content through a stable file handle before and after listing, verifies the
   first archive before allowing the second, and uses a same-directory no-clobber
@@ -290,6 +292,15 @@ The repository now contains a narrow NF-04 protected tooling implementation:
   Stable synthetic
   IDs cover the relationships in section 5. Exact re-entry validates the whole
   fixture; partial or conflicting state fails without being overwritten.
+- `DockerEngineNf04ContainerExecutionPort` talks to the local Docker Engine over
+  the Windows named pipe. It creates an exact exec object before start, records
+  that exec ID, starts it detached through the Engine API, and uses an
+  exec-specific random stop marker delivered through Docker's archive API plus
+  Engine inspection for bounded exit proof. The marker controls only the already
+  allocated supervisor and never creates a replacement exec. A host
+  `docker.exe` PID is never treated as the container writer. A stop racing start
+  prevents a future start or places the marker before the late start can proceed;
+  the adapter refuses success when the exact exec exit cannot be proved.
 - Protected secret and archive paths are checked using the selected platform path
   semantics and then against the real filesystem root, parent, link type, and
   file identity. Archive operations additionally require the exact run directory
@@ -297,31 +308,59 @@ The repository now contains a narrow NF-04 protected tooling implementation:
   repository. Windows drive and UNC roots are not interchangeable. An absent
   output is accepted only after its real parent is verified; only `ENOENT` means
   absent. Publication rechecks the captured boundary and file identity; any future
-  cleanup adapter must do the same before it is wired.
+  cleanup adapter must do the same before it is wired. The Windows publication
+  and cleanup adapters keep real directory/file handles open, reject reparse or
+  hard-linked files, recheck volume and file identities, and use a same-directory
+  no-clobber handle-relative rename or an exact-handle delete.
+- `SystemNf04RealActionRuntime` connects those boundaries to exact resource
+  creation, database/role initialization, migration and fixture loading, source
+  validation, the loopback-only authenticated Session/CSRF account-deletion endpoint, archive
+  and restore coordination, offline restored-data checks, and identity-bound
+  cleanup. It rechecks all three loopback ports and the 2 GiB free-space bound at
+  execution preflight and rechecks free space before each archive. The fixture
+  validation retains the 100 MiB content bound and the archive manager retains
+  the 512 MiB aggregate bound. Preparation and execution require a clean reviewed
+  checkout. Runtime checks require PostgreSQL server, `pg_dump`, and `pg_restore`
+  version 18.6; migration hashes and journal timestamps are bound to the manifest.
+  Restore dispatch rechecks exact Docker/database identity, exclusive network and
+  volume membership, an empty target with no competing sessions, container-side
+  archive listing, and the host stable-file checksum. Restore validation uses a
+  bounded repeatable-read view and compares an exact schema-catalog fingerprint.
 - Harness failures expose only bounded code/stage metadata. Raw exception text,
   credentials, connection strings, and filesystem paths are not copied into the
   report or quarantine action.
 
-The only installed command entry is deliberately narrow:
+The installed command entry is deliberately narrow and test-gated:
 
 ```text
 pnpm --filter @mental-health/api nf04:drill validate-manifest <absolute-manifest-path>
 pnpm --filter @mental-health/api nf04:drill load-fixture <absolute-manifest-path>
+pnpm --filter @mental-health/api nf04:drill prepare-run <run-id> <source-db-port> <restore-db-port> <api-port> --confirm-run-id <run-id>
+pnpm --filter @mental-health/api nf04:drill execute-run <absolute-manifest-path> --confirm-run-id <run-id>
 ```
 
+`prepare-run` additionally requires `APP_ENV=test` and
+`NF04_PREPARE_ENABLED=true`; `execute-run` requires `APP_ENV=test` and
+`NF04_FULL_DRILL_ENABLED=true`. The latter variable is deliberately not present
+in normal application configuration. Both mutating commands require the exact
+run ID twice, and execution accepts only an absolute redacted-manifest path in a
+planned run whose recorded clean repository commit, migration hashes and
+timestamps, image identity,
+paths, ports, and planned Docker names still pass preflight. Importing the module,
+building, testing, invoking either read-only command, or invoking the CLI without
+the exact gate never starts the harness.
+
 The command reads no repository `.env`, accepts no connection string or password
-on the command line, emits only allowlisted run metadata, and obtains credentials
-from the exact protected run-local file named by the redacted manifest. Loading
-also performs a fresh exact Docker inspection and database identity query. The
-full harness is not exposed as an executable command in this batch. Real resource
-creation, source migration, Session/CSRF account deletion, exact Docker exec
-integration, stable-handle archive publication, restored-data validation, and
-verified resource cleanup remain unwired and have not received execution review.
-This is a fail-closed staged delivery, not an invitation to call internal classes
-manually.
+on the command line, emits only allowlisted run/status/count/failure-code fields,
+and obtains credentials from the exact protected run-local files named by the
+redacted manifest. Loading also performs a fresh exact Docker inspection and
+database identity query. Unknown deletion or restore evidence quarantines the
+manifest and stops the sequence; it does not initiate a replacement writer or
+normal cleanup.
 
 Tests use fake process/Docker-exec/backend/archive-publication adapters and
-task-specific temporary filesystem paths for archive and restore failure paths.
+task-specific temporary filesystem paths for the complete phase order and archive
+and restore failure paths.
 They exercise the writer budget, identity, timeout, cancellation,
 late-completion, path-replacement, and report-redaction contracts without
 starting Docker, `pg_dump`, or `pg_restore`.
@@ -331,19 +370,21 @@ from zero, loads or rejects the fixture, and drops only that exact generated
 database after rechecking the PostgreSQL system identity. That limited database
 test is not the two-container drill and does not produce an archive.
 
-The exact-exec port is a safety contract, not a concrete production adapter in
-this batch. Its `stop` operation must synchronize with any in-flight `start`: when
-`stop` resolves, that same exec cannot start later, and `waitForExit` must then
-return a definite exit code for that exec. If an adapter cannot prove those
-properties it must reject, leaving the run quarantined. Fake barrier tests cover
-this ordering; a real Docker Engine adapter and real engine behavior remain Not
-verified.
+The real exact-exec adapter has additionally been exercised against a uniquely
+labelled, batch-owned temporary Docker container using only one controlled short
+command and one waiting command. That test proves exact allocation, nonzero exit,
+stop/exit, and exact-resource cleanup; deterministic adapter tests cover
+stop-before-start, stop-during-start, acknowledgement loss, cancellation, and
+late results. The real Windows stable-handle publication/cleanup adapters have been
+exercised only in task-generated temporary directories, including target,
+parent, root, reparse, hard-link, and no-clobber replacement cases. Those are
+adapter validations, not the two-container database drill.
 
-Archive publication has the same staged boundary. The manager requires a port
-that binds no-clobber publication and partial-name removal to already captured
-root, parent, and file identities using platform-safe relative-handle primitives.
-No pathname-only production adapter is included; the current adapter exists only
-inside tests and writes within its generated temporary run directory.
+The complete actions and harness remain validated with controlled substitutes in
+this implementation batch. In particular, no actual `pg_dump`, `pg_restore`
+(including `--list`), account deletion, recovery-point creation, database restore,
+or full `execute-run` invocation was performed. Those stages remain subject to a
+separately authorized single synthetic drill.
 
 ## 6. Consistency point and process quiescence
 
@@ -380,18 +421,58 @@ restored by this drill.
 
 ## 7. Future execution procedure
 
-The commands below are a reviewable template, not authorization to execute them.
-Every variable comes from the verified run manifest. The future harness must use
-structured argument passing rather than interpolating untrusted strings. Each
-command also supplies the explicit run-local socket/host, port, role, database,
-`PGPASSFILE`, and, where applicable, unique `PGAPPNAME`; shortened examples below
-do not authorize defaults.
+This procedure is ready for review, but it is not authorization to execute the
+full drill. A new user-approved run must use the protected entry point; the
+shortened component commands below explain the fixed behavior and are not an
+alternative manual procedure.
+
+From a clean checkout of the reviewed commit, the operator first chooses one run
+ID matching `YYYYMMDD-HHMMSS-8hex` and three distinct, currently free loopback
+ports. After confirming host load and Docker health, preparation is exactly:
+
+```powershell
+$env:APP_ENV = 'test'
+$env:NF04_PREPARE_ENABLED = 'true'
+pnpm --filter @mental-health/api nf04:drill prepare-run `
+  <run-id> <source-db-port> <restore-db-port> <api-port> `
+  --confirm-run-id <run-id>
+Remove-Item Env:\NF04_PREPARE_ENABLED
+```
+
+Preparation creates no Docker object and emits only the run ID and `planned`
+state. It creates the redacted manifest at
+`E:\study-project\handoff\nf04-backup-restore\<run-id>\manifest.json`, protected
+secret files under `secrets`, an empty `archives` directory, and an empty
+`runtime` directory. Review the redacted manifest, the selected commit/image/
+migration identities, free space, exact ports, names, and absence of unrelated
+writers before seeking separate execution approval.
+
+Only that later explicit approval may enable and run:
+
+```powershell
+$env:APP_ENV = 'test'
+$env:NF04_FULL_DRILL_ENABLED = 'true'
+pnpm --filter @mental-health/api nf04:drill execute-run `
+  'E:\study-project\handoff\nf04-backup-restore\<run-id>\manifest.json' `
+  --confirm-run-id <run-id>
+Remove-Item Env:\NF04_FULL_DRILL_ENABLED
+```
+
+`execute-run` revalidates rather than trusting the preparation-time checks. A
+successful result emits an allowlisted completion record. A guarded failure emits
+only a fixed event and returns nonzero. An unknown lifecycle result leaves the
+redacted manifest quarantined and deliberately retains the exact resources and
+evidence for diagnosis. Do not rerun with another ID or remove those resources
+until their recorded identities and writer state have been reviewed. A successful
+run removes only its exact containers, volumes, network, secrets, and archives;
+the redacted manifest remains as non-secret evidence.
 
 ### A. Preflight and setup
 
 1. Confirm repository HEAD, operator identity, host load, free disk, Docker
    health, free loopback ports, and no other task using the chosen resources.
-2. Generate the run ID, exact names, credentials, artifact directory, and labels;
+2. Use `prepare-run` to generate the run ID-bound names, credentials, artifact
+   directory, and labels;
    prove the planned resources do not exist.
 3. Create the protected host artifact directory and run-local credential files.
 4. Start two fresh `postgres:18.6-alpine` containers with separate data volumes,
@@ -403,8 +484,8 @@ do not authorize defaults.
    create the run-local roles and source database, but not the restore targets;
    then record each server's actual
    `pg_control_system().system_identifier`.
-7. Prove the applicable section 4 guards and write the redacted manifest before
-   proceeding.
+7. Prove the applicable section 4 guards and checkpoint the redacted manifest
+   before proceeding.
 
 ### B. Create and validate source state
 
@@ -430,7 +511,9 @@ docker exec -e PGPASSFILE=/run/secrets/nf04-source.pgpass `
 The command refuses to start if either its partial or final path already exists.
 Enforce the dump timeout and size limit. After `pg_dump` exits successfully and
 the partial file handle is closed, run `pg_restore --list` against that partial
-file. If the archive table of contents is readable, use an exact-path host filesystem operation
+file through a separately allocated, recorded Docker Engine exec identity rather
+than an untracked host `docker exec` process. If the archive table of contents is
+readable, use an exact-path host filesystem operation
 to rename it atomically to `pre-delete.dump` without overwriting another file.
 Record the final file's byte size and SHA-256 in the manifest and mark that
 recovery point complete. A timeout, nonzero exit, unreadable directory, rename
@@ -445,7 +528,10 @@ the fixed manifest values. This comparison is repeated for each recovery point.
 
 ### D. Delete the synthetic account
 
-1. Revalidate the source identity and start exactly one isolated API process.
+1. Revalidate the source identity and start exactly one API process bound to
+   `127.0.0.1`. Its protected environment must be Test-only, must enable only the
+   account-deletion feature needed by the drill, and must keep Admin, AI Chat,
+   Knowledge augmentation, and the LLM Provider disabled.
 2. Authenticate as the synthetic User, acquire CSRF through the real Session flow,
    and call the account-deletion endpoint with the stable operation ID and test
    credential.
@@ -710,9 +796,11 @@ The first execution is accepted only when:
   recovery ready**.
 
 The tooling tests completed before that first execution do not satisfy this
-checklist. In particular, actual PostgreSQL 18.6 image startup, migrations inside
-the source container, `pg_dump`, `pg_restore --list`, both archive handoffs,
-account deletion, restore-writer observation/exit, restored-data validation, and
+checklist. A temporary isolated container has verified the real Docker-exec
+adapter and temporary Windows files have verified the stable-handle adapters, but
+actual two-instance PostgreSQL 18.6 startup, migrations inside the source
+container, `pg_dump`, `pg_restore --list`, both archive handoffs, account deletion,
+restore-writer/database reconciliation, restored-data validation, and full-run
 resource cleanup remain **Not verified** until the separately authorized drill.
 
 ## 12. Production readiness still open

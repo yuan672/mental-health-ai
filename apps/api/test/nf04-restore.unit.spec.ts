@@ -205,8 +205,10 @@ describe('NF-04 restore writer coordination', () => {
     expect(monitor.findCalls).toHaveLength(2);
     expect(port.calls[0]).toEqual({
       containerId: INPUT.restoreContainerId,
-      executable: 'pg_restore',
+      executable: '/bin/sh',
       args: expect.arrayContaining([
+        expect.stringContaining('pg_restore --version'),
+        'nf04-pg-restore',
         '--single-transaction',
         '--exit-on-error',
         '--no-owner',
@@ -217,6 +219,32 @@ describe('NF-04 restore writer coordination', () => {
         PGAPPNAME: INPUT.applicationName,
       },
     });
+  });
+
+  it('does not allocate or dispatch the restore writer until the fresh target guard completes', async () => {
+    const guard = deferred<void>();
+    const execution = new RestoreExecution([async () => ({ exitCode: 0 })]);
+    const port = new RestoreExecutionPort(execution);
+    const monitor = new RestoreMonitor([[], []]);
+    const pending = new Nf04RestoreCoordinator(
+      port,
+      monitor,
+      undefined,
+      () => guard.promise,
+    ).restore(INPUT);
+    await flushMicrotasks();
+    expect(port.calls).toHaveLength(0);
+    guard.resolve();
+    await expect(pending).resolves.toEqual({ status: 'completed', localPid: 7321 });
+    expect(port.calls).toHaveLength(1);
+
+    const rejectedPort = new RestoreExecutionPort(execution);
+    await expect(
+      new Nf04RestoreCoordinator(rejectedPort, new RestoreMonitor([[]]), undefined, async () => {
+        throw new Error('foreign session');
+      }).restore(INPUT),
+    ).resolves.toMatchObject({ status: 'quarantined', reason: expect.stringMatching(/preflight/) });
+    expect(rejectedPort.calls).toHaveLength(0);
   });
 
   it('stops and proves exact exec exit before accepting absence of a late backend', async () => {
