@@ -14,6 +14,14 @@ import {
   PerUserConsentLock,
 } from '../src/consents/runtime/per-user-consent-lock';
 import { env } from '../src/config/env';
+import type { PasswordHashVerifier } from '../src/auth/password-hasher.service';
+import type { SessionRecord } from '../src/users/users.repository';
+import {
+  AccountDeletionRepository,
+  type AccountDeletionConfirmation,
+} from '../src/account-deletion/account-deletion.repository';
+import { AccountDeletionService } from '../src/account-deletion/account-deletion.service';
+import { AccountDeletionResultUnknownError } from '../src/common/errors';
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const SESSION_ID = '22222222-2222-4222-8222-222222222222';
@@ -83,6 +91,8 @@ class TrackingContexts {
   createCalls = 0;
   dependencies = new Set<string>();
   throwOnClear = false;
+  throwOnClearUser = false;
+  clearUserCalls = 0;
 
   create(): never {
     this.createCalls += 1;
@@ -93,6 +103,13 @@ class TrackingContexts {
     this.cleared.push(acceptanceDecisionId);
     if (this.throwOnClear) throw new Error('synthetic_context_cleanup_failure');
     this.dependencies.delete(acceptanceDecisionId);
+    return 1;
+  }
+
+  clearUser(): number {
+    this.clearUserCalls += 1;
+    if (this.throwOnClearUser) throw new Error('synthetic_user_context_cleanup_failure');
+    this.dependencies.clear();
     return 1;
   }
 
@@ -511,5 +528,197 @@ describe('Consent runtime coordination', () => {
     release.resolve();
     await firstOperation;
     expect(lock.diagnostics()).toEqual({ users: 0, waiters: 0 });
+  });
+
+  it('keeps an unresolved account terminal fail closed for dispatch and context creation', async () => {
+    const execution = await boundExecution();
+    const attemptToken = 'synthetic-attempt-token';
+    const outcome = await coordinator.coordinateAccountTermination(
+      {
+        userId: USER_ID,
+        attemptToken,
+        signal: new AbortController().signal,
+        deadlineAt: new Date(Date.now() + 5_000),
+      },
+      () => Promise.resolve({ status: 'unknown', error: new Error('synthetic_unknown') }),
+    );
+    expect(outcome.status).toBe('unknown');
+    expect(execution.signal.aborted).toBe(true);
+    expect(contexts.clearUserCalls).toBe(1);
+    expect(coordinator.accountTerminationDiagnostics()).toEqual({ terminals: 1 });
+
+    const pending = coordinator.registerPending({
+      userId: USER_ID,
+      sessionId: SESSION_ID,
+      clientSignal: new AbortController().signal,
+    });
+    await expect(coordinator.bindRequired(pending)).rejects.toBeDefined();
+    pending.dispose();
+    await expect(
+      coordinator.createIncognitoContext({
+        userId: USER_ID,
+        sessionId: SESSION_ID,
+        sessionExpiresAt: new Date(Date.now() + 10_000),
+        signal: new AbortController().signal,
+        deadlineAt: new Date(Date.now() + 5_000),
+      }),
+    ).rejects.toBeDefined();
+
+    await expect(
+      coordinator.coordinateAccountTermination(
+        {
+          userId: USER_ID,
+          attemptToken,
+          signal: new AbortController().signal,
+          deadlineAt: new Date(Date.now() + 5_000),
+        },
+        () => Promise.resolve({ status: 'committed', value: undefined }),
+      ),
+    ).resolves.toEqual({ status: 'committed', value: undefined });
+    expect(coordinator.accountTerminationDiagnostics()).toEqual({ terminals: 0 });
+    execution.dispose();
+  });
+
+  it('aborts an already-dispatched transport and rejects late guarded work when account termination starts', async () => {
+    const execution = await boundExecution();
+    const transport = deferred<string>();
+    let transportSignal: AbortSignal | undefined;
+    const started = await coordinator.start(execution, 'generation', (signal) => {
+      transportSignal = signal;
+      return transport.promise;
+    });
+    expect(transportSignal?.aborted).toBe(false);
+
+    await expect(
+      coordinator.coordinateAccountTermination(
+        {
+          userId: USER_ID,
+          attemptToken: 'synthetic-dispatch-first-attempt',
+          signal: new AbortController().signal,
+          deadlineAt: new Date(Date.now() + 5_000),
+        },
+        () => Promise.resolve({ status: 'committed', value: undefined }),
+      ),
+    ).resolves.toEqual({ status: 'committed', value: undefined });
+
+    expect(transportSignal?.aborted).toBe(true);
+    let lateWrites = 0;
+    await expect(
+      coordinator.runWhileUsable(execution, async () => {
+        lateWrites += 1;
+      }),
+    ).rejects.toBeDefined();
+    expect(lateWrites).toBe(0);
+    expect(coordinator.accountTerminationDiagnostics()).toEqual({ terminals: 0 });
+    transport.resolve('synthetic-late-provider-response');
+    await expect(started.transport).resolves.toBe('synthetic-late-provider-response');
+    execution.dispose();
+  });
+
+  it('releases a confirmed rollback marker without reviving already-aborted work', async () => {
+    const original = await boundExecution();
+    await expect(
+      coordinator.coordinateAccountTermination(
+        {
+          userId: USER_ID,
+          attemptToken: 'synthetic-rolled-back-attempt',
+          signal: new AbortController().signal,
+          deadlineAt: new Date(Date.now() + 5_000),
+        },
+        () => Promise.resolve({ status: 'rolled_back', error: new Error('synthetic_rollback') }),
+      ),
+    ).resolves.toMatchObject({ status: 'rolled_back' });
+    expect(original.signal.aborted).toBe(true);
+    expect(coordinator.accountTerminationDiagnostics()).toEqual({ terminals: 0 });
+
+    const replacement = await boundExecution();
+    let dispatches = 0;
+    await expect(
+      coordinator.start(replacement, 'generation', () => {
+        dispatches += 1;
+        return 'synthetic-transport';
+      }),
+    ).resolves.toEqual({ transport: 'synthetic-transport' });
+    expect(dispatches).toBe(1);
+    original.dispose();
+    replacement.dispose();
+  });
+
+  it('retains the original account attempt when cleanup is unknown and a lock-waiting retry is cancelled', async () => {
+    let deleteCalls = 0;
+    const repository = {
+      findPasswordCredential: () => Promise.resolve({ passwordHash: 'synthetic-hash' }),
+      deleteAccount: async (input: Parameters<AccountDeletionRepository['deleteAccount']>[0]) => {
+        deleteCalls += 1;
+        input.assertMayStartMutation();
+        input.onRequiredAuditInserted();
+      },
+      confirmResult: (): Promise<AccountDeletionConfirmation> =>
+        Promise.resolve({ status: 'committed' }),
+    } as unknown as AccountDeletionRepository;
+    const verifier: PasswordHashVerifier = {
+      verify: () => Promise.resolve(true),
+    };
+    const service = new AccountDeletionService(repository, verifier, coordinator);
+    const session: SessionRecord = {
+      id: SESSION_ID,
+      userId: USER_ID,
+      expiresAt: new Date(Date.now() + 60_000),
+      revokedAt: null,
+    };
+    const operationId = '55555555-5555-4555-8555-555555555555';
+    const input = (signal: AbortSignal) => ({
+      session,
+      request: {
+        operationId,
+        currentPassword: 'Synthetic-Password-9!',
+        acknowledgeIrreversible: true as const,
+      },
+      signal,
+      deadlineAt: new Date(Date.now() + 5_000),
+    });
+
+    contexts.throwOnClearUser = true;
+    await expect(
+      service.deleteCurrentAccount(input(new AbortController().signal)),
+    ).rejects.toBeInstanceOf(AccountDeletionResultUnknownError);
+    expect(service.diagnostics()).toEqual({ unresolved: 1, users: 1 });
+    expect(coordinator.accountTerminationDiagnostics()).toEqual({ terminals: 1 });
+    expect(deleteCalls).toBe(0);
+
+    contexts.throwOnClearUser = false;
+    const held = deferred();
+    const release = deferred();
+    const holder = lock.runExclusive(
+      USER_ID,
+      new AbortController().signal,
+      new Date(Date.now() + 5_000),
+      async () => {
+        held.resolve(undefined);
+        await release.promise;
+      },
+    );
+    await held.promise;
+    const retryController = new AbortController();
+    const retry = service.deleteCurrentAccount(input(retryController.signal));
+    const waiterDeadline = Date.now() + 2_000;
+    while (lock.diagnostics().waiters === 0 && Date.now() < waiterDeadline) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    expect(lock.diagnostics().waiters).toBe(1);
+    retryController.abort(new Error('synthetic_retry_cancelled'));
+    await expect(retry).rejects.toThrow('synthetic_retry_cancelled');
+    release.resolve(undefined);
+    await holder;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(service.diagnostics()).toEqual({ unresolved: 1, users: 1 });
+    expect(coordinator.accountTerminationDiagnostics()).toEqual({ terminals: 1 });
+
+    await expect(
+      service.deleteCurrentAccount(input(new AbortController().signal)),
+    ).resolves.toBeUndefined();
+    expect(deleteCalls).toBe(1);
+    expect(service.diagnostics()).toEqual({ unresolved: 0, users: 0 });
+    expect(coordinator.accountTerminationDiagnostics()).toEqual({ terminals: 0 });
   });
 });

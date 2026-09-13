@@ -186,6 +186,30 @@ export class StaffAuthorizationChangedError extends AppError {
   }
 }
 
+export class AccountDeletionDisabledError extends AppError {
+  constructor(message = '账号删除在当前环境不可用') {
+    super(ERROR_CODES.ACCOUNT_DELETION_DISABLED, 503, message);
+  }
+}
+
+export class AccountDeletionOperationConflictError extends AppError {
+  constructor(message = '账号删除操作标识存在冲突') {
+    super(ERROR_CODES.ACCOUNT_DELETION_OPERATION_CONFLICT, 409, message);
+  }
+}
+
+export class AccountDeletionResultUnknownError extends AppError {
+  constructor(message = '账号删除结果暂时无法确认，请使用同一操作标识重试') {
+    super(ERROR_CODES.ACCOUNT_DELETION_RESULT_UNKNOWN, 503, message);
+  }
+}
+
+export class AccountDeletionInProgressError extends AppError {
+  constructor(message = '账号删除操作正在处理') {
+    super(ERROR_CODES.ACCOUNT_DELETION_IN_PROGRESS, 409, message);
+  }
+}
+
 export class DatabaseError extends AppError {
   constructor(message = '数据服务暂时不可用') {
     super(ERROR_CODES.DATABASE_ERROR, 500, message);

@@ -20,6 +20,7 @@ export const auditResourceTypeSchema = z.enum([
   'knowledge_article_version',
   'audit_log_query',
   'ai_turn_query',
+  'account_deletion',
 ]);
 export const auditActionSchema = z.enum([
   'conversation_deleted',
@@ -56,6 +57,7 @@ export const auditActionSchema = z.enum([
   'knowledge_version_withdrawn',
   'audit_log_accessed',
   'ai_quality_metadata_accessed',
+  'account_deleted',
 ]);
 
 export type AuditActorType = z.infer<typeof auditActorTypeSchema>;
@@ -177,6 +179,7 @@ const aiQualityMetadataAccessSchema = z
     returnedCount: z.number().int().nonnegative(),
   })
   .strict();
+const accountDeletedMetadataSchema = z.object({ initiator: z.literal('self_service') }).strict();
 
 export function parseAuditMetadata(
   action: AuditAction,
@@ -247,6 +250,9 @@ export function parseAuditMetadata(
   }
   if (action === 'ai_quality_metadata_accessed') {
     return aiQualityMetadataAccessSchema.parse(metadata);
+  }
+  if (action === 'account_deleted') {
+    return accountDeletedMetadataSchema.parse(metadata);
   }
   return emptyMetadataSchema.parse(metadata);
 }

@@ -227,21 +227,24 @@ controls.
   deployment, or production enablement.
 - ADR-022 accepts the NF-02 data-lifecycle and account-deletion architecture only
   for a Development/Test, controlled single-process local/demo backend. PR #38 is
-  the pending design delivery. No account-deletion API, schema, migration,
-  scheduler, production retention policy, crash/rolling-overlap protection, or
-  production recovery guarantee is delivered by the design.
+  the merged design delivery; PR #39 is the bounded implementation delivery and
+  adds the API and tests without a Schema/Migration or frontend change. Its final
+  acceptance evidence covers locked Session-time observation, actual Persistent and
+  Incognito orchestration on both sides of account termination, connected-request
+  timeout reporting after lifecycle admission, unresolved-terminal retry ownership,
+  and the corresponding real PostgreSQL/socket behavior. No scheduler, production
+  retention policy, crash/rolling-overlap protection, or production recovery
+  guarantee is delivered.
 
 ## Immediate Next Step
 
 Use `docs/backend-integration-handoff.md` as the backend capability and protocol
 index for the user-owned replacement frontend. Knowledge AI-B and every Admin UI
 remain pending client work; keep augmentation and Admin HTTP disabled by default,
-and retain the v2 reader plus v1 history guard. Merge the accepted NF-02 design only
-after its exact-head review and CI, then review the separately authorized local/demo
-backend implementation; account deletion does not exist yet. The three candidate
-articles remain unverified and
-unpublished, and production policy/content review and real-model evaluation remain
-separate work.
+and retain the v2 reader plus v1 history guard. Keep the bounded NF-02 account-
+deletion backend disabled by default and unavailable in Staging/Production. The
+three candidate articles remain unverified and unpublished, and production
+policy/content review and real-model evaluation remain separate work.
 
 ## Source of Truth
 

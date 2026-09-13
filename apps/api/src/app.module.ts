@@ -19,6 +19,7 @@ import { SecurityModule } from './security/security.module';
 import { safeOperationalPath } from './common/http/safe-request-path';
 import { AdminModule } from './admin/admin.module';
 import { HttpAbuseProtectionModule } from './http-abuse/http-abuse-protection.module';
+import { AccountDeletionModule } from './account-deletion/account-deletion.module';
 
 export const LOG_REDACT_PATHS = [
   'req.headers.authorization',
@@ -135,6 +136,7 @@ export function applicationLogProperties(request: IncomingMessage) {
     SecurityModule,
     HealthModule,
     AuthModule,
+    AccountDeletionModule,
     CapabilitiesModule,
     AiModule,
     ConversationAccessModule,

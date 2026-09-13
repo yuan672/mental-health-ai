@@ -55,6 +55,28 @@ describe('identity environment validation', () => {
   );
 
   it.each(['staging', 'production'] as const)(
+    'fails closed when account deletion is enabled in %s',
+    (appEnvironment) => {
+      expect(() =>
+        parseEnvironment({
+          ...baseEnvironment,
+          APP_ENV: appEnvironment,
+          AGE_VERIFICATION_PROVIDER: 'unconfigured',
+          ACCOUNT_DELETION_ENABLED: 'true',
+        }),
+      ).toThrow('Account deletion is restricted to development and test');
+      expect(
+        parseEnvironment({
+          ...baseEnvironment,
+          APP_ENV: appEnvironment,
+          AGE_VERIFICATION_PROVIDER: 'unconfigured',
+          ACCOUNT_DELETION_ENABLED: 'false',
+        }).ACCOUNT_DELETION_ENABLED,
+      ).toBe(false);
+    },
+  );
+
+  it.each(['staging', 'production'] as const)(
     'allows the API to start with registration unavailable in %s',
     (appEnvironment) => {
       expect(
