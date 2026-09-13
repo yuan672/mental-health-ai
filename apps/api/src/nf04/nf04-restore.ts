@@ -249,6 +249,7 @@ export class Nf04RestoreCoordinator {
     private readonly executionPort: Nf04ContainerExecutionPort,
     private readonly backendMonitor: Nf04RestoreBackendMonitor,
     private readonly clock: Nf04LifecycleClock = systemLifecycleClock,
+    private readonly preDispatchGuard?: (signal?: AbortSignal) => Promise<void>,
   ) {}
 
   async restore(input: {
@@ -286,6 +287,9 @@ export class Nf04RestoreCoordinator {
       );
       if (before.length !== 0) {
         return { status: 'quarantined', localPid: 0, reason: 'restore identity already in use' };
+      }
+      if (this.preDispatchGuard) {
+        await preflight.run((signal) => this.preDispatchGuard!(signal));
       }
     } catch {
       return {
@@ -357,8 +361,11 @@ export class Nf04RestoreCoordinator {
   }): Nf04ContainerExecSpec {
     return {
       containerId: input.restoreContainerId,
-      executable: 'pg_restore',
+      executable: '/bin/sh',
       args: [
+        '-c',
+        'test "$(pg_restore --version)" = "pg_restore (PostgreSQL) 18.6" && exec pg_restore "$@"',
+        'nf04-pg-restore',
         '-h',
         '/var/run/postgresql',
         '-p',

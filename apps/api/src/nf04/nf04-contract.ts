@@ -5,6 +5,7 @@ export const NF04_POSTGRES_IMAGE = 'postgres:18.6-alpine';
 export const NF04_ARTIFACT_ROOT_NAME = 'nf04-backup-restore';
 export const NF04_MANIFEST_VERSION = 1;
 export const NF04_TOTAL_ARCHIVE_LIMIT_BYTES = 512 * 1024 * 1024;
+export const NF04_MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024;
 
 const runIdSchema = z.string().regex(/^\d{8}-\d{6}-[a-f0-9]{8}$/);
 const safeResourceNameSchema = z.string().regex(/^[a-z0-9_-]+$/);
@@ -12,6 +13,15 @@ const absolutePathSchema = z.string().refine(isAbsolute, 'path must be absolute'
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const dockerObjectIdSchema = z.string().min(12).max(128);
 const positivePortSchema = z.number().int().min(1024).max(65_535);
+const migrationHashSchema = sha256Schema;
+
+export const nf04ContainerExecEvidenceSchema = z
+  .object({
+    containerId: dockerObjectIdSchema,
+    execId: dockerObjectIdSchema,
+    exitCode: z.number().int().nullable(),
+  })
+  .strict();
 
 export const nf04RunStateSchema = z.enum([
   'planned',
@@ -98,6 +108,15 @@ export const nf04ManifestSchema = z
     state: nf04RunStateSchema,
     repositoryRoot: absolutePathSchema,
     artifactRoot: absolutePathSchema,
+    archivesRoot: absolutePathSchema.optional(),
+    repository: z
+      .object({
+        commitSha: z.string().regex(/^[a-f0-9]{40}$/),
+        migrationHashes: z.array(migrationHashSchema).min(1),
+        migrationCreatedAt: z.array(z.number().int().nonnegative()).min(1),
+      })
+      .strict()
+      .optional(),
     image: z
       .object({
         reference: z.literal(NF04_POSTGRES_IMAGE),
@@ -121,6 +140,9 @@ export const nf04ManifestSchema = z
         fixtureSecrets: absolutePathSchema,
         sourcePgPass: absolutePathSchema,
         restorePgPass: absolutePathSchema,
+        sourceManagerPassword: absolutePathSchema.optional(),
+        restoreManagerPassword: absolutePathSchema.optional(),
+        executionSecrets: absolutePathSchema.optional(),
         isolatedApiEnvironment: absolutePathSchema,
       })
       .strict(),
@@ -132,9 +154,30 @@ export const nf04ManifestSchema = z
         restoreVolume: dockerVolumeEvidenceSchema.optional(),
         network: dockerNetworkEvidenceSchema.optional(),
         sourceDatabase: databaseEvidenceSchema.optional(),
+        sourceServerSystemIdentifier: z.string().regex(/^\d+$/).optional(),
         restoreServerSystemIdentifier: z.string().regex(/^\d+$/).optional(),
+        sourceControlDatabase: databaseEvidenceSchema.optional(),
+        restoreControlDatabase: databaseEvidenceSchema.optional(),
+        sourceRoleOid: z.number().int().positive().optional(),
+        restoreRoleOid: z.number().int().positive().optional(),
+        sourceSchemaSha256: sha256Schema.optional(),
         preRestoreDatabase: databaseEvidenceSchema.optional(),
         postRestoreDatabase: databaseEvidenceSchema.optional(),
+        executions: z
+          .object({
+            preDeleteArchive: nf04ContainerExecEvidenceSchema.optional(),
+            preDeleteArchiveList: nf04ContainerExecEvidenceSchema.optional(),
+            postDeleteArchive: nf04ContainerExecEvidenceSchema.optional(),
+            postDeleteArchiveList: nf04ContainerExecEvidenceSchema.optional(),
+            preDeleteRestore: nf04ContainerExecEvidenceSchema.optional(),
+            postDeleteRestore: nf04ContainerExecEvidenceSchema.optional(),
+            sourceToolVersion: nf04ContainerExecEvidenceSchema.optional(),
+            restoreToolVersion: nf04ContainerExecEvidenceSchema.optional(),
+            preDeleteRestoreList: nf04ContainerExecEvidenceSchema.optional(),
+            postDeleteRestoreList: nf04ContainerExecEvidenceSchema.optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict(),
     archives: z
@@ -159,6 +202,38 @@ export const nf04ManifestSchema = z
 
 export type Nf04Manifest = z.infer<typeof nf04ManifestSchema>;
 
+/**
+ * The original manifest remains readable by the validation/fixture commands.
+ * Full execution is narrower: it requires the commit, migration history,
+ * archive-only mount and every protected credential path introduced by the
+ * real adapter batch.
+ */
+export const nf04ExecutableManifestSchema = nf04ManifestSchema.refine(
+  (
+    manifest,
+  ): manifest is Nf04Manifest & {
+    archivesRoot: string;
+    repository: { commitSha: string; migrationHashes: string[]; migrationCreatedAt: number[] };
+    files: Nf04Manifest['files'] & {
+      sourceManagerPassword: string;
+      restoreManagerPassword: string;
+      executionSecrets: string;
+    };
+  } =>
+    Boolean(
+      manifest.archivesRoot &&
+      manifest.repository &&
+      manifest.repository.migrationHashes.length ===
+        manifest.repository.migrationCreatedAt.length &&
+      manifest.files.sourceManagerPassword &&
+      manifest.files.restoreManagerPassword &&
+      manifest.files.executionSecrets,
+    ),
+  'NF-04 full execution manifest fields are incomplete',
+);
+
+export type Nf04ExecutableManifest = z.infer<typeof nf04ExecutableManifestSchema>;
+
 export const nf04FixtureSecretsSchema = z
   .object({
     databaseUrl: z
@@ -181,6 +256,32 @@ export const nf04FixtureSecretsSchema = z
 
 export type Nf04FixtureSecrets = z.infer<typeof nf04FixtureSecretsSchema>;
 
+export const nf04ExecutionSecretsSchema = z
+  .object({
+    sourceRolePassword: z.string().min(24).max(128).startsWith('Synthetic-'),
+    restoreRolePassword: z.string().min(24).max(128).startsWith('Synthetic-'),
+  })
+  .strict();
+
+export type Nf04ExecutionSecrets = z.infer<typeof nf04ExecutionSecretsSchema>;
+
+export const nf04PreparationRequestSchema = z
+  .object({
+    runId: runIdSchema,
+    sourceDatabasePort: positivePortSchema,
+    restoreDatabasePort: positivePortSchema,
+    isolatedApiPort: positivePortSchema,
+  })
+  .strict()
+  .refine(
+    (request) =>
+      new Set([request.sourceDatabasePort, request.restoreDatabasePort, request.isolatedApiPort])
+        .size === 3,
+    'NF-04 preparation ports must be distinct',
+  );
+
+export type Nf04PreparationRequest = z.infer<typeof nf04PreparationRequestSchema>;
+
 export type Nf04ExpectedNames = Readonly<{
   sourceContainer: string;
   restoreContainer: string;
@@ -194,6 +295,8 @@ export type Nf04ExpectedNames = Readonly<{
   postRestoreDatabase: string;
   sourceRole: string;
   restoreRole: string;
+  sourceManagerRole: string;
+  restoreManagerRole: string;
 }>;
 
 export function deriveNf04ExpectedNames(runId: string): Nf04ExpectedNames {
@@ -212,6 +315,8 @@ export function deriveNf04ExpectedNames(runId: string): Nf04ExpectedNames {
     postRestoreDatabase: `mh_nf04_${token}_post_restore_test`,
     sourceRole: `mh_nf04_${token}_source_role`,
     restoreRole: `mh_nf04_${token}_restore_role`,
+    sourceManagerRole: `mh_nf04_${token}_source_manager`,
+    restoreManagerRole: `mh_nf04_${token}_restore_manager`,
   };
 }
 

@@ -10,6 +10,7 @@ const journalSchema = z
         .object({
           idx: z.number().int().nonnegative(),
           tag: z.string().regex(/^\d{4}_[a-z0-9_]+$/),
+          when: z.number().int().nonnegative(),
         })
         .passthrough(),
     ),
@@ -17,13 +18,25 @@ const journalSchema = z
   .passthrough();
 
 export async function readNf04MigrationHashes(migrationsRoot: string): Promise<readonly string[]> {
+  return (await readNf04MigrationEvidence(migrationsRoot)).map((entry) => entry.hash);
+}
+
+export type Nf04MigrationEvidence = Readonly<{ hash: string; createdAt: number }>;
+
+export async function readNf04MigrationEvidence(
+  migrationsRoot: string,
+): Promise<readonly Nf04MigrationEvidence[]> {
   const journal = journalSchema.parse(
     JSON.parse(await readFile(join(migrationsRoot, 'meta', '_journal.json'), 'utf8')),
   );
-  const hashes: string[] = [];
-  for (const entry of journal.entries) {
+  const evidence: Nf04MigrationEvidence[] = [];
+  for (const [position, entry] of journal.entries.entries()) {
+    if (entry.idx !== position) throw new Error('NF-04 migration journal order is invalid');
     const migrationSql = await readFile(join(migrationsRoot, `${entry.tag}.sql`), 'utf8');
-    hashes.push(createHash('sha256').update(migrationSql).digest('hex'));
+    evidence.push({
+      hash: createHash('sha256').update(migrationSql).digest('hex'),
+      createdAt: entry.when,
+    });
   }
-  return hashes;
+  return evidence;
 }

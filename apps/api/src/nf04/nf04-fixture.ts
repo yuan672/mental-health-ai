@@ -138,7 +138,7 @@ export async function validateNf04Fixture(pool: Pool): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN READ ONLY');
-    await verifyNf04Fixture(client);
+    await validateNf04FixtureInTransaction(client);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
@@ -147,6 +147,10 @@ export async function validateNf04Fixture(pool: Pool): Promise<void> {
   } finally {
     client.release();
   }
+}
+
+export async function validateNf04FixtureInTransaction(client: PoolClient): Promise<void> {
+  await verifyNf04Fixture(client);
 }
 
 async function readFixtureFootprint(client: PoolClient): Promise<number> {

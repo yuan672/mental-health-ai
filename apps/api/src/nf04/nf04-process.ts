@@ -4,6 +4,8 @@ export type Nf04ProcessSpec = Readonly<{
   executable: string;
   args: readonly string[];
   environment?: Readonly<Record<string, string>>;
+  environmentMode?: 'inherit' | 'replace';
+  workingDirectory?: string;
   sensitiveStdin?: string;
   timeoutMs: number;
   signal?: AbortSignal;
@@ -48,7 +50,11 @@ export class NodeNf04ProcessRunner implements Nf04ProcessRunner {
     if (spec.signal?.aborted) throw new Nf04ProcessError('Process was cancelled before launch');
 
     const child = spawn(spec.executable, [...spec.args], {
-      env: { ...process.env, ...spec.environment },
+      env:
+        spec.environmentMode === 'replace'
+          ? { ...spec.environment }
+          : { ...process.env, ...spec.environment },
+      ...(spec.workingDirectory ? { cwd: spec.workingDirectory } : {}),
       shell: false,
       stdio: 'pipe',
       windowsHide: true,

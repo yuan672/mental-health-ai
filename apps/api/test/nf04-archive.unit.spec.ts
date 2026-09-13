@@ -38,10 +38,12 @@ import type {
 class ArchiveRunner implements Nf04ProcessRunner, Nf04ContainerExecutionPort {
   readonly calls: Nf04ProcessSpec[] = [];
   readonly writerCalls: Nf04ContainerExecSpec[] = [];
+  stopCalls = 0;
 
   constructor(
     private readonly artifactRoot: string,
     private readonly archiveBytes = Buffer.from('synthetic-custom-archive'),
+    private readonly onListStart?: () => void | Promise<void>,
   ) {}
 
   async run(spec: Nf04ProcessSpec): Promise<Nf04ProcessResult> {
@@ -57,15 +59,29 @@ class ArchiveRunner implements Nf04ProcessRunner, Nf04ContainerExecutionPort {
     this.writerCalls.push(spec);
     const output = spec.args.at(-1);
     if (!output) throw new Error('missing output');
+    const isListing = spec.args.includes('--list');
     return {
-      identity: { containerId: spec.containerId, execId: 'exact-dump-exec-id' },
+      identity: {
+        containerId: spec.containerId,
+        execId: isListing ? 'exact-list-exec-id' : 'exact-dump-exec-id',
+      },
       localPid: 4101,
       start: async (signal) => {
         signal?.throwIfAborted();
-        await writeFile(join(this.artifactRoot, output.split('/').at(-1)!), this.archiveBytes);
+        if (isListing) {
+          await this.onListStart?.();
+        } else {
+          await writeFile(join(this.artifactRoot, output.split('/').at(-1)!), this.archiveBytes);
+        }
       },
-      stop: async () => undefined,
-      waitForExit: async () => successfulExit(),
+      stop: async (signal) => {
+        signal?.throwIfAborted();
+        this.stopCalls += 1;
+      },
+      waitForExit: async (signal) => {
+        signal?.throwIfAborted();
+        return successfulExit();
+      },
     };
   }
 }
@@ -235,16 +251,29 @@ describe('NF-04 archive handoff', () => {
     expect(runner.writerCalls[0]).toEqual(
       expect.objectContaining({
         containerId: 'exact-container-id',
-        executable: 'pg_dump',
+        executable: '/bin/sh',
+        args: expect.arrayContaining([
+          expect.stringContaining('pg_dump --version'),
+          'nf04-pg-dump',
+          '--no-owner',
+        ]),
         environment: { PGPASSFILE: '/run/secrets/source.pgpass' },
       }),
     );
     expect(runner.writerCalls[0]?.args).toEqual(
       expect.arrayContaining(['-Fc', '--no-owner', '--no-privileges', '--lock-wait-timeout=5s']),
     );
-    expect(runner.calls[0]?.executable).toBe('docker');
-    expect(runner.calls[0]?.args).toEqual(
-      expect.arrayContaining(['pg_restore', '--list', '/nf04-output/.pre-delete.dump.partial']),
+    expect(runner.calls).toHaveLength(0);
+    expect(runner.writerCalls[1]).toEqual(
+      expect.objectContaining({
+        containerId: 'exact-container-id',
+        executable: '/bin/sh',
+        args: expect.arrayContaining([
+          expect.stringContaining('pg_restore --version'),
+          '--list',
+          '/nf04-output/.pre-delete.dump.partial',
+        ]),
+      }),
     );
     expect(await readFile(join(root, 'pre-delete.dump'), 'utf8')).toBe('synthetic-custom-archive');
     await expect(
@@ -351,7 +380,10 @@ describe('NF-04 archive handoff', () => {
 
     expect(runner.stopCalls).toBe(1);
     expect(runner.writerCalls).toHaveLength(1);
-    expect(runner.writerCalls[0]?.executable).toBe('pg_dump');
+    expect(runner.writerCalls[0]?.executable).toBe('/bin/sh');
+    expect(runner.writerCalls[0]?.args).toContainEqual(
+      expect.stringContaining('pg_dump --version'),
+    );
     expect(runner.calls).toHaveLength(0);
     expect((await stat(join(root, '.pre-delete.dump.partial'))).size).toBe(
       NF04_TOTAL_ARCHIVE_LIMIT_BYTES + 1,
@@ -458,11 +490,8 @@ describe('NF-04 archive handoff', () => {
 
   it('does not publish when cancellation arrives while the archive listing is in flight', async () => {
     const controller = new AbortController();
-    const runner = new ArchiveRunner(root);
-    const originalRun = runner.run.bind(runner);
-    jest.spyOn(runner, 'run').mockImplementationOnce(async (spec) => {
+    const runner = new ArchiveRunner(root, undefined, () => {
       controller.abort();
-      return originalRun(spec);
     });
     const manager = new Nf04ArchiveManager(runner, runner, publicationPort);
 
@@ -485,14 +514,12 @@ describe('NF-04 archive handoff', () => {
     expect(await readFile(join(root, '.pre-delete.dump.partial'), 'utf8')).toBe(
       'synthetic-custom-archive',
     );
+    expect(runner.stopCalls).toBe(1);
   });
 
   it('does not publish when the archive content changes during listing', async () => {
-    const runner = new ArchiveRunner(root);
-    const originalRun = runner.run.bind(runner);
-    jest.spyOn(runner, 'run').mockImplementationOnce(async (spec) => {
+    const runner = new ArchiveRunner(root, undefined, async () => {
       await writeFile(join(root, '.pre-delete.dump.partial'), 'changed-after-listing-start');
-      return originalRun(spec);
     });
     const manager = new Nf04ArchiveManager(runner, runner, publicationPort);
 
@@ -515,12 +542,9 @@ describe('NF-04 archive handoff', () => {
 
   it('rejects publication when the verified artifact directory is replaced during listing', async () => {
     const movedRoot = `${root}-replaced`;
-    const runner = new ArchiveRunner(root);
-    const originalRun = runner.run.bind(runner);
-    jest.spyOn(runner, 'run').mockImplementationOnce(async (spec) => {
+    const runner = new ArchiveRunner(root, undefined, async () => {
       await rename(root, movedRoot);
       await mkdir(root);
-      return originalRun(spec);
     });
     const manager = new Nf04ArchiveManager(runner, runner, publicationPort);
 

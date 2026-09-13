@@ -11,11 +11,11 @@ import type {
 import { NF04_TOTAL_ARCHIVE_LIMIT_BYTES } from './nf04-contract';
 import {
   assertNf04PathOwnedByRoot,
+  assertNf04TrustedArchiveRoot,
   assertNf04TrustedArtifactRoot,
   type Nf04FilesystemIdentity,
   type Nf04PathOwnershipSnapshot,
 } from './nf04-guards';
-import type { Nf04ProcessRunner } from './nf04-process';
 
 export type Nf04ArchiveKind = 'pre-delete' | 'post-delete';
 
@@ -183,8 +183,8 @@ export class PollingNf04ArchiveWriterMonitor implements Nf04ArchiveWriterMonitor
 
 export class Nf04ArchiveManager {
   constructor(
-    private readonly listingRunner: Nf04ProcessRunner,
-    private readonly executionPort: Nf04ContainerExecutionPort,
+    private readonly writerExecutionPort: Nf04ContainerExecutionPort,
+    private readonly listingExecutionPort: Nf04ContainerExecutionPort,
     private readonly publicationPort: Nf04ArchivePublicationPort,
     private readonly now: () => Date = () => new Date(),
     private readonly writerMonitor: Nf04ArchiveWriterMonitor = new PollingNf04ArchiveWriterMonitor(),
@@ -194,6 +194,7 @@ export class Nf04ArchiveManager {
     kind: Nf04ArchiveKind;
     repositoryRoot: string;
     artifactRoot: string;
+    runArtifactRoot?: string;
     runId: string;
     sourceContainerId: string;
     sourceRole: string;
@@ -203,7 +204,14 @@ export class Nf04ArchiveManager {
     priorArchive?: Nf04ArchiveEvidence;
     signal?: AbortSignal;
   }): Promise<Nf04ArchiveEvidence> {
-    const trustedRootIdentity = await assertNf04TrustedArtifactRoot(input);
+    const trustedRootIdentity = input.runArtifactRoot
+      ? await assertNf04TrustedArchiveRoot({
+          repositoryRoot: input.repositoryRoot,
+          artifactRoot: input.runArtifactRoot,
+          archivesRoot: input.artifactRoot,
+          runId: input.runId,
+        })
+      : await assertNf04TrustedArtifactRoot(input);
     const finalName = `${input.kind}.dump` as const;
     const partialName = `.${finalName}.partial`;
     const partialPath = join(input.artifactRoot, partialName);
@@ -231,12 +239,15 @@ export class Nf04ArchiveManager {
     const operationDeadline = createDeadline(input.timeoutMs, input.signal);
     let execution: Nf04ContainerExecution;
     try {
-      execution = await this.executionPort.create(
+      execution = await this.writerExecutionPort.create(
         {
           containerId: input.sourceContainerId,
-          executable: 'pg_dump',
+          executable: '/bin/sh',
           environment: { PGPASSFILE: input.pgPassContainerPath },
           args: [
+            '-c',
+            'test "$(pg_dump --version)" = "pg_dump (PostgreSQL) 18.6" && exec pg_dump "$@"',
+            'nf04-pg-dump',
             '-h',
             '/var/run/postgresql',
             '-p',
@@ -293,29 +304,20 @@ export class Nf04ArchiveManager {
       assertStableArchiveBoundary(initialPartialBoundary, publishPartial);
       const listedDigest = partial.sha256;
       throwIfArchiveOperationStopped(operationDeadline);
-      assertTrustedRootIdentity(initialPartialBoundary, await assertNf04TrustedArtifactRoot(input));
+      assertTrustedRootIdentity(
+        initialPartialBoundary,
+        await readTrustedArchiveRootIdentity(input),
+      );
       assertStableArchiveBoundary(
         initialFinalBoundary,
         await assertNf04PathOwnedByRoot(input.artifactRoot, finalPath, 'absent'),
       );
       throwIfArchiveOperationStopped(operationDeadline);
-      const listing = await this.listingRunner.run({
-        executable: 'docker',
-        args: [
-          'exec',
-          '-e',
-          `PGPASSFILE=${input.pgPassContainerPath}`,
-          input.sourceContainerId,
-          'pg_restore',
-          '--list',
-          `/nf04-output/${partialName}`,
-        ],
-        timeoutMs: input.timeoutMs,
-        signal: operationDeadline.signal,
-      });
-      if (listing.timedOut || listing.exitCode !== 0) {
-        throw new Nf04ArchiveError('Partial archive table of contents is unreadable');
-      }
+      await this.validateTableOfContents(
+        input.sourceContainerId,
+        `/nf04-output/${partialName}`,
+        operationDeadline,
+      );
 
       const listed = await readStableArchive(input.artifactRoot, partialPath);
       const listedPartial = listed.boundary;
@@ -331,7 +333,10 @@ export class Nf04ArchiveManager {
 
       // The injected publication port must provide same-directory, no-clobber
       // publication while bound to the captured root/parent/file identities.
-      assertTrustedRootIdentity(initialPartialBoundary, await assertNf04TrustedArtifactRoot(input));
+      assertTrustedRootIdentity(
+        initialPartialBoundary,
+        await readTrustedArchiveRootIdentity(input),
+      );
       const stablePartial = await assertNf04PathOwnedByRoot(
         input.artifactRoot,
         partialPath,
@@ -377,7 +382,7 @@ export class Nf04ArchiveManager {
       assertStableArchiveBoundary(initialFinalBoundary, stablePublished);
       assertSameArchiveFile(published, stablePublished, 'Published archive changed after handoff');
       throwIfArchiveOperationStopped(operationDeadline);
-      assertTrustedRootIdentity(initialFinalBoundary, await assertNf04TrustedArtifactRoot(input));
+      assertTrustedRootIdentity(initialFinalBoundary, await readTrustedArchiveRootIdentity(input));
       throwIfArchiveOperationStopped(operationDeadline);
       const final = await readStableArchive(input.artifactRoot, finalPath);
       if (final.sha256 !== listedDigest || final.byteSize !== partial.byteSize) {
@@ -400,14 +405,70 @@ export class Nf04ArchiveManager {
     }
   }
 
+  private async validateTableOfContents(
+    containerId: string,
+    archivePath: string,
+    operationDeadline: ReturnType<typeof createDeadline>,
+  ): Promise<void> {
+    let execution: Nf04ContainerExecution;
+    try {
+      execution = await this.listingExecutionPort.create(
+        {
+          containerId,
+          executable: '/bin/sh',
+          args: [
+            '-c',
+            'test "$(pg_restore --version)" = "pg_restore (PostgreSQL) 18.6" && exec pg_restore "$@" >/dev/null',
+            'nf04-pg-restore-list',
+            '--list',
+            archivePath,
+          ],
+        },
+        operationDeadline.signal,
+      );
+    } catch {
+      throwIfArchiveOperationStopped(operationDeadline);
+      throw new Nf04ArchiveError('Partial archive table-of-contents exec could not be allocated');
+    }
+    const identity = execution.identity;
+    assertExactExecutionIdentity(execution, identity, containerId);
+    try {
+      await execution.start(operationDeadline.signal);
+      assertExactExecutionIdentity(execution, identity, containerId);
+      const result = await execution.waitForExit(operationDeadline.signal);
+      assertExactExecutionIdentity(execution, identity, containerId);
+      if (result.exitCode !== 0) {
+        throw new Nf04ArchiveError('Partial archive table of contents is unreadable');
+      }
+    } catch (error) {
+      if (error instanceof Nf04ArchiveError) throw error;
+      const reconciliation = createDeadline(5_000);
+      try {
+        await execution.stop(reconciliation.signal);
+        assertExactExecutionIdentity(execution, identity, containerId);
+        await execution.waitForExit(reconciliation.signal);
+        assertExactExecutionIdentity(execution, identity, containerId);
+      } catch {
+        throw new Nf04ArchiveError(
+          'Partial archive table-of-contents exec exit could not be confirmed',
+        );
+      } finally {
+        reconciliation.dispose();
+      }
+      throwIfArchiveOperationStopped(operationDeadline);
+      throw new Nf04ArchiveError('Partial archive table-of-contents validation was interrupted');
+    }
+  }
+
   async verify(input: {
     repositoryRoot: string;
     artifactRoot: string;
+    runArtifactRoot?: string;
     runId: string;
     evidence: Pick<Nf04ArchiveEvidence, 'fileName' | 'byteSize' | 'sha256'>;
   }): Promise<void> {
     const { artifactRoot, evidence } = input;
-    const trustedRootIdentity = await assertNf04TrustedArtifactRoot(input);
+    const trustedRootIdentity = await readTrustedArchiveRootIdentity(input);
     if (basename(evidence.fileName) !== evidence.fileName) {
       throw new Nf04ArchiveError('Archive evidence contains a non-canonical file name');
     }
@@ -421,7 +482,7 @@ export class Nf04ArchiveManager {
     if (actual.sha256 !== evidence.sha256) {
       throw new Nf04ArchiveError('Archive digest does not match fixed evidence');
     }
-    assertTrustedRootIdentity(verified, await assertNf04TrustedArtifactRoot(input));
+    assertTrustedRootIdentity(verified, await readTrustedArchiveRootIdentity(input));
     const stable = await readStableArchive(artifactRoot, archivePath);
     assertStableArchiveBoundary(verified, stable.boundary);
     assertSameArchiveFile(
@@ -438,6 +499,7 @@ export class Nf04ArchiveManager {
     kind: Nf04ArchiveKind;
     repositoryRoot: string;
     artifactRoot: string;
+    runArtifactRoot?: string;
     runId: string;
     priorArchive?: Nf04ArchiveEvidence;
   }): Promise<number> {
@@ -453,11 +515,28 @@ export class Nf04ArchiveManager {
     await this.verify({
       repositoryRoot: input.repositoryRoot,
       artifactRoot: input.artifactRoot,
+      ...(input.runArtifactRoot ? { runArtifactRoot: input.runArtifactRoot } : {}),
       runId: input.runId,
       evidence: input.priorArchive,
     });
     return input.priorArchive.byteSize;
   }
+}
+
+function readTrustedArchiveRootIdentity(input: {
+  repositoryRoot: string;
+  artifactRoot: string;
+  runArtifactRoot?: string;
+  runId: string;
+}): Promise<Nf04FilesystemIdentity> {
+  return input.runArtifactRoot
+    ? assertNf04TrustedArchiveRoot({
+        repositoryRoot: input.repositoryRoot,
+        artifactRoot: input.runArtifactRoot,
+        archivesRoot: input.artifactRoot,
+        runId: input.runId,
+      })
+    : assertNf04TrustedArtifactRoot(input);
 }
 
 export async function assertNf04ArchivePathAbsent(

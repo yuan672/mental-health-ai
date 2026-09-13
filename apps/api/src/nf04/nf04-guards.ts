@@ -1,6 +1,6 @@
 import { constants, type BigIntStats } from 'node:fs';
 import { lstat, open, realpath } from 'node:fs/promises';
-import { basename, dirname, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import type { Pool } from '@mental-health/database';
 import {
   deriveNf04ExpectedNames,
@@ -74,9 +74,20 @@ export function assertNf04ManifestBoundary(manifest: Nf04Manifest): void {
   ) {
     throw new Nf04GuardError('NF-04 artifacts and secrets must remain outside the repository');
   }
-  for (const secretPath of Object.values(manifest.files)) {
-    if (!isPathWithin(canonicalArtifactRoot, secretPath)) {
-      throw new Nf04GuardError('Every secret path must remain inside the exact run artifact root');
+  if (manifest.archivesRoot) {
+    const exactArchivesRoot = resolve(canonicalArtifactRoot, 'archives');
+    if (resolve(manifest.archivesRoot) !== exactArchivesRoot) {
+      throw new Nf04GuardError('Archive root must be the exact archives child of this run');
+    }
+  }
+  const exactSecretsRoot = manifest.archivesRoot
+    ? resolve(canonicalArtifactRoot, 'secrets')
+    : canonicalArtifactRoot;
+  for (const secretPath of Object.values(manifest.files).filter(
+    (value): value is string => typeof value === 'string',
+  )) {
+    if (!isPathWithin(exactSecretsRoot, secretPath)) {
+      throw new Nf04GuardError('Every secret path must remain inside the exact run secrets root');
     }
   }
 
@@ -240,6 +251,55 @@ export async function assertNf04TrustedArtifactRoot(input: {
   return toFilesystemIdentity(artifactStats);
 }
 
+export async function assertNf04TrustedArchiveRoot(input: {
+  repositoryRoot: string;
+  artifactRoot: string;
+  archivesRoot: string;
+  runId: string;
+}): Promise<Nf04FilesystemIdentity> {
+  await assertNf04TrustedArtifactRoot({
+    repositoryRoot: input.repositoryRoot,
+    artifactRoot: input.artifactRoot,
+    runId: input.runId,
+  });
+  const runRoot = resolve(input.artifactRoot);
+  const archivesRoot = resolve(input.archivesRoot);
+  if (archivesRoot !== resolve(runRoot, 'archives')) {
+    throw new Nf04GuardError('NF-04 archive root is not the exact run archives directory');
+  }
+  const [runStats, runRealPath, archiveStats, archiveRealPath] = await Promise.all([
+    lstat(runRoot, { bigint: true }),
+    realpath(runRoot),
+    lstat(archivesRoot, { bigint: true }),
+    realpath(archivesRoot),
+  ]);
+  if (
+    !runStats.isDirectory() ||
+    runStats.isSymbolicLink() ||
+    !archiveStats.isDirectory() ||
+    archiveStats.isSymbolicLink() ||
+    !isPathWithin(runRealPath, archiveRealPath)
+  ) {
+    throw new Nf04GuardError('NF-04 archives directory is not a real child of the run root');
+  }
+  const [stableRunStats, stableRunRealPath, stableArchiveStats, stableArchiveRealPath] =
+    await Promise.all([
+      lstat(runRoot, { bigint: true }),
+      realpath(runRoot),
+      lstat(archivesRoot, { bigint: true }),
+      realpath(archivesRoot),
+    ]);
+  if (
+    !hasSameFilesystemIdentity(runStats, stableRunStats) ||
+    runRealPath !== stableRunRealPath ||
+    !hasSameFilesystemIdentity(archiveStats, stableArchiveStats) ||
+    archiveRealPath !== stableArchiveRealPath
+  ) {
+    throw new Nf04GuardError('NF-04 archive root changed during validation');
+  }
+  return toFilesystemIdentity(archiveStats);
+}
+
 export async function readNf04ProtectedFile(input: Nf04ProtectedFileInput): Promise<string> {
   const boundary = await assertNf04PathOwnedByRoot(input.artifactRoot, input.candidatePath, 'file');
   const repositoryRealPath = await realpath(resolve(input.repositoryRoot));
@@ -371,7 +431,12 @@ export function assertNf04ContainerEvidence(
   if (!dataMount || !artifactMount) {
     throw new Nf04GuardError(`Observed ${role} mounts do not match the run topology`);
   }
-  if (!dataMount.readWrite || resolve(artifactMount.source) !== resolve(manifest.artifactRoot)) {
+  const expectedArchiveMountSource = resolve(manifest.archivesRoot ?? manifest.artifactRoot);
+  if (
+    !dataMount.readWrite ||
+    (manifest.archivesRoot && dataMount.destination !== '/var/lib/postgresql') ||
+    resolve(artifactMount.source) !== expectedArchiveMountSource
+  ) {
     throw new Nf04GuardError(`Observed ${role} mount access or source path is invalid`);
   }
   if (
@@ -386,9 +451,66 @@ export function assertNf04ContainerEvidence(
   ) {
     throw new Nf04GuardError('Restore artifact mount must be read-only at /nf04-input');
   }
+  if (manifest.archivesRoot) {
+    assertExecutableSecretMounts(manifest, role, container.mounts);
+  }
 }
 
-export async function readNf04DatabaseIdentity(pool: Pool): Promise<Nf04DatabaseIdentity> {
+function assertExecutableSecretMounts(
+  manifest: Nf04Manifest,
+  role: 'source' | 'restore',
+  mounts: NonNullable<Nf04Manifest['observed']['sourceContainer']>['mounts'],
+): void {
+  const pgPass = role === 'source' ? manifest.files.sourcePgPass : manifest.files.restorePgPass;
+  const managerPassword =
+    role === 'source'
+      ? manifest.files.sourceManagerPassword
+      : manifest.files.restoreManagerPassword;
+  if (!managerPassword) {
+    throw new Nf04GuardError(`Observed ${role} manager secret evidence is incomplete`);
+  }
+  const expected = new Map<string, string>([
+    [
+      resolve(pgPass),
+      role === 'source' ? '/run/secrets/nf04-source.pgpass' : '/run/secrets/nf04-restore.pgpass',
+    ],
+    [resolve(managerPassword), '/run/secrets/nf04-manager-password'],
+  ]);
+  const secretMounts = mounts.filter(
+    (mount) => mount.type === 'bind' && mount.destination.startsWith('/run/secrets/'),
+  );
+  if (
+    secretMounts.length !== expected.size ||
+    secretMounts.some(
+      (mount) => mount.readWrite || expected.get(resolve(mount.source)) !== mount.destination,
+    )
+  ) {
+    throw new Nf04GuardError(`Observed ${role} secret mounts do not match the exact run files`);
+  }
+  const secretsRoot = resolve(manifest.artifactRoot, 'secrets');
+  for (const source of expected.keys()) {
+    if (!isPathWithin(secretsRoot, source)) {
+      throw new Nf04GuardError(`Observed ${role} secret mount escapes the exact run secrets root`);
+    }
+  }
+  const unexpectedRunBind = mounts.find(
+    (mount) =>
+      mount.type === 'bind' &&
+      isPathWithin(resolve(manifest.artifactRoot), resolve(mount.source)) &&
+      resolve(mount.source) !== resolve(manifest.archivesRoot!) &&
+      !expected.has(resolve(mount.source)),
+  );
+  if (unexpectedRunBind) {
+    throw new Nf04GuardError(`Observed ${role} container exposes an unexpected run-local path`);
+  }
+  if (resolve(join(manifest.artifactRoot, 'archives')) !== resolve(manifest.archivesRoot!)) {
+    throw new Nf04GuardError('Observed archive mount source is not the exact archives directory');
+  }
+}
+
+export async function readNf04DatabaseIdentity(
+  pool: Pick<Pool, 'query'>,
+): Promise<Nf04DatabaseIdentity> {
   const result = await pool.query<{
     database_name: string;
     database_oid: number;
