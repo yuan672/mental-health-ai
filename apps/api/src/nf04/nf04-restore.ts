@@ -1,4 +1,4 @@
-import type { Pool } from '@mental-health/database';
+import type { Pool, PoolClient, QueryResult } from '@mental-health/database';
 import type {
   Nf04ContainerExecIdentity,
   Nf04ContainerExecSpec,
@@ -35,7 +35,11 @@ export interface Nf04RestoreBackendMonitor {
     applicationName: string;
     signal?: AbortSignal;
   }): Promise<readonly Nf04RestoreBackendIdentity[]>;
-  cancel(identity: Nf04RestoreBackendIdentity, signal?: AbortSignal): Promise<boolean>;
+  cancel(
+    identity: Nf04RestoreBackendIdentity,
+    signal?: AbortSignal,
+    timeoutMs?: number,
+  ): Promise<boolean>;
   terminate(
     identity: Nf04RestoreBackendIdentity,
     timeoutMs: number,
@@ -55,7 +59,7 @@ export class PostgresNf04RestoreBackendMonitor implements Nf04RestoreBackendMoni
     }>,
     private readonly waitTimeoutMs = 10_000,
     private readonly pollIntervalMs = 50,
-    private readonly now: () => number = () => Date.now(),
+    private readonly now: () => number = () => performance.now(),
     private readonly wait: (
       milliseconds: number,
       signal?: AbortSignal,
@@ -111,8 +115,12 @@ export class PostgresNf04RestoreBackendMonitor implements Nf04RestoreBackendMoni
     }));
   }
 
-  async cancel(identity: Nf04RestoreBackendIdentity, signal?: AbortSignal): Promise<boolean> {
-    return this.signalBackend('cancel', identity, 0, signal);
+  async cancel(
+    identity: Nf04RestoreBackendIdentity,
+    signal?: AbortSignal,
+    timeoutMs = this.waitTimeoutMs,
+  ): Promise<boolean> {
+    return this.signalBackend('cancel', identity, 0, timeoutMs, signal);
   }
 
   async terminate(
@@ -121,7 +129,7 @@ export class PostgresNf04RestoreBackendMonitor implements Nf04RestoreBackendMoni
     signal?: AbortSignal,
   ): Promise<boolean> {
     if (timeoutMs <= 0) return false;
-    return this.signalBackend('terminate', identity, timeoutMs, signal);
+    return this.signalBackend('terminate', identity, timeoutMs, timeoutMs, signal);
   }
 
   async waitUntilAbsent(
@@ -149,9 +157,12 @@ export class PostgresNf04RestoreBackendMonitor implements Nf04RestoreBackendMoni
   private async signalBackend(
     action: 'cancel' | 'terminate',
     identity: Nf04RestoreBackendIdentity,
-    timeoutMs: number,
+    backendTimeoutMs: number,
+    operationTimeoutMs: number,
     signal?: AbortSignal,
   ): Promise<boolean> {
+    if (operationTimeoutMs <= 0) return false;
+    const expiresAt = this.now() + operationTimeoutMs;
     signal?.throwIfAborted();
     await this.assertManagerIdentity(signal);
     signal?.throwIfAborted();
@@ -159,8 +170,19 @@ export class PostgresNf04RestoreBackendMonitor implements Nf04RestoreBackendMoni
       action === 'cancel'
         ? 'CASE WHEN $8::bigint=0 THEN pg_cancel_backend(a.pid) ELSE false END'
         : 'pg_terminate_backend(a.pid,$8::bigint)';
-    const result = await this.managerPool.query<{ signaled: boolean }>(
-      `SELECT ${operation} AS signaled
+    const acquisitionTimeoutMs = Math.floor(expiresAt - this.now());
+    if (acquisitionTimeoutMs <= 0) throw new Nf04DeadlineError();
+    const client = await acquireNf04ManagerClient(this.managerPool, acquisitionTimeoutMs, signal);
+    let destroyClient = false;
+    let queryDispatched = false;
+    try {
+      signal?.throwIfAborted();
+      const remainingMs = Math.floor(expiresAt - this.now());
+      if (remainingMs <= 0) throw new Nf04DeadlineError();
+      queryDispatched = true;
+      const result = await runNf04ControlQuery<{ signaled: boolean }>(
+        client,
+        `SELECT ${operation} AS signaled
        FROM pg_stat_activity a
        JOIN pg_database d ON d.oid=a.datid
        JOIN pg_roles r ON r.oid=a.usesysid
@@ -168,20 +190,28 @@ export class PostgresNf04RestoreBackendMonitor implements Nf04RestoreBackendMoni
          AND d.oid=$3 AND d.datname=$4
          AND r.oid=$5 AND r.rolname=$6 AND a.application_name=$7
          AND a.client_addr IS NOT DISTINCT FROM $9::inet`,
-      [
-        identity.pid,
-        identity.backendStart,
-        identity.databaseOid,
-        identity.databaseName,
-        identity.roleOid,
-        identity.roleName,
-        identity.applicationName,
-        timeoutMs,
-        identity.clientAddress,
-      ],
-    );
-    signal?.throwIfAborted();
-    return result.rows.length === 1 && result.rows[0]?.signaled === true;
+        [
+          identity.pid,
+          identity.backendStart,
+          identity.databaseOid,
+          identity.databaseName,
+          identity.roleOid,
+          identity.roleName,
+          identity.applicationName,
+          action === 'terminate' ? Math.min(backendTimeoutMs, remainingMs) : 0,
+          identity.clientAddress,
+        ],
+        remainingMs,
+        signal,
+      );
+      signal?.throwIfAborted();
+      return result.rows.length === 1 && result.rows[0]?.signaled === true;
+    } catch (error) {
+      destroyClient = queryDispatched;
+      throw error;
+    } finally {
+      client.release(destroyClient);
+    }
   }
 
   private async assertManagerIdentity(signal?: AbortSignal): Promise<void> {
@@ -390,7 +420,11 @@ export class Nf04RestoreCoordinator {
       }
 
       if (backend) {
-        await deadline.run((signal) => this.backendMonitor.cancel(backend!, signal));
+        const cancelTimeoutMs = deadline.remainingMs();
+        if (cancelTimeoutMs <= 0) throw new Nf04DeadlineError();
+        await deadline.run((signal) =>
+          this.backendMonitor.cancel(backend!, signal, cancelTimeoutMs),
+        );
         const absentAfterCancel = await deadline.run((signal) =>
           this.backendMonitor.waitUntilAbsent(backend!, signal),
         );
@@ -466,6 +500,73 @@ function exactBackendIdentity(
     actual.backendStart === expected.backendStart &&
     actual.clientAddress === expected.clientAddress
   );
+}
+
+function acquireNf04ManagerClient(
+  pool: Pool,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<PoolClient> {
+  if (timeoutMs <= 0) return Promise.reject(new Nf04DeadlineError());
+  signal?.throwIfAborted();
+  const pending = pool.connect();
+
+  return new Promise<PoolClient>((resolve, reject) => {
+    let settled = false;
+    const finish = (continuation: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      signal?.removeEventListener('abort', onAbort);
+      continuation();
+    };
+    const onAbort = () => finish(() => reject(signal?.reason));
+    const timeout = setTimeout(() => finish(() => reject(new Nf04DeadlineError())), timeoutMs);
+    timeout.unref();
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+    void pending.then(
+      (client) => {
+        if (settled) {
+          client.release();
+          return;
+        }
+        finish(() => resolve(client));
+      },
+      (error: unknown) => finish(() => reject(error)),
+    );
+  });
+}
+
+function runNf04ControlQuery<Row extends object>(
+  client: PoolClient,
+  text: string,
+  values: readonly unknown[],
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<QueryResult<Row>> {
+  signal?.throwIfAborted();
+  const pending = client.query<Row>(text, [...values]);
+
+  return new Promise<QueryResult<Row>>((resolve, reject) => {
+    let settled = false;
+    const finish = (continuation: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      signal?.removeEventListener('abort', onAbort);
+      continuation();
+    };
+    const onAbort = () => finish(() => reject(signal?.reason));
+    const timeout = setTimeout(() => finish(() => reject(new Nf04DeadlineError())), timeoutMs);
+    timeout.unref();
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+    void pending.then(
+      (result) => finish(() => resolve(result)),
+      (error: unknown) => finish(() => reject(error)),
+    );
+  });
 }
 
 class Nf04DeadlineError extends Error {}

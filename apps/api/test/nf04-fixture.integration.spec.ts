@@ -62,7 +62,7 @@ describe('NF-04 protected synthetic fixture', () => {
       throw new Error('NF-04 test server identity changed before cleanup');
     }
     await manager.pool.query(`DROP DATABASE ${quoteIdentifier(targetName)} WITH (FORCE)`);
-  });
+  }, 15_000);
 
   afterAll(async () => {
     const remaining = await manager.pool.query<{ count: number }>(

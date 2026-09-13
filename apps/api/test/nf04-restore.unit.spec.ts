@@ -1,4 +1,4 @@
-import type { Pool, QueryResult } from '@mental-health/database';
+import type { Pool, PoolClient, QueryResult } from '@mental-health/database';
 import {
   Nf04RestoreCoordinator,
   PostgresNf04RestoreBackendMonitor,
@@ -101,6 +101,7 @@ class StartRaceExecution implements Nf04ContainerExecution {
 class RestoreMonitor implements Nf04RestoreBackendMonitor {
   readonly findCalls: Array<Parameters<Nf04RestoreBackendMonitor['findMatches']>[0]> = [];
   readonly cancelled: Nf04RestoreBackendIdentity[] = [];
+  readonly cancelTimeouts: number[] = [];
   readonly terminated: Array<{ identity: Nf04RestoreBackendIdentity; timeoutMs: number }> = [];
 
   constructor(
@@ -118,8 +119,13 @@ class RestoreMonitor implements Nf04RestoreBackendMonitor {
     return Promise.resolve(this.results.shift() ?? []);
   }
 
-  async cancel(identity: Nf04RestoreBackendIdentity): Promise<boolean> {
+  async cancel(
+    identity: Nf04RestoreBackendIdentity,
+    _signal?: AbortSignal,
+    timeoutMs?: number,
+  ): Promise<boolean> {
     this.cancelled.push(identity);
+    if (timeoutMs !== undefined) this.cancelTimeouts.push(timeoutMs);
     this.onCancel?.();
     return true;
   }
@@ -287,6 +293,7 @@ describe('NF-04 restore writer coordination', () => {
     ).restore({ ...INPUT, reconciliationTimeoutMs: 100 });
     await waitUntil(() => monitor.terminated.length === 1);
 
+    expect(monitor.cancelTimeouts).toEqual([100]);
     expect(monitor.terminated).toEqual([{ identity: BACKEND, timeoutMs: 40 }]);
     clock.advance(40);
     await expect(pending).resolves.toEqual(
@@ -401,42 +408,48 @@ describe('PostgreSQL NF-04 restore backend monitor', () => {
   };
 
   function fakePool(activityRows: Array<Record<string, unknown>[]>, signaled = true): Pool {
+    const query = jest.fn(async (text: string, values?: unknown[]) => {
+      if (text.includes('current_database()')) {
+        return result([
+          {
+            database_name: managerIdentity.databaseName,
+            database_oid: managerIdentity.databaseOid,
+            system_identifier: managerIdentity.systemIdentifier,
+            current_user_name: managerIdentity.roleName,
+          },
+        ]);
+      }
+      if (text.includes('pg_cancel_backend') || text.includes('pg_terminate_backend')) {
+        expect(text).toContain('a.backend_start=$2::timestamptz');
+        expect(text).toContain('a.client_addr IS NOT DISTINCT FROM $9::inet');
+        expect(values).toEqual([
+          BACKEND.pid,
+          BACKEND.backendStart,
+          BACKEND.databaseOid,
+          BACKEND.databaseName,
+          BACKEND.roleOid,
+          BACKEND.roleName,
+          BACKEND.applicationName,
+          expect.any(Number),
+          BACKEND.clientAddress,
+        ]);
+        expect(values?.[1]).not.toBeInstanceOf(Date);
+        return result(signaled ? [{ signaled: true }] : []);
+      }
+      if (text.includes('FROM pg_stat_activity')) {
+        expect(text).toContain("to_char(a.backend_start AT TIME ZONE 'UTC'");
+        expect(text).not.toMatch(/\ba\.query\b|\bquery\s+AS\b/i);
+        return result(activityRows.shift() ?? []);
+      }
+      throw new Error('unexpected query');
+    });
+    const client = {
+      query,
+      release: jest.fn(),
+    };
     return {
-      query: jest.fn(async (text: string, values?: unknown[]) => {
-        if (text.includes('current_database()')) {
-          return result([
-            {
-              database_name: managerIdentity.databaseName,
-              database_oid: managerIdentity.databaseOid,
-              system_identifier: managerIdentity.systemIdentifier,
-              current_user_name: managerIdentity.roleName,
-            },
-          ]);
-        }
-        if (text.includes('pg_cancel_backend') || text.includes('pg_terminate_backend')) {
-          expect(text).toContain('a.backend_start=$2::timestamptz');
-          expect(text).toContain('a.client_addr IS NOT DISTINCT FROM $9::inet');
-          expect(values).toEqual([
-            BACKEND.pid,
-            BACKEND.backendStart,
-            BACKEND.databaseOid,
-            BACKEND.databaseName,
-            BACKEND.roleOid,
-            BACKEND.roleName,
-            BACKEND.applicationName,
-            expect.any(Number),
-            BACKEND.clientAddress,
-          ]);
-          expect(values?.[1]).not.toBeInstanceOf(Date);
-          return result(signaled ? [{ signaled: true }] : []);
-        }
-        if (text.includes('FROM pg_stat_activity')) {
-          expect(text).toContain("to_char(a.backend_start AT TIME ZONE 'UTC'");
-          expect(text).not.toMatch(/\ba\.query\b|\bquery\s+AS\b/i);
-          return result(activityRows.shift() ?? []);
-        }
-        throw new Error('unexpected query');
-      }),
+      query,
+      connect: jest.fn(async () => client),
     } as unknown as Pool;
   }
 
@@ -497,6 +510,192 @@ describe('PostgreSQL NF-04 restore backend monitor', () => {
       }),
     ).rejects.toThrow(/system identifier/i);
     expect(pool.query).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['cancel', 'terminate'] as const)(
+    'does not dispatch a late %s signal after queued connection acquisition is aborted',
+    async (action) => {
+      const controller = new AbortController();
+      const queuedConnection = deferred<PoolClient>();
+      const client = {
+        query: jest.fn(async () => result([{ signaled: true }])),
+        release: jest.fn(),
+      } as unknown as PoolClient;
+      const pool = {
+        query: jest.fn(async () =>
+          result([
+            {
+              database_name: managerIdentity.databaseName,
+              database_oid: managerIdentity.databaseOid,
+              system_identifier: managerIdentity.systemIdentifier,
+              current_user_name: managerIdentity.roleName,
+            },
+          ]),
+        ),
+        connect: jest.fn(() => queuedConnection.promise),
+      } as unknown as Pool;
+      const monitor = new PostgresNf04RestoreBackendMonitor(pool, managerIdentity);
+      const pending =
+        action === 'cancel'
+          ? monitor.cancel(BACKEND, controller.signal, 100)
+          : monitor.terminate(BACKEND, 100, controller.signal);
+      await waitUntil(() => (pool.connect as jest.Mock).mock.calls.length === 1);
+
+      controller.abort(new Error('synthetic reconciliation deadline'));
+      await expect(pending).rejects.toThrow(/synthetic reconciliation deadline/i);
+      queuedConnection.resolve(client);
+      await flushMicrotasks();
+
+      expect(client.query).toHaveBeenCalledTimes(0);
+      expect(client.release).toHaveBeenCalledTimes(1);
+      expect(client.release).toHaveBeenCalledWith();
+    },
+  );
+
+  it('bounds queued control connection acquisition without a caller signal and releases the late client', async () => {
+    jest.useFakeTimers();
+    try {
+      const queuedConnection = deferred<PoolClient>();
+      const client = {
+        query: jest.fn(async () => result([{ signaled: true }])),
+        release: jest.fn(),
+      } as unknown as PoolClient;
+      const pool = {
+        query: jest.fn(async () =>
+          result([
+            {
+              database_name: managerIdentity.databaseName,
+              database_oid: managerIdentity.databaseOid,
+              system_identifier: managerIdentity.systemIdentifier,
+              current_user_name: managerIdentity.roleName,
+            },
+          ]),
+        ),
+        connect: jest.fn(() => queuedConnection.promise),
+      } as unknown as Pool;
+      const monitor = new PostgresNf04RestoreBackendMonitor(
+        pool,
+        managerIdentity,
+        10_000,
+        50,
+        () => 0,
+      );
+      const pending = monitor.cancel(BACKEND, undefined, 100);
+      const outcome = pending.then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      await waitUntil(() => (pool.connect as jest.Mock).mock.calls.length === 1);
+
+      jest.advanceTimersByTime(100);
+      await expect(outcome).resolves.toBeInstanceOf(Error);
+      queuedConnection.resolve(client);
+      await flushMicrotasks();
+
+      expect(client.query).toHaveBeenCalledTimes(0);
+      expect(client.release).toHaveBeenCalledTimes(1);
+      expect(client.release).toHaveBeenCalledWith();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('releases a control client acquired after its remaining budget without dispatching SQL', async () => {
+    let clock = 0;
+    const queuedConnection = deferred<PoolClient>();
+    const client = {
+      query: jest.fn(async () => result([{ signaled: true }])),
+      release: jest.fn(),
+    } as unknown as PoolClient;
+    const pool = {
+      query: jest.fn(async () =>
+        result([
+          {
+            database_name: managerIdentity.databaseName,
+            database_oid: managerIdentity.databaseOid,
+            system_identifier: managerIdentity.systemIdentifier,
+            current_user_name: managerIdentity.roleName,
+          },
+        ]),
+      ),
+      connect: jest.fn(() => queuedConnection.promise),
+    } as unknown as Pool;
+    const monitor = new PostgresNf04RestoreBackendMonitor(
+      pool,
+      managerIdentity,
+      10_000,
+      50,
+      () => clock,
+    );
+    const pending = monitor.cancel(BACKEND, undefined, 100);
+    await waitUntil(() => (pool.connect as jest.Mock).mock.calls.length === 1);
+
+    clock = 101;
+    queuedConnection.resolve(client);
+    await expect(pending).rejects.toBeInstanceOf(Error);
+    expect(client.query).toHaveBeenCalledTimes(0);
+    expect(client.release).toHaveBeenCalledWith(false);
+  });
+
+  it('destroys only its checked-out control client when an already dispatched signal becomes unknown', async () => {
+    const controller = new AbortController();
+    const inFlightQuery = deferred<QueryResult<never>>();
+    const client = {
+      query: jest.fn(() => inFlightQuery.promise),
+      release: jest.fn(),
+    } as unknown as PoolClient;
+    const pool = {
+      query: jest.fn(async () =>
+        result([
+          {
+            database_name: managerIdentity.databaseName,
+            database_oid: managerIdentity.databaseOid,
+            system_identifier: managerIdentity.systemIdentifier,
+            current_user_name: managerIdentity.roleName,
+          },
+        ]),
+      ),
+      connect: jest.fn(async () => client),
+    } as unknown as Pool;
+    const monitor = new PostgresNf04RestoreBackendMonitor(pool, managerIdentity);
+    const pending = monitor.cancel(BACKEND, controller.signal, 100);
+    await waitUntil(() => (client.query as jest.Mock).mock.calls.length === 1);
+
+    controller.abort(new Error('synthetic query acknowledgement loss'));
+    await expect(pending).rejects.toThrow(/acknowledgement loss/i);
+    expect(client.release).toHaveBeenCalledWith(true);
+
+    inFlightQuery.resolve(result([{ signaled: true }]));
+    await flushMicrotasks();
+    expect(client.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('destroys its checked-out control client when a dispatched signal query fails', async () => {
+    const client = {
+      query: jest.fn(async () => {
+        throw new Error('synthetic control query failure');
+      }),
+      release: jest.fn(),
+    } as unknown as PoolClient;
+    const pool = {
+      query: jest.fn(async () =>
+        result([
+          {
+            database_name: managerIdentity.databaseName,
+            database_oid: managerIdentity.databaseOid,
+            system_identifier: managerIdentity.systemIdentifier,
+            current_user_name: managerIdentity.roleName,
+          },
+        ]),
+      ),
+      connect: jest.fn(async () => client),
+    } as unknown as Pool;
+    const monitor = new PostgresNf04RestoreBackendMonitor(pool, managerIdentity);
+
+    await expect(monitor.cancel(BACKEND, undefined, 100)).rejects.toThrow(
+      /synthetic control query failure/i,
+    );
+    expect(client.release).toHaveBeenCalledWith(true);
   });
 });
 

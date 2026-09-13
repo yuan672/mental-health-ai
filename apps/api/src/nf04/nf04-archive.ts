@@ -74,6 +74,9 @@ type WriterLifecycleEvent =
   | Readonly<{ status: 'completed'; result: Nf04ContainerExecExit }>
   | Readonly<{ status: 'unconfirmed' }>;
 
+type ArchiveInspectionEvent =
+  Readonly<{ status: 'completed'; result: Stats }> | Readonly<{ status: 'failed'; error: unknown }>;
+
 type ArchiveStopReason =
   | 'Archive writer exceeded the remaining capacity'
   | 'Archive writer exceeded its operation deadline'
@@ -129,13 +132,25 @@ export class PollingNf04ArchiveWriterMonitor implements Nf04ArchiveWriterMonitor
         return observed.result;
       }
 
-      let partial: Stats;
+      let pendingInspection: Promise<Stats>;
       try {
-        partial = await this.inspectPartial(input.partialPath);
+        pendingInspection = this.inspectPartial(input.partialPath);
       } catch (error) {
         if (isErrno(error, 'ENOENT')) continue;
         return this.stopWriter(input, 'Archive partial could not be inspected safely');
       }
+      const inspection = await waitForArchiveInspection(
+        settleInspection(pendingInspection),
+        input.operationSignal,
+      );
+      if (inspection === ABORTED || input.operationSignal.aborted) {
+        return this.stopWriter(input, archiveOperationStopReason(input));
+      }
+      if (inspection.status === 'failed') {
+        if (isErrno(inspection.error, 'ENOENT')) continue;
+        return this.stopWriter(input, 'Archive partial could not be inspected safely');
+      }
+      const partial = inspection.result;
       if (!partial.isFile()) {
         return this.stopWriter(input, 'Archive partial is not a regular file');
       }
@@ -520,6 +535,32 @@ function settleExit(exit: Promise<Nf04ContainerExecExit>): Promise<WriterLifecyc
     (result) => ({ status: 'completed', result }),
     () => ({ status: 'unconfirmed' }),
   );
+}
+
+function settleInspection(inspection: Promise<Stats>): Promise<ArchiveInspectionEvent> {
+  return inspection.then(
+    (result) => ({ status: 'completed', result }),
+    (error: unknown) => ({ status: 'failed', error }),
+  );
+}
+
+function waitForArchiveInspection(
+  inspection: Promise<ArchiveInspectionEvent>,
+  signal: AbortSignal,
+): Promise<ArchiveInspectionEvent | typeof ABORTED> {
+  if (signal.aborted) return Promise.resolve(ABORTED);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: ArchiveInspectionEvent | typeof ABORTED) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', abort);
+      resolve(value);
+    };
+    const abort = () => finish(ABORTED);
+    signal.addEventListener('abort', abort, { once: true });
+    void inspection.then(finish);
+  });
 }
 
 function waitForWriterEvent(

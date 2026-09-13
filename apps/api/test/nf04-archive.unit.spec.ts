@@ -1,3 +1,4 @@
+import type { Stats } from 'node:fs';
 import {
   access,
   link,
@@ -152,12 +153,15 @@ function successfulExit(): Nf04ContainerExecExit {
 function deferred<T>(): {
   promise: Promise<T>;
   resolve: (value: T) => void;
+  reject: (error: unknown) => void;
 } {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => {
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
+    reject = rejectPromise;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function observeWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -389,6 +393,52 @@ describe('NF-04 archive handoff', () => {
     );
     await expect(access(join(root, 'pre-delete.dump'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
+
+  it.each([
+    { label: 'operation deadline', expired: true, settle: 'resolve' as const },
+    { label: 'caller cancellation', expired: false, settle: 'reject' as const },
+  ])(
+    'stops the exact writer when partial inspection hangs through $label and ignores its late result',
+    async ({ expired, settle }) => {
+      const runner = new ControlledArchiveRunner(root, true);
+      const execution = await runner.create({
+        containerId: 'exact-container-id',
+        executable: 'pg_dump',
+        args: ['/nf04-output/.pre-delete.dump.partial'],
+      });
+      const inspectionStarted = deferred<void>();
+      const lateInspection = deferred<Stats>();
+      const monitor = new PollingNf04ArchiveWriterMonitor(1, 50, async () => {
+        inspectionStarted.resolve(undefined);
+        return lateInspection.promise;
+      });
+      const controller = new AbortController();
+      const pending = monitor.waitForCompletion({
+        execution,
+        identity: execution.identity,
+        partialPath: join(root, '.pre-delete.dump.partial'),
+        maximumBytes: NF04_TOTAL_ARCHIVE_LIMIT_BYTES,
+        operationSignal: controller.signal,
+        deadlineExpired: () => expired,
+      });
+      await inspectionStarted.promise;
+
+      controller.abort(new Error('synthetic stop'));
+      await expect(pending).rejects.toThrow(expired ? /deadline/i : /cancelled/i);
+      expect(runner.stopCalls).toBe(1);
+      expect(runner.calls).toHaveLength(0);
+      await expect(access(join(root, 'pre-delete.dump'))).rejects.toMatchObject({ code: 'ENOENT' });
+
+      if (settle === 'resolve') {
+        lateInspection.resolve(await stat(join(root, '.pre-delete.dump.partial')));
+      } else {
+        lateInspection.reject(new Error('late synthetic inspection failure'));
+      }
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(runner.stopCalls).toBe(1);
+      expect(runner.calls).toHaveLength(0);
+    },
+  );
 
   it('does not treat a non-ENOENT absence probe failure as an absent output path', async () => {
     const accessFailure = Object.assign(new Error('synthetic secret path'), { code: 'EACCES' });

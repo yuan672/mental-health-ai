@@ -2,7 +2,7 @@
 
 ## Status
 
-- Scope: NF-04 local learning/demo design plus protected tooling under review
+- Scope: NF-04 local learning/demo design plus protected tooling foundation
 - Delivery: fixture loader and minimum orchestration harness are implemented on a
   feature branch; the first drill remains separately gated
 - Drill execution: not performed
@@ -248,7 +248,7 @@ content.
 
 ### 5.1 Protected loader and harness boundary
 
-The repository now contains a narrow NF-04 implementation under review:
+The repository now contains a narrow NF-04 protected tooling implementation:
 
 - `Nf04DrillHarness` fixes the phase order and stops at an unknown account-
   deletion or restore result. Each real side effect remains an injected action so
@@ -261,7 +261,10 @@ The repository now contains a narrow NF-04 implementation under review:
   first archive before allowing the second, and uses a same-directory no-clobber
   publication before recording size and SHA-256 evidence. A writer
   whose exit cannot be proved remains quarantined and its partial file cannot be
-  listed, published, restored, or removed by the normal cleanup path.
+  listed, published, restored, or removed by the normal cleanup path. The partial
+  inspection wait also races the operation signal; a hung filesystem inspection
+  therefore enters the independent exact-writer stop/exit boundary, and any late
+  inspection result cannot resume listing or publication.
 - `Nf04RestoreCoordinator` treats timeout, client loss, and nonzero completion as
   unknown. It identifies the exact Docker exec object rather than treating the
   host Docker CLI PID as writer-exit proof. An independent unified reconciliation
@@ -271,6 +274,13 @@ The repository now contains a narrow NF-04 implementation under review:
   identity comparison. Caller cancellation requests writer stop but cannot cancel
   the bounded reconciliation. The coordinator never labels reconciliation as a
   successful restore.
+- Destructive backend signaling checks out a dedicated manager connection only
+  after the manager identity check, then rechecks the same cancellation signal and
+  remaining reconciliation budget before issuing SQL. A connection acquired after
+  cancellation or budget expiry is released without issuing signal SQL. Once SQL
+  has been dispatched its outcome may be unknown; timeout or failure destroys only
+  that checked-out control client and keeps the restore quarantined rather than
+  claiming the signal was withdrawn.
 - `Nf04DockerInspector` reads only exact recorded container/network IDs and the
   recorded volume name. It compares live IDs, labels, image, mounts, loopback
   port, volume mountpoint/driver, and network evidence; it does not discover a
