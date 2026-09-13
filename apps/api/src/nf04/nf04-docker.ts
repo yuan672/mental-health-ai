@@ -13,7 +13,14 @@ const containerInspectSchema = z
       Id: z.string(),
       Name: z.string(),
       Image: z.string(),
+      State: z.object({ Status: z.string(), Running: z.boolean() }),
       Config: z.object({ Image: z.string(), Labels: z.record(z.string(), z.string()).nullable() }),
+      HostConfig: z.object({
+        PortBindings: z.record(
+          z.string(),
+          z.array(z.object({ HostIp: z.string(), HostPort: z.string() })).nullable(),
+        ),
+      }),
       Mounts: z.array(
         z.object({
           Type: z.enum(['bind', 'volume']),
@@ -59,10 +66,22 @@ const networkInspectSchema = z
 export class Nf04DockerInspector {
   constructor(private readonly runner: Nf04ProcessRunner) {}
 
+  async inspectConfiguredContainer(
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<Nf04ContainerEvidence> {
+    const record = await this.inspectContainerRecord(id, signal);
+    if (record.State.Status !== 'created' || record.State.Running) {
+      throw new Nf04GuardError('Configured NF-04 container is not in the created state');
+    }
+    return toContainerEvidence(record, record.HostConfig.PortBindings, 'configured');
+  }
+
   async inspectRecorded(
     manifest: Nf04Manifest,
     role: 'source' | 'restore',
     signal?: AbortSignal,
+    expectedState: 'running' | 'stopped' = 'running',
   ): Promise<{
     container: Nf04ContainerEvidence;
     volume: Nf04VolumeEvidence;
@@ -77,38 +96,39 @@ export class Nf04DockerInspector {
       throw new Nf04GuardError('Recorded Docker evidence is incomplete');
     }
     const [container, volume, network] = await Promise.all([
-      this.inspectContainer(recordedContainer.id, signal),
+      this.inspectRuntimeContainer(recordedContainer.id, expectedState, signal),
       this.inspectVolume(recordedVolume.name, signal),
       this.inspectNetwork(recordedNetwork.id, signal),
     ]);
     return { container, volume, network };
   }
 
-  private async inspectContainer(id: string, signal?: AbortSignal): Promise<Nf04ContainerEvidence> {
-    const output = await this.inspect(['container', 'inspect', id], signal);
-    const record = containerInspectSchema.parse(JSON.parse(output))[0]!;
-    const binding = record.NetworkSettings.Ports['5432/tcp'];
-    if (!binding || binding.length !== 1 || binding[0]?.HostIp !== '127.0.0.1') {
-      throw new Nf04GuardError('NF-04 PostgreSQL port must have one loopback-only binding');
+  private async inspectRuntimeContainer(
+    id: string,
+    expectedState: 'running' | 'stopped',
+    signal?: AbortSignal,
+  ): Promise<Nf04ContainerEvidence> {
+    const record = await this.inspectContainerRecord(id, signal);
+    if (
+      expectedState === 'running' &&
+      (!record.State.Running || record.State.Status !== 'running')
+    ) {
+      throw new Nf04GuardError('NF-04 container is not in the required running state');
     }
-    const hostPort = Number(binding[0].HostPort);
-    if (!Number.isInteger(hostPort)) throw new Nf04GuardError('Invalid Docker host port evidence');
-    return {
-      id: record.Id,
-      name: record.Name.replace(/^\//, ''),
-      imageId: record.Image,
-      imageReference: record.Config.Image as Nf04ContainerEvidence['imageReference'],
-      labels: record.Config.Labels ?? {},
-      mounts: record.Mounts.map((mount) => ({
-        type: mount.Type,
-        source: mount.Source,
-        destination: mount.Destination,
-        readWrite: mount.RW,
-        ...(mount.Name ? { volumeName: mount.Name } : {}),
-      })),
-      networkNames: Object.keys(record.NetworkSettings.Networks),
-      hostPort,
-    };
+    if (expectedState === 'stopped' && (record.State.Running || record.State.Status !== 'exited')) {
+      throw new Nf04GuardError('NF-04 container is not in the required stopped state');
+    }
+    const running = record.State.Running && record.State.Status === 'running';
+    return toContainerEvidence(
+      record,
+      running ? record.NetworkSettings.Ports : record.HostConfig.PortBindings,
+      running ? 'runtime' : 'configured',
+    );
+  }
+
+  private async inspectContainerRecord(id: string, signal?: AbortSignal) {
+    const output = await this.inspect(['container', 'inspect', id], signal);
+    return containerInspectSchema.parse(JSON.parse(output))[0]!;
   }
 
   private async inspectVolume(name: string, signal?: AbortSignal): Promise<Nf04VolumeEvidence> {
@@ -145,6 +165,41 @@ export class Nf04DockerInspector {
     }
     return result.stdout;
   }
+}
+
+function toContainerEvidence(
+  record: z.infer<typeof containerInspectSchema>[number],
+  portBindings: Record<string, Array<{ HostIp: string; HostPort: string }> | null>,
+  phase: 'configured' | 'runtime',
+): Nf04ContainerEvidence {
+  const binding = portBindings['5432/tcp'];
+  if (!binding || binding.length !== 1 || binding[0]?.HostIp !== '127.0.0.1') {
+    throw new Nf04GuardError(
+      `${phase === 'configured' ? 'Configured' : 'Runtime'} NF-04 PostgreSQL container does not have the exact loopback binding`,
+    );
+  }
+  const hostPort = Number(binding[0].HostPort);
+  if (!Number.isInteger(hostPort)) {
+    throw new Nf04GuardError(
+      `${phase === 'configured' ? 'Configured' : 'Runtime'} NF-04 PostgreSQL host port is invalid`,
+    );
+  }
+  return {
+    id: record.Id,
+    name: record.Name.replace(/^\//u, ''),
+    imageId: record.Image,
+    imageReference: record.Config.Image as Nf04ContainerEvidence['imageReference'],
+    labels: record.Config.Labels ?? {},
+    mounts: record.Mounts.map((mount) => ({
+      type: mount.Type,
+      source: mount.Source,
+      destination: mount.Destination,
+      readWrite: mount.RW,
+      ...(mount.Name ? { volumeName: mount.Name } : {}),
+    })),
+    networkNames: Object.keys(record.NetworkSettings.Networks),
+    hostPort,
+  };
 }
 
 export function assertLiveNf04DockerEvidence(

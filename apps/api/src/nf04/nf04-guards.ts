@@ -1,6 +1,6 @@
 import { constants, type BigIntStats } from 'node:fs';
 import { lstat, open, realpath } from 'node:fs/promises';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve, win32 } from 'node:path';
 import type { Pool } from '@mental-health/database';
 import {
   deriveNf04ExpectedNames,
@@ -45,6 +45,8 @@ export type Nf04PathOwnershipSnapshot = Readonly<{
   targetRealPath?: string;
   targetIdentity?: Nf04FilesystemIdentity;
 }>;
+
+const DOCKER_DESKTOP_WINDOWS_MOUNT_PREFIX = '/run/desktop/mnt/host/';
 
 type Nf04ProtectedFileInput = Readonly<{
   repositoryRoot: string;
@@ -435,7 +437,7 @@ export function assertNf04ContainerEvidence(
   if (
     !dataMount.readWrite ||
     (manifest.archivesRoot && dataMount.destination !== '/var/lib/postgresql') ||
-    resolve(artifactMount.source) !== expectedArchiveMountSource
+    !matchesNf04DockerBindSource(expectedArchiveMountSource, artifactMount.source)
   ) {
     throw new Nf04GuardError(`Observed ${role} mount access or source path is invalid`);
   }
@@ -469,43 +471,131 @@ function assertExecutableSecretMounts(
   if (!managerPassword) {
     throw new Nf04GuardError(`Observed ${role} manager secret evidence is incomplete`);
   }
-  const expected = new Map<string, string>([
-    [
-      resolve(pgPass),
-      role === 'source' ? '/run/secrets/nf04-source.pgpass' : '/run/secrets/nf04-restore.pgpass',
-    ],
-    [resolve(managerPassword), '/run/secrets/nf04-manager-password'],
-  ]);
+  const expected = [
+    {
+      source: resolve(pgPass),
+      destination:
+        role === 'source' ? '/run/secrets/nf04-source.pgpass' : '/run/secrets/nf04-restore.pgpass',
+    },
+    {
+      source: resolve(managerPassword),
+      destination: '/run/secrets/nf04-manager-password',
+    },
+  ];
   const secretMounts = mounts.filter(
     (mount) => mount.type === 'bind' && mount.destination.startsWith('/run/secrets/'),
   );
   if (
-    secretMounts.length !== expected.size ||
+    secretMounts.length !== expected.length ||
     secretMounts.some(
-      (mount) => mount.readWrite || expected.get(resolve(mount.source)) !== mount.destination,
+      (mount) =>
+        mount.readWrite ||
+        !expected.some(
+          (candidate) =>
+            candidate.destination === mount.destination &&
+            matchesNf04DockerBindSource(candidate.source, mount.source),
+        ),
+    ) ||
+    expected.some(
+      (candidate) =>
+        secretMounts.filter(
+          (mount) =>
+            mount.destination === candidate.destination &&
+            matchesNf04DockerBindSource(candidate.source, mount.source),
+        ).length !== 1,
     )
   ) {
     throw new Nf04GuardError(`Observed ${role} secret mounts do not match the exact run files`);
   }
   const secretsRoot = resolve(manifest.artifactRoot, 'secrets');
-  for (const source of expected.keys()) {
+  for (const { source } of expected) {
     if (!isPathWithin(secretsRoot, source)) {
       throw new Nf04GuardError(`Observed ${role} secret mount escapes the exact run secrets root`);
     }
   }
-  const unexpectedRunBind = mounts.find(
-    (mount) =>
-      mount.type === 'bind' &&
-      isPathWithin(resolve(manifest.artifactRoot), resolve(mount.source)) &&
-      resolve(mount.source) !== resolve(manifest.archivesRoot!) &&
-      !expected.has(resolve(mount.source)),
-  );
+  const unexpectedRunBind = mounts.find((mount) => {
+    if (mount.type !== 'bind') return false;
+    const hostSource = resolveNf04DockerBindSource(mount.source);
+    return (
+      hostSource !== undefined &&
+      isPathWithin(resolve(manifest.artifactRoot), hostSource) &&
+      !sameNf04HostPath(hostSource, resolve(manifest.archivesRoot!)) &&
+      !expected.some((candidate) => sameNf04HostPath(hostSource, candidate.source))
+    );
+  });
   if (unexpectedRunBind) {
     throw new Nf04GuardError(`Observed ${role} container exposes an unexpected run-local path`);
   }
   if (resolve(join(manifest.artifactRoot, 'archives')) !== resolve(manifest.archivesRoot!)) {
     throw new Nf04GuardError('Observed archive mount source is not the exact archives directory');
   }
+}
+
+export function resolveNf04DockerBindSource(
+  observedSource: string,
+  platform: NodeJS.Platform = process.platform,
+): string | undefined {
+  if (platform !== 'win32') {
+    return isAbsolute(observedSource) ? resolve(observedSource) : undefined;
+  }
+
+  const match = /^\/run\/desktop\/mnt\/host\/([a-z])\/(.+)$/iu.exec(observedSource);
+  if (match) {
+    const [, drive, relativeSource] = match;
+    const segments = relativeSource!.split('/');
+    if (
+      segments.some(
+        (segment) =>
+          segment.length === 0 || segment === '.' || segment === '..' || segment.includes('\\'),
+      )
+    ) {
+      return undefined;
+    }
+
+    const root = `${drive!.toUpperCase()}:\\`;
+    const candidate = win32.resolve(root, ...segments);
+    if (
+      !isFixedWindowsDrivePath(candidate) ||
+      win32.parse(candidate).root.toLowerCase() !== root.toLowerCase()
+    ) {
+      return undefined;
+    }
+    const relative = win32.relative(root, candidate);
+    const canonicalDockerSource = `${DOCKER_DESKTOP_WINDOWS_MOUNT_PREFIX}${drive!.toLowerCase()}/${relative.replaceAll('\\', '/')}`;
+    if (canonicalDockerSource.toLowerCase() !== observedSource.toLowerCase()) return undefined;
+    return candidate;
+  }
+
+  const parsed = win32.parse(observedSource);
+  if (!/^[a-z]:\\$/iu.test(parsed.root) || observedSource.startsWith('\\\\')) return undefined;
+  const candidate = win32.resolve(observedSource);
+  return isFixedWindowsDrivePath(candidate) ? candidate : undefined;
+}
+
+export function matchesNf04DockerBindSource(
+  expectedHostPath: string,
+  observedSource: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const resolvedObserved = resolveNf04DockerBindSource(observedSource, platform);
+  return (
+    resolvedObserved !== undefined && sameNf04HostPath(resolvedObserved, expectedHostPath, platform)
+  );
+}
+
+function sameNf04HostPath(
+  left: string,
+  right: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (platform === 'win32') {
+    return win32.resolve(left).toLowerCase() === win32.resolve(right).toLowerCase();
+  }
+  return resolve(left) === resolve(right);
+}
+
+function isFixedWindowsDrivePath(path: string): boolean {
+  return /^[a-z]:\\$/iu.test(win32.parse(path).root) && !path.startsWith('\\\\');
 }
 
 export async function readNf04DatabaseIdentity(
