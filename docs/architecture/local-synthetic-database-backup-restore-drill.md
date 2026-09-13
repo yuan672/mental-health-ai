@@ -72,10 +72,17 @@ tablespaces, and configuration are outside its scope. The restore database and
 least-privilege drill role are created independently, so restored objects are
 owned by that isolated role and no archived ownership or ACL is applied.
 
-Before restore, run `pg_restore --list` and calculate a SHA-256 checksum for the
-archive. These checks prove that the archive can be read and identified; they do
-not prove a successful or usable restore. After restore, run `ANALYZE` and the
-validation in section 8.
+Before restore, run `pg_restore --list` and compare the archive's size and SHA-256
+with the values fixed when that recovery point was completed. `--list` proves only
+that the archive table of contents can be read; it does not validate every
+archived data block. Size and digest comparison identifies the exact drill artifact but is not
+authentication against an attacker who can replace both the file and manifest.
+Only a complete restore and the validation in section 8 can prove that the drill
+archive is usable. After restore, run `ANALYZE` and that validation.
+
+The archive digest is operational evidence for this synthetic file only. It is
+not stored in application tables, derived from an individual message, or used as
+a request/content fingerprint or durable idempotency ledger.
 
 These choices follow the PostgreSQL 18 documentation:
 
@@ -90,6 +97,9 @@ These choices follow the PostgreSQL 18 documentation:
 - [`pg_dumpall`](https://www.postgresql.org/docs/18/app-pg-dumpall.html) includes
   cluster-global objects and may expose role/password material, which is why it
   is excluded here.
+- [System administration functions](https://www.postgresql.org/docs/18/functions-admin.html)
+  define backend signaling behavior, including the difference between sending a
+  termination signal and confirming that the backend actually exited.
 
 PostgreSQL also warns that restoring an archive executes SQL originating from
 the source. Only an archive produced by this same controlled drill may be used.
@@ -98,8 +108,10 @@ An untrusted archive must never be restored by this runbook.
 ## 3. Isolated topology and resource budget
 
 Each run gets an unguessable run ID such as `20260913-143000-a1b2c3d4` and a
-machine-readable local manifest. The manifest is created before any container or
-database mutation and records exact resource names and PostgreSQL system IDs.
+machine-readable local manifest. Before any mutation, the manifest contains the
+planned exact names and expected image digest. After creation, each actual Docker
+object ID, database OID, and PostgreSQL system ID is appended before the next
+phase. A later phase never treats a planned identity as an observed identity.
 
 | Resource                     | Required form                                           |
 | ---------------------------- | ------------------------------------------------------- |
@@ -108,6 +120,7 @@ database mutation and records exact resource names and PostgreSQL system IDs.
 | Source volume                | `mh_nf04_<token>_src_data`                              |
 | Restore volume               | `mh_nf04_<token>_restore_data`                          |
 | Network                      | `mh_nf04_<token>_network`                               |
+| Source control database      | `mh_nf04_<token>_source_control_test`                   |
 | Source database              | `mh_nf04_<token>_src_test`                              |
 | Restore control database     | `mh_nf04_<token>_restore_test`                          |
 | Pre-deletion restore target  | `mh_nf04_<token>_pre_restore_test`                      |
@@ -126,6 +139,39 @@ before container creation. Do not attach either container to the repository's
 normal Compose network or volume. The API, when briefly required for the real
 account-deletion endpoint, connects only to the source container.
 
+The artifact directory is one dedicated host bind mount, not a PostgreSQL data
+volume. It is mounted read-write at `/nf04-output` in the source container and
+read-only at `/nf04-input` in the restore container. The source and restore
+PostgreSQL data volumes remain separate. The host orchestrator creates the
+artifact directory with access limited to the current operator and the required
+container identity, verifies its canonical path before either container starts,
+and never grants a broad workspace write permission.
+
+### 3.1 Run-local identities
+
+The drill uses three bounded identity classes:
+
+| Identity               | Responsibility                                                                                                                                                                 | Explicitly excluded                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| Initialization manager | Create the two container-local drill roles and named `_test` databases; read `pg_control_system()` and `pg_stat_activity`; if required, signal only the exact restore backend. | Application traffic, fixture content, ordinary API use, cluster-global export.                  |
+| Source/migration role  | Own the source database application objects; apply migrations, load the approved fixture, support the isolated API, and read the source for `pg_dump`.                         | Creating roles or databases, signaling backends, accessing the restore server.                  |
+| Restore role           | Own each precreated restore target and the objects restored with `--no-owner`; run restore validation.                                                                         | Creating roles, signaling unrelated sessions, application traffic, accessing the source server. |
+
+The initialization manager is the container-local bootstrap identity created for
+this run, not an application administrator. Its credentials are destroyed at
+cleanup. The source and restore roles receive only the privileges required in
+their own named database. The manager performs system-ID and activity checks
+from the verified control database; the other roles cannot silently substitute
+for it.
+
+Container initialization uses a protected run-local environment file outside Git.
+Client commands use a run-local, read-only password file mounted into only the
+appropriate container and set `PGPASSFILE` explicitly. Every PostgreSQL command
+also supplies explicit host/socket, port, user, and database arguments. The
+isolated API receives an explicit run-local connection value in its process
+environment. No command reads, sources, or falls back to the repository `.env`.
+No credential or connection string is written to the redacted manifest or logs.
+
 The initial local/demo limits are:
 
 - at most 2 PostgreSQL containers, 2 PostgreSQL volumes, and 1 drill network;
@@ -139,25 +185,35 @@ These are safety limits for a small synthetic exercise, not production sizing or
 recovery objectives. Exceeding a limit stops the drill and preserves evidence
 for diagnosis.
 
-## 4. Mandatory destructive-operation guard
+## 4. Phase-specific resource and mutation guards
 
-The `_test` suffix is necessary but not sufficient. Before every create, drop,
-restore, fixture load, deletion request, or cleanup action, the future harness
-must verify all of the following against the run manifest:
+The `_test` suffix is necessary but not sufficient, and a guard may only require
+facts that exist in the current resource phase. The run state advances in the
+manifest only after the current row's success evidence is fixed:
 
-1. `current_database()` exactly equals the expected database and ends in
-   `_test`;
-2. Docker container ID, exact name, image digest, run label, and role label match;
-3. Docker volume and network exact names and run labels match;
-4. `pg_control_system().system_identifier` equals the source or restore system ID
-   recorded during setup;
-5. the restore target has no application tables before `pg_restore` starts;
-6. no normal application process, shared test process, or other task is connected;
-7. the artifact path resolves under the exact NF-04 run directory; and
-8. `APP_ENV=test` is explicit wherever application code or fixtures run.
+| Resource phase and next operation                                | Required checks before the operation                                                                                                                                                                                                                                                                                                                                                    | Success evidence and next state                                                                                                                  |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Planned; create host directory, network, volumes, and containers | Exact planned names do not exist; chosen ports are free; canonical artifact path is an absent/new child of the NF-04 root; disk and resource budgets pass; image reference/digest is approved. No database or system-ID assertion is made yet.                                                                                                                                          | Record created Docker object IDs, exact names, image digest, labels, ports, and canonical artifact path.                                         |
+| Containers created; initialize roles/databases                   | Re-inspect exact object IDs, names, image digest, mounts, ports, and labels. Connect only to the container's explicitly configured control database as the run-local initialization manager, then record its actual `system_identifier`. Catalog checks prove each planned application role/source database is absent before creation; the named control database is expected to exist. | Record role/database ownership and exact source/restore system IDs. Never connect to a default database discovered from project configuration.   |
+| Source database empty; migrate or load fixture                   | Revalidate source container ID/labels/system ID. Connect explicitly to the exact `_test` source database as the source/migration role. Require the expected empty/migrated state for the requested transition and `APP_ENV=test`.                                                                                                                                                       | Record migration head and bounded fixture validation; source becomes populated.                                                                  |
+| Source populated; call deletion endpoint or dump                 | Revalidate source identity, exact database, role, system ID, migration head, and expected fixture state. For deletion, only the isolated API connection is permitted. For dump, require quiescence and zero application connections.                                                                                                                                                    | Record confirmed deletion receipt/state or completed archive evidence, never an inferred result.                                                 |
+| Restore database absent; create target                           | Revalidate restore container ID/labels/system ID. Connect to the verified restore control database as initialization manager and require the exact target name to be absent in the catalog.                                                                                                                                                                                             | Create the exact `_test` target owned by the restore role; record its catalog identity.                                                          |
+| Restore target created; begin restore                            | Connect explicitly as restore role; require `current_database()` to equal the manifest target, no application tables, no other target sessions, and a completed archive whose size/digest match the fixed evidence.                                                                                                                                                                     | Bind and record the exact restore backend identity; target becomes restoring.                                                                    |
+| Restore completed; validate target                               | Revalidate restore resources, system ID, exact target, restore backend exit, and quarantine. The target is expected to be populated, so the pre-restore empty check no longer applies.                                                                                                                                                                                                  | Record full schema/data/lifecycle validation or quarantine as failed.                                                                            |
+| Restore failed or result unknown; inspect or discard target      | Revalidate the exact restore object IDs, system ID, database, and original writer state. Do not assume the target is empty.                                                                                                                                                                                                                                                             | Classify as proven empty rollback, complete validated restore, or quarantined unknown/anomaly.                                                   |
+| Cleanup; stop/drop/remove exact resources                        | Before stop, inspect the exact container ID and verify its current name, labels, image digest, mounts, and recorded role; when responsive, also verify system ID. Inspect volume/network IDs and labels before container removal, then re-inspect them before their removal.                                                                                                            | Record each exact resource as removed. If already absent, record that fact; never operate on a same-name replacement with a different object ID. |
 
-Any missing or mismatched signal fails closed before mutation. Never fall back
-to a database discovered from `.env`, a default Compose service, a broad name
+For every database-connected phase, `current_database()` must exactly match the
+manifest and end in `_test`. For every application or fixture phase,
+`APP_ENV=test` must be explicit. No normal application process, shared test
+process, or other task may connect. Artifact paths must resolve under the exact
+run directory.
+
+Any unavailable, missing, or mismatched required signal stops the next operation.
+It is not permissible to bypass a guard merely to stop or clean up. A resource
+that is already absent is reported as absent; a resource found by the same name
+but a different ID is treated as foreign and left untouched. Never fall back to
+a database discovered from `.env`, a default Compose service, a broad name
 pattern, or a merely matching `_test` suffix.
 
 Credentials live in run-local protected environment files outside Git. They are
@@ -227,17 +283,29 @@ restored by this drill.
 
 The commands below are a reviewable template, not authorization to execute them.
 Every variable comes from the verified run manifest. The future harness must use
-structured argument passing rather than interpolating untrusted strings.
+structured argument passing rather than interpolating untrusted strings. Each
+command also supplies the explicit run-local socket/host, port, role, database,
+`PGPASSFILE`, and, where applicable, unique `PGAPPNAME`; shortened examples below
+do not authorize defaults.
 
 ### A. Preflight and setup
 
 1. Confirm repository HEAD, operator identity, host load, free disk, Docker
    health, free loopback ports, and no other task using the chosen resources.
-2. Generate the run ID, exact names, credentials, artifact directory, and labels.
-3. Start two fresh `postgres:18.6-alpine` containers with separate volumes.
-4. Record container IDs, image digest, ports, and each server's
+2. Generate the run ID, exact names, credentials, artifact directory, and labels;
+   prove the planned resources do not exist.
+3. Create the protected host artifact directory and run-local credential files.
+4. Start two fresh `postgres:18.6-alpine` containers with separate data volumes,
+   with the artifact directory mounted read-write at `/nf04-output` in source and
+   read-only at `/nf04-input` in restore.
+5. Re-inspect the actual resources and record container/volume/network IDs, image
+   digest, ports, mounts, and labels.
+6. Through each container-initialized, explicitly named `_test` control database,
+   create the run-local roles and source database, but not the restore targets;
+   then record each server's actual
    `pg_control_system().system_identifier`.
-5. Prove all section 4 guards and write the redacted manifest before proceeding.
+7. Prove the applicable section 4 guards and write the redacted manifest before
+   proceeding.
 
 ### B. Create and validate source state
 
@@ -253,14 +321,28 @@ structured argument passing rather than interpolating untrusted strings.
 Equivalent protected command:
 
 ```powershell
-docker exec $sourceContainer pg_dump `
-  -U $sourceRole -d $sourceDatabase `
+docker exec -e PGPASSFILE=/run/secrets/nf04-source.pgpass `
+  $sourceContainer pg_dump `
+  -h /var/run/postgresql -p 5432 -U $sourceRole -d $sourceDatabase `
   -Fc --no-owner --no-privileges --lock-wait-timeout=5s `
-  -f /nf04-output/pre-delete.dump
+  -f /nf04-output/.pre-delete.dump.partial
 ```
 
-Enforce the dump timeout and size limit. Run `pg_restore --list`, record SHA-256,
-and mark the archive complete only when both checks succeed.
+The command refuses to start if either its partial or final path already exists.
+Enforce the dump timeout and size limit. After `pg_dump` exits successfully and
+the partial file handle is closed, run `pg_restore --list` against that partial
+file. If the archive table of contents is readable, use an exact-path host filesystem operation
+to rename it atomically to `pre-delete.dump` without overwriting another file.
+Record the final file's byte size and SHA-256 in the manifest and mark that
+recovery point complete. A timeout, nonzero exit, unreadable directory, rename
+failure, or size violation leaves a failed partial artifact that cannot be
+restored.
+
+Do not transfer the archive through stdout, a text pipeline, clipboard, or
+shell-encoded content. The restore container observes the same completed host file
+through its read-only `/nf04-input` mount. Immediately before restore, recompute
+size and SHA-256 from `/nf04-input/pre-delete.dump` and require exact equality with
+the fixed manifest values. This comparison is repeated for each recovery point.
 
 ### D. Delete the synthetic account
 
@@ -274,23 +356,42 @@ and mark the archive complete only when both checks succeed.
 ### E. Create the post-deletion archive
 
 Repeat the protected dump, archive-list, size, and checksum procedure into
-`post-delete.dump`. Do not overwrite the first archive.
+`.post-delete.dump.partial`, then atomically finalize `post-delete.dump`. Do not
+overwrite the first archive. Revalidate the source container and then stop it
+before any restore begins, so it can no longer write to `/nf04-output`.
 
 ### F. Restore both recovery points
 
-For each archive, first revalidate the restore server and prove that the named
-target database is fresh and empty. Then run the equivalent of:
+For each archive, first revalidate the restore server, create the named target from
+the verified control database, and prove that it is fresh and empty. Recompare the
+read-only archive size and SHA-256 with its fixed manifest entry. Assign a unique
+application name such as `mh-nf04-<run-id>-restore-pre`, and then run the equivalent
+of:
 
 ```powershell
-docker exec $restoreContainer pg_restore `
-  -U $restoreRole -d $restoreTarget `
+docker exec -e PGPASSFILE=/run/secrets/nf04-restore.pgpass `
+  -e "PGAPPNAME=$restoreApplicationName" $restoreContainer pg_restore `
+  -h /var/run/postgresql -p 5432 -U $restoreRole -d $restoreTarget `
   --single-transaction --exit-on-error --no-owner --no-privileges `
-  /nf04-output/<archive>.dump
+  /nf04-input/<archive>.dump
 ```
 
 Do not use `--clean`, `--create`, parallel jobs, selective table restore, or a
 previously failed target. A failed target can be dropped and recreated only after
-all exact identity and label guards are rerun.
+the original restore writer has been proven absent and all exact identity and
+label guards are rerun.
+
+Before launch, the initialization manager records the exact target database OID
+and proves that no session uses the unique application name. The harness records
+the local `pg_restore` child-process identity at launch. Because parallel jobs are
+disabled, one server backend performs each restore. As soon as it appears in
+`pg_stat_activity`, the manager records its `pid`, `backend_start`, target database
+OID/name, restore role OID/name, unique `application_name`, and connection
+endpoint. The manager does not read or record the `query` column. A PID without
+the matching `backend_start` and every other field is not the original writer and
+must never be signaled. If the command completes before observation, its known
+local exit result still requires proof that no backend with the unique identity
+remains before validation; an unknown client result always follows section 9.1.
 
 ### G. Quarantine, validate, and clean up
 
@@ -351,30 +452,87 @@ or raw errors into ordinary logs or the report.
 
 The future execution must prove fail-closed handling for:
 
-| Failure                                                              | Required behavior                                                                                |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Wrong database name, container, volume, network, label, or system ID | Stop before mutation; do not search for a substitute target.                                     |
-| Missing, altered, or unreadable archive                              | Fail archive listing/checksum; do not start restore.                                             |
-| PostgreSQL image or tool version mismatch                            | Stop before dump or restore.                                                                     |
-| Insufficient disk, excessive load, size limit, or timeout            | Stop and preserve bounded diagnostic evidence.                                                   |
-| Restore SQL or constraint failure                                    | `--single-transaction --exit-on-error` rolls back; verify no application objects became visible. |
-| Restore connection loss or client termination                        | Treat outcome as unknown; reconnect read-only and prove target state before cleanup or retry.    |
-| Account-deletion result unknown                                      | Do not take or label the post-deletion backup until exact reconciliation succeeds.               |
-| Validation mismatch                                                  | Quarantine both targets, mark the drill failed, and do not start an API.                         |
+| Failure                                                                  | Required behavior                                                                                                               |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| Wrong database name, container, volume, network, label, or system ID     | Stop before mutation; do not search for a substitute target.                                                                    |
+| Missing, altered, or unreadable archive                                  | Fail archive listing/checksum; do not start restore.                                                                            |
+| PostgreSQL image or tool version mismatch                                | Stop before dump or restore.                                                                                                    |
+| Insufficient disk, excessive load, size limit, or timeout                | Stop and preserve bounded diagnostic evidence.                                                                                  |
+| Restore SQL or constraint failure                                        | Treat the target as unresolved until the original backend exits; only then distinguish empty rollback from an anomalous target. |
+| Restore timeout, connection loss, or client termination                  | Treat outcome as unknown; identify and settle the exact original backend before inspecting, cleaning, or retrying.              |
+| Restore reports success but backend identity or validation is unresolved | Keep the target quarantined; do not promote command success into a verified restore.                                            |
+| Account-deletion result unknown                                          | Do not take or label the post-deletion backup until exact reconciliation succeeds.                                              |
+| Validation mismatch                                                      | Quarantine both targets, mark the drill failed, and do not start an API.                                                        |
 
 A restore failure is never retried over the same partially used target. The target
-is proven empty or is recreated under the exact guarded name. A process exit code
-alone is insufficient evidence of rollback.
+is proven empty or is recreated under the exact guarded name. A process exit code,
+a disconnected client, or a temporary read-only view with no application tables is
+insufficient evidence of rollback.
+
+### 9.1 Restore-writer reconciliation
+
+Each restore has a 180-second operation deadline and the exact server-side identity
+recorded in section 7F. On timeout, client loss, termination, or an otherwise
+unknown outcome:
+
+1. stop all new work for that target and keep the target and restore server
+   quarantined;
+2. stop or cancel the exact recorded local launcher/Docker exec process and wait
+   within the bounded deadline until it exits, so it cannot create a later server
+   connection;
+3. connect as the run-local initialization manager through the verified restore
+   control database and revalidate the restore container ID and system ID;
+4. query `pg_stat_activity` without selecting `query`, restricting by the recorded
+   target database OID/name, restore role OID/name, and unique application name. If
+   a single still-active match was not recorded earlier, record its `pid` and
+   `backend_start` now; more than one match is an anomaly and no backend is
+   signaled;
+5. if the exact backend still exists, request cancellation and wait within the
+   bounded reconciliation deadline for that exact `(pid, backend_start)` to
+   disappear;
+6. if it remains, and only while all identity fields still match, use
+   `pg_terminate_backend(pid, positive_timeout_ms)` as initialization manager, then
+   independently query until the exact backend is absent; and
+7. require that no other restore-role or drill application-name connection exists
+   for the target before opening a validation connection.
+
+PostgreSQL documents that `pg_terminate_backend` with its default zero timeout
+returns true when the signal was sent, whether or not the process has actually
+terminated. This runbook therefore requires a positive timeout and an independent
+absence check. If the local launcher cannot be proven exited, the PID has been
+reused, `backend_start` differs, another field does not match, the server cannot be
+reached, or absence cannot be proven before the reconciliation deadline, do not
+signal an uncertain backend and do not inspect or reuse the target. Preserve
+quarantine and mark the outcome Not verified.
+
+Only after the original writer is proven absent may validation classify the target
+as one of:
+
+- a complete restore whose full section 8 checks pass;
+- a proven empty rollback with no application objects and no restore writer; or
+- an anomalous/partial state that stays quarantined and is never reused.
+
+The restore target is never treated as empty merely because uncommitted objects
+are invisible to another MVCC snapshot. No second restore, target drop, container
+stop, or failed-target cleanup starts while the original writer might exist. A
+recreated target receives the same exact name only after its previous catalog row
+is dropped under the verified manager identity and the absence check is repeated;
+the prior outcome remains recorded as failed/unknown.
 
 ## 10. Resource and secret cleanup
 
 Cleanup is explicit and recoverable until validation evidence is complete:
 
-1. stop the exact source and restore container IDs recorded in the manifest;
-2. inspect and revalidate their names and run labels;
-3. remove those two containers only;
-4. inspect and revalidate the two exact volume names and the network label;
-5. remove those two volumes and the one network only;
+1. while the containers are still present, inspect the exact recorded IDs and
+   verify their current names, image digest, mounts, ports, run/role labels, and
+   the recorded volume and network IDs/labels;
+2. prove no restore writer remains and, when each database is responsive, confirm
+   its recorded system ID through the verified control database;
+3. stop and remove only those two verified container IDs;
+4. re-inspect the exact recorded volume and network IDs, names, and labels after
+   container removal, then remove only those two volumes and that one network;
+5. if an expected object is already absent, record it as absent; if the same name
+   resolves to a different object ID, leave it untouched and fail cleanup review;
 6. resolve every artifact path and require it to be a child of the exact NF-04 run
    directory;
 7. remove secret environment files and database archives; and
@@ -386,7 +544,43 @@ deletion, a recursive delete against a computed broad directory, or the project'
 normal Compose resources. A cleanup mismatch stops cleanup and requests manual
 review rather than guessing.
 
+If a database that should be responsive cannot provide its system ID, automated
+cleanup stops. If the database is already known to be unresponsive, exact current
+Docker object ID/name/image/mount/label verification may authorize stopping that
+container only; its data volume and artifacts remain quarantined for manual review.
+Unavailability is never treated as a successful identity check or permission to
+remove a volume.
+
 ## 11. Evidence and acceptance checklist
+
+### 11.1 Static procedure walkthrough
+
+This table is a documentation review of the future path. It is not evidence that
+any drill step has run.
+
+| Step                   | Available input and acting identity                                                             | Required guard                                                                                                         | Success condition                                                   | Failure exit                                                        |
+| ---------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Plan and create        | Approved image digest, run ID, exact absent names, operator, initialization manager credentials | Planned-state checks in section 4                                                                                      | Exact Docker IDs/labels/mounts and canonical artifact path recorded | Create nothing further; leave foreign/same-name resources untouched |
+| Initialize source      | Verified source control database; initialization manager, then source/migration role            | Container/system identity; application-role/source-database catalog absence; explicit `_test` control and target names | Roles/source database created, migrations 0000-to-head applied      | Stop before fixture; retain bounded diagnostics                     |
+| Load fixture           | Approved test-only loader and stable synthetic IDs; source/migration role                       | Exact source DB, `APP_ENV=test`, migration head, fixture bounds                                                        | Complete synthetic relationship set validates                       | Roll back loader; no archive                                        |
+| Pre-deletion archive   | Quiescent populated source; source role; writable partial path                                  | Source identity, zero app sessions, path absent, resource/time limits                                                  | Finalized unique-name archive plus fixed size/digest evidence       | Partial remains unusable; no final recovery point                   |
+| Controlled deletion    | Isolated API connection and stable operation ID                                                 | Exact source identity, only isolated API active, Development/Test feature rules                                        | Confirmed API result and verified post-delete rows                  | Unknown result stops sequence; reconcile same operation only        |
+| Post-deletion archive  | Quiescent verified post-delete source                                                           | Same dump/path guards with distinct absent filename                                                                    | Second final archive plus independent size/digest evidence          | No post-delete recovery point                                       |
+| Create restore targets | Verified restore control DB and initialization manager                                          | Exact restore IDs/system ID; each target absent from catalog                                                           | Two fresh `_test` targets owned by restore role                     | Do not connect to or drop any substitute target                     |
+| Restore each archive   | Fixed manifest evidence, read-only archive mount, restore role                                  | Target empty; archive size/digest match; no target sessions                                                            | Command returns and exact restore backend exits                     | Reconcile section 9.1; quarantine on uncertainty                    |
+| Validate               | Offline restored target and exact synthetic expectations; restore role                          | Writer absent, exact target/system ID, no API connections                                                              | Section 8 schema/data/lifecycle checks pass                         | Quarantine; never start API                                         |
+| Cleanup                | Recorded Docker/database/artifact identities; initialization manager/operator                   | Pre-stop identity checks, writer absence, canonical child paths                                                        | Only exact run resources and secrets removed                        | Stop cleanup; do not touch same-name replacements                   |
+
+The required negative walkthroughs are also bounded:
+
+- a missing/mismatched resource ID, label, system ID, database, or path stops
+  before mutation and never substitutes a same-name object;
+- a partial, transferred-but-mismatched, or unreadable archive never enters
+  restore and never replaces a completed recovery point; and
+- a restore timeout or disconnect remains unknown until the exact writer exits;
+  inability to prove that exit keeps the target isolated and blocks retry/cleanup.
+
+### 11.2 Acceptance evidence
 
 The run report must bind evidence to the repository commit, migration head,
 PostgreSQL image digest, run ID, container/system IDs, archive checksums, and exact
@@ -432,3 +626,9 @@ Therefore the production state remains unchanged. `AI_KNOWLEDGE_ENABLED` remains
 false by default, the three candidate articles remain unverified and unpublished,
 and this runbook does not enable production AI or close the backup/restore and
 account-deletion production blockers.
+
+`ACCOUNT_DELETION_ENABLED` remains false by default and may be enabled only for
+the bounded Development/Test source step described here. `ADMIN_AUTH_ENABLED`
+remains false. The Production Safety Lock remains Enforced, Production AI Chat
+remains Disabled, `productionSafe=false`, and real model safety evaluation remains
+Not evaluated.
