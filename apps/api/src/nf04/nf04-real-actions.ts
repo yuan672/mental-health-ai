@@ -880,7 +880,7 @@ export class SystemNf04RealActionRuntime implements Nf04RealActionRuntime {
     await this.assertLiveDocker(manifest, 'source');
     await this.assertSourceQuiescent(manifest);
     await this.command('docker', ['stop', '--time', '10', source.id]);
-    await this.assertLiveDocker(manifest, 'source', 'stopped');
+    await this.assertLiveDocker(manifest, 'source', 'stopped', 'source-stopped');
   }
 
   async restore(
@@ -894,7 +894,7 @@ export class SystemNf04RealActionRuntime implements Nf04RealActionRuntime {
     }>,
   ): Promise<Nf04RestoreAttempt> {
     await this.assertCleanCheckout(manifest.repositoryRoot);
-    await this.assertLiveDocker(manifest, 'restore');
+    await this.assertLiveDocker(manifest, 'restore', 'running', 'source-stopped');
     const restoreContainer = this.requireContainer(manifest, 'restore');
     const names = deriveNf04ExpectedNames(manifest.runId);
     const target = kind === 'pre-delete' ? names.preRestoreDatabase : names.postRestoreDatabase;
@@ -957,7 +957,7 @@ export class SystemNf04RealActionRuntime implements Nf04RealActionRuntime {
         }),
         undefined,
         async () => {
-          await this.assertLiveDocker(manifest, 'restore');
+          await this.assertLiveDocker(manifest, 'restore', 'running', 'source-stopped');
           await this.assertRestoreControlIdentity(manifest, manager.pool);
           await this.assertRestoreTargetEmpty(
             manifest,
@@ -1034,8 +1034,8 @@ export class SystemNf04RealActionRuntime implements Nf04RealActionRuntime {
 
   async cleanup(manifest: Nf04ExecutableManifest): Promise<void> {
     await this.assertCleanCheckout(manifest.repositoryRoot);
-    await this.assertLiveDocker(manifest, 'source', 'stopped');
-    await this.assertLiveDocker(manifest, 'restore', 'running');
+    await this.assertLiveDocker(manifest, 'source', 'stopped', 'source-stopped');
+    await this.assertLiveDocker(manifest, 'restore', 'running', 'source-stopped');
     const source = this.requireContainer(manifest, 'source');
     const restore = this.requireContainer(manifest, 'restore');
     const executions = manifest.observed.executions;
@@ -1469,6 +1469,7 @@ export class SystemNf04RealActionRuntime implements Nf04RealActionRuntime {
     manifest: Nf04ExecutableManifest,
     role: 'source' | 'restore',
     expectedState: 'running' | 'stopped' = 'running',
+    expectedNetworkMembership: 'both-running' | 'source-stopped' = 'both-running',
   ): Promise<void> {
     this.assertDocker(manifest);
     const live = await this.dockerInspector.inspectRecorded(
@@ -1487,11 +1488,12 @@ export class SystemNf04RealActionRuntime implements Nf04RealActionRuntime {
       network: manifest.observed.network!,
     };
     assertLiveNf04DockerEvidence(recorded, live);
-    await this.assertExclusiveDockerMembership(manifest);
+    await this.assertExclusiveDockerMembership(manifest, expectedNetworkMembership);
   }
 
   private async assertExclusiveDockerMembership(
     manifest: Nf04ExecutableManifest | Nf04Manifest,
+    expectedNetworkMembership: 'both-running' | 'source-stopped' = 'both-running',
   ): Promise<void> {
     const source = manifest.observed.sourceContainer;
     const restore = manifest.observed.restoreContainer;
@@ -1537,8 +1539,12 @@ export class SystemNf04RealActionRuntime implements Nf04RealActionRuntime {
     } catch {
       fail('Docker network membership evidence is invalid');
     }
+    const expectedMembers =
+      expectedNetworkMembership === 'source-stopped'
+        ? [restore.id]
+        : [restore.id, source.id].sort();
     if (
-      JSON.stringify(members!) !== JSON.stringify([restore.id, source.id].sort()) ||
+      JSON.stringify(members!) !== JSON.stringify(expectedMembers) ||
       JSON.stringify([...lineSet(sourceUsersRaw)].sort()) !== JSON.stringify([source.id]) ||
       JSON.stringify([...lineSet(restoreUsersRaw)].sort()) !== JSON.stringify([restore.id])
     ) {
