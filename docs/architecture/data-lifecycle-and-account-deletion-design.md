@@ -1,6 +1,8 @@
 # Data Lifecycle and Account Deletion Decision Design
 
-- Status: Proposed for review
+- Status: Accepted engineering design for the Development/Test-only, controlled
+  single-process local learning/demo scope
+- Accepted: 2026-09-13 through ADR-022
 - Scope: NF-02 data-lifecycle and account-deletion decision design
 - Baseline: `develop@bc7f4a72adcfd44a8cc3e2e36cf4d5740874ad6c`
 - Delivery: documentation only; no API, schema, migration, scheduler, backup, or
@@ -136,9 +138,9 @@ ADR-015, ADR-016, ADR-019, and ADR-021.
 
 ## 3. Candidate account-deletion contract
 
-The recommendation below is proportionate to the current single-process local
-learning/demo target. It must be accepted before implementation and does not close
-production retention, backup, provider, or multi-instance requirements.
+The accepted recommendation below is proportionate to the current single-process
+local learning/demo target. It does not close production retention, backup,
+provider, crash/rolling-overlap, or multi-instance requirements.
 
 ### 3.1 Recommended public command
 
@@ -280,7 +282,7 @@ own a database transaction. Crash/rolling overlap and cross-instance protection
 remain Production blockers; this proposal claims only the controlled single-process
 local/demo lifecycle.
 
-### 3.3 Proposed deletion Audit shape
+### 3.3 Accepted deletion Audit shape
 
 To avoid creating a new long-lived User linkage solely for deletion, recommend:
 
@@ -503,11 +505,9 @@ existing lifecycle rules; it must not redefine each domain's retention policy.
 | Unknown result              | No durable account-delete receipt exists.                                                | Wait on the original User-row serialization point, then interpret User/Audit state only with the still-live internal attempt binding; otherwise report unknown honestly and retain fail-closed protection. | Whether a durable privacy-reviewed status channel is required for a public product.      |
 | Backups/providers/log sinks | No repository operation controls these external copies.                                  | State the boundary accurately and keep Production deletion claims disabled until policies and procedures are approved and tested.                                                                          | Backup/restore/deletion, provider, and log-sink decisions.                               |
 
-No Accepted ADR is changed by this document. An implementation should either add a
-new ADR for the accepted account-deletion contract or record an explicit decision
-that the scoped implementation is a composition of ADR-011, ADR-012, ADR-014,
-ADR-016, ADR-017, ADR-019, and ADR-021. This document must not be treated as that
-acceptance.
+ADR-022 accepts this bounded engineering contract and refines the relevant lifecycle
+composition from ADR-011, ADR-012, ADR-014, ADR-016, ADR-017, ADR-019, and ADR-021.
+It supersedes none of them and does not accept a production data policy.
 
 ## 6. Minimal implementation split and rollback boundaries
 
@@ -595,26 +595,26 @@ build, and CI on the exact final head. A docs-only decision PR needs formatting,
 diff/link checks, and its normal repository CI; it does not manufacture runtime
 test evidence.
 
-## 8. Decisions required before implementation
+## 8. Accepted implementation boundary and production decisions
 
-The following choices materially affect the first implementation and remain
-Proposed:
+The following choices materially affect the first implementation and are accepted
+only for the Development/Test, controlled single-process local/demo scope:
 
-1. **Accept or reject the local/demo deletion graph.** The recommendation is to
-   cascade the ordinary User-owned graph, retain independently expiring Risk/Audit
-   records, and add no retained account identifier or durable public receipt.
-2. **Accept the password-reauthenticated command boundary.** The recommendation is
-   a current Session plus current password, Origin, and CSRF. An account without a
-   usable password credential would need a separately designed strong reauth path;
-   none exists today.
-3. **Accept operation-scoped Audit without retained User identity.** The
-   recommendation binds subject and attempt only in fixed-capacity process memory,
-   requires a newly inserted Audit for the destructive transaction, and treats any
+1. **Local/demo deletion graph.** Cascade the ordinary User-owned graph, retain
+   independently expiring Risk/Audit records, and add no retained account identifier
+   or durable public receipt.
+2. **Password-reauthenticated command boundary.** Require a current Session plus
+   current password, Origin, and CSRF. An account without a usable password
+   credential would need a separately designed strong reauth path; none exists
+   today.
+3. **Operation-scoped Audit without retained User identity.** Bind subject and
+   attempt only in fixed-capacity process memory, require a newly inserted Audit for
+   the destructive transaction, and treat any
    unowned/pre-existing global operation key as conflict. This deliberately gives
    no indefinite exact-replay proof after registry release or restart. Retaining a
    former User UUID would expand sensitive-data retention and needs a separate
    decision.
-4. **Accept honest bounded unknown-result handling and its availability cost.**
+4. **Honest bounded unknown-result handling and its availability cost.**
    Serialized database confirmation waits for the original User-row operation;
    uncertainty retains a terminal marker without a TTL. This can consume finite
    capacity and deny the affected User's new AI/Incognito work. Without a durable
@@ -631,10 +631,10 @@ account re-registration/recovery policy.
 
 ## 9. Status and evidence index
 
-At the baseline commit:
+At the design baseline commit:
 
 - account deletion is **not implemented**;
-- this proposal is **not Accepted architecture**;
+- this design is accepted only within ADR-022's narrow engineering boundary;
 - no schema, migration, API, cleanup command, UI, or production policy was changed;
 - Phase 5 user-facing features and completed backend/Admin batches keep their
   existing status;

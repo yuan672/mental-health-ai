@@ -225,21 +225,21 @@ controls.
   PR #37. It adds no schema, dependency, external service, or frontend work and
   does not approve production thresholds, proxy trust, cross-instance enforcement,
   deployment, or production enablement.
-- NF-02 data lifecycle and account deletion is in design review on
-  `feature/data-lifecycle-deletion-design`. The proposal inventories current
-  deletion, retention, foreign-key, process-memory, log, backup, and provider
-  boundaries and recommends a minimal local/demo account-deletion contract. No
-  account-deletion API, schema, migration, scheduler, or production retention
-  policy is implemented by that design work.
+- ADR-022 accepts the NF-02 data-lifecycle and account-deletion architecture only
+  for a Development/Test, controlled single-process local/demo backend. PR #38 is
+  the pending design delivery. No account-deletion API, schema, migration,
+  scheduler, production retention policy, crash/rolling-overlap protection, or
+  production recovery guarantee is delivered by the design.
 
 ## Immediate Next Step
 
 Use `docs/backend-integration-handoff.md` as the backend capability and protocol
 index for the user-owned replacement frontend. Knowledge AI-B and every Admin UI
 remain pending client work; keep augmentation and Admin HTTP disabled by default,
-and retain the v2 reader plus v1 history guard. Review the proposed NF-02 lifecycle
-matrix and account-deletion contract before authorizing implementation; account
-deletion does not exist yet. The three candidate articles remain unverified and
+and retain the v2 reader plus v1 history guard. Merge the accepted NF-02 design only
+after its exact-head review and CI, then review the separately authorized local/demo
+backend implementation; account deletion does not exist yet. The three candidate
+articles remain unverified and
 unpublished, and production policy/content review and real-model evaluation remain
 separate work.
 

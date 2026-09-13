@@ -23,6 +23,7 @@ Accepted decisions:
 19. ADR-019 LLM Knowledge Retrieval and Citation Boundaries
 20. ADR-020 Admin Identity and Least-Privilege Backend Boundaries
 21. ADR-021 Minimum HTTP Rate Limiting and Abuse Protection
+22. ADR-022 Account Deletion and Data Lifecycle Boundaries
 
 Proposed decisions:
 
