@@ -12,6 +12,8 @@ import {
   InvalidCredentialsError,
   RateLimitError,
 } from '../common/errors';
+import { AppError } from '../common/errors/app-error';
+import { ERROR_CODES } from '../common/errors/error-code';
 import { env } from '../config/env';
 import {
   AccountTerminationCapacityError,
@@ -29,6 +31,7 @@ type Attempt = {
   readonly operationId: string;
   readonly token: string;
   mutationStarted: boolean;
+  terminalInstalled: boolean;
   ownAuditInserted: boolean;
   run: Promise<void> | null;
 };
@@ -90,6 +93,7 @@ export class AccountDeletionService {
       operationId,
       token: randomUUID(),
       mutationStarted: false,
+      terminalInstalled: false,
       ownAuditInserted: false,
       run: null,
     };
@@ -104,7 +108,7 @@ export class AccountDeletionService {
     signal: AbortSignal,
     deadlineAt: Date,
   ): Promise<void> {
-    if (attempt.run) return this.waitFor(attempt.run, signal);
+    if (attempt.run) return this.waitFor(attempt, attempt.run, signal);
     const currentRun = this.perform(attempt, session, signal, deadlineAt);
     attempt.run = currentRun;
     void currentRun
@@ -112,7 +116,7 @@ export class AccountDeletionService {
         if (attempt.run === currentRun) attempt.run = null;
       })
       .catch(() => undefined);
-    await this.waitFor(currentRun, signal);
+    await this.waitFor(attempt, currentRun, signal);
   }
 
   private async perform(
@@ -129,6 +133,9 @@ export class AccountDeletionService {
           attemptToken: attempt.token,
           signal,
           deadlineAt,
+          onTerminalInstalled: () => {
+            attempt.terminalInstalled = true;
+          },
         },
         () => this.mutateOrConfirm(attempt, session, signal, deadlineAt),
       );
@@ -137,8 +144,10 @@ export class AccountDeletionService {
         this.release(attempt);
         throw new RateLimitError('账号删除操作容量已满，请稍后重试');
       }
-      if (!attempt.mutationStarted) this.release(attempt);
-      if (attempt.mutationStarted) throw new AccountDeletionResultUnknownError();
+      if (!attempt.mutationStarted && !attempt.terminalInstalled) this.release(attempt);
+      if (attempt.mutationStarted || attempt.terminalInstalled) {
+        throw new AccountDeletionResultUnknownError();
+      }
       throw error;
     }
 
@@ -224,13 +233,25 @@ export class AccountDeletionService {
     throw new DatabaseError();
   }
 
-  private waitFor(run: Promise<void>, signal: AbortSignal): Promise<void> {
-    if (signal.aborted) return Promise.reject(signal.reason);
+  private waitFor(attempt: Attempt, run: Promise<void>, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.reject(this.waitError(attempt, signal));
     return new Promise<void>((resolve, reject) => {
-      const aborted = () => reject(signal.reason ?? new Error('client_disconnect'));
+      const aborted = () => reject(this.waitError(attempt, signal));
       signal.addEventListener('abort', aborted, { once: true });
       run.then(resolve, reject).finally(() => signal.removeEventListener('abort', aborted));
     });
+  }
+
+  private waitError(attempt: Attempt, signal: AbortSignal): unknown {
+    const reason = signal.reason ?? new Error('client_disconnect');
+    if (
+      (attempt.mutationStarted || attempt.terminalInstalled) &&
+      reason instanceof AppError &&
+      reason.code === ERROR_CODES.INTERNAL_ERROR
+    ) {
+      return new AccountDeletionResultUnknownError();
+    }
+    return reason;
   }
 
   private release(attempt: Attempt): void {

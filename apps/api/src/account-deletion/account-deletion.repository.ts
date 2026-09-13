@@ -16,6 +16,8 @@ export const ACCOUNT_DELETION_REPOSITORY_HOOKS = Symbol('ACCOUNT_DELETION_REPOSI
 
 export type AccountDeletionRepositoryHooks = Readonly<{
   afterCommitted?: (input: { userId: string; operationId: string }) => void | Promise<void>;
+  afterUserLocked?: () => void | Promise<void>;
+  afterSessionValidated?: () => void | Promise<void>;
   afterRequiredAuditInserted?: () => void | Promise<void>;
   whileConfirmationUserLockPending?: () => void | Promise<void>;
 }>;
@@ -69,7 +71,6 @@ export class AccountDeletionRepository {
     const idempotencyKey = this.auditKey(input.operationId);
     await this.database.database.transaction(async (transaction) => {
       await this.setTimeouts(transaction, input.deadlineAt);
-      const observedAt = await this.observedAt(transaction);
       const [owner] = await transaction
         .select({ id: users.id })
         .from(users)
@@ -77,6 +78,7 @@ export class AccountDeletionRepository {
         .limit(1)
         .for('update');
       if (!owner) throw new AccountDeletionRepositoryPreconditionError('user_missing');
+      await this.hooks.afterUserLocked?.();
 
       const [session] = await transaction
         .select({
@@ -89,6 +91,7 @@ export class AccountDeletionRepository {
         .where(and(eq(sessions.id, input.session.id), eq(sessions.userId, input.userId)))
         .limit(1)
         .for('update');
+      const observedAt = await this.observedAt(transaction);
       if (
         !session ||
         session.revokedAt !== null ||
@@ -96,6 +99,7 @@ export class AccountDeletionRepository {
       ) {
         throw new AccountDeletionRepositoryPreconditionError('session_invalid');
       }
+      await this.hooks.afterSessionValidated?.();
 
       const [existingAudit] = await transaction
         .select({ id: auditLogs.id })
@@ -186,7 +190,7 @@ export class AccountDeletionRepository {
   private async observedAt(
     transaction: Parameters<Parameters<typeof this.database.database.transaction>[0]>[0],
   ): Promise<Date> {
-    const result = await transaction.execute(sql`SELECT transaction_timestamp() AS observed_at`);
+    const result = await transaction.execute(sql`SELECT clock_timestamp() AS observed_at`);
     const row = result.rows[0] as { observed_at?: Date | string } | undefined;
     if (!row?.observed_at) throw new Error('database_observation_time_missing');
     return row.observed_at instanceof Date ? row.observed_at : new Date(row.observed_at);

@@ -246,6 +246,7 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
       attemptToken: string;
       signal: AbortSignal;
       deadlineAt: Date;
+      onTerminalInstalled?: () => void;
     },
     operation: () => Promise<AccountTerminationCoordinationOutcome<T>>,
   ): Promise<AccountTerminationCoordinationOutcome<T>> {
@@ -260,6 +261,7 @@ export class ConsentExecutionCoordinator implements ConsentDispatchGuard {
         }
         this.accountTerminals.set(input.userId, input.attemptToken);
       }
+      input.onTerminalInstalled?.();
 
       try {
         this.activeExecutions.abortUser(input.userId, 'account_deletion');

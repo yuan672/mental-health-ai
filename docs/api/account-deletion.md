@@ -39,8 +39,10 @@ and clears idle and active Incognito contexts. New Consent binding, Incognito
 creation, Provider dispatch, output emission, message append, and completion fail
 closed while an unresolved marker remains.
 
-The database transaction locks the authenticated User and exact Session, checks one
-database observation time, rejects a pre-existing deletion Audit key, inserts the
+The database transaction locks the authenticated User and exact Session, then reads
+one `clock_timestamp()` observation for the final Session-expiry decision and the
+required Audit time. An early HTTP Session guard never substitutes for this locked
+check. The transaction rejects a pre-existing deletion Audit key, inserts the
 required content-free Audit, and deletes exactly one User. The existing foreign-key
 graph removes ordinary identity, Session, Consent, Conversation, Message, AI Turn,
 Mood, and Quota rows. Risk Events retain their independent deadline with User/chat
@@ -52,6 +54,23 @@ transaction waits on the same User serialization point before checking the exact
 Audit. Until commit or rollback is attributable to the live attempt, the public
 result is `ACCOUNT_DELETION_RESULT_UNKNOWN` and runtime processing remains blocked.
 The server does not claim rollback merely because a normal read cannot see a row.
+
+If the request deadline expires while a connected caller is waiting after the
+terminal/destructive boundary, the response uses that same deletion-specific
+unknown result and does not clear cookies. The one server-owned mutation or
+confirmation continues; it is not restarted. A real client disconnect suppresses
+response delivery but likewise does not cancel work that has crossed the boundary.
+
+## Controlled local/demo shutdown
+
+The runtime marker and exact-retry binding are process-local. Before replacing the
+single local/demo API process, stop admitting traffic and wait until account-
+deletion diagnostics report no unresolved attempts, account-terminal diagnostics
+report no terminals, and the shared per-User coordination lock reports no holders
+or waiters. Do not start an overlapping replacement while any of those values is
+non-zero. If the process crashes or cannot drain, absence of those in-memory values
+in a replacement process is not commit/rollback evidence. Cross-instance and crash
+recovery remain Production blockers; this runbook does not claim them.
 
 ## Errors and privacy
 

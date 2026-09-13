@@ -229,7 +229,10 @@ controls.
   for a Development/Test, controlled single-process local/demo backend. PR #38 is
   merged; the separate `feature/account-deletion-backend` implementation adds the
   bounded API and tests without a Schema/Migration or frontend change and remains
-  pending review. No scheduler, production retention policy, crash/rolling-overlap
+  a Draft PR pending review. Its final-readiness repair closes locked Session-time
+  observation, connected-request timeout reporting after lifecycle admission,
+  unresolved-terminal retry ownership, and the corresponding real PostgreSQL/socket
+  evidence. No scheduler, production retention policy, crash/rolling-overlap
   protection, or production recovery guarantee is delivered.
 
 ## Immediate Next Step
