@@ -72,3 +72,4 @@ export {
   type KnowledgeReviewStatus,
   type StaffPrincipalStatus,
 } from './schema.js';
+export type { Pool, PoolClient, QueryResult } from 'pg';

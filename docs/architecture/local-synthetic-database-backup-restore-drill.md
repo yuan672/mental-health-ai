@@ -2,8 +2,9 @@
 
 ## Status
 
-- Scope: NF-04 local learning/demo design and runbook draft
-- Delivery: documentation only
+- Scope: NF-04 local learning/demo design plus protected tooling under review
+- Delivery: fixture loader and minimum orchestration harness are implemented on a
+  feature branch; the first drill remains separately gated
 - Drill execution: not performed
 - Production backup readiness: not established
 - Production Safety Lock: Enforced
@@ -44,7 +45,7 @@ The drill is not:
 - a substitute for approved backup retention, encryption, access, and deletion
   policies.
 
-No ADR is required for this runbook draft. It details the already-recorded
+No ADR is required for this runbook and bounded tooling. It details the already-recorded
 backup/restore verification gap without changing a binding architecture
 decision. A durable deletion-suppression mechanism, a production retention
 policy, or production recovery objectives would require a separate decision.
@@ -243,8 +244,58 @@ The fixture should contain stable, predeclared IDs for:
 The fixture must not contain actual psychological chat, real email addresses,
 real credentials, candidate knowledge articles, real crisis resources, or real
 Provider data. It must not mark synthetic Knowledge as curated production
-content. Fixture loading may use a reviewed, test-only command or narrowly
-reviewed SQL transaction; this document deliberately does not implement either.
+content.
+
+### 5.1 Protected loader and harness boundary
+
+The repository now contains a narrow NF-04 implementation under review:
+
+- `Nf04DrillHarness` fixes the phase order and stops at an unknown account-
+  deletion or restore result. Each real side effect remains an injected action so
+  unit tests cannot accidentally start Docker or call the deletion endpoint.
+- `Nf04ArchiveManager` constructs fixed `pg_dump` and `pg_restore --list`
+  argument arrays, rejects pre-existing output, enforces the size and timeout
+  boundaries, verifies the first archive before allowing the second, enforces the
+  512 MiB aggregate budget, and uses a same-directory no-clobber publication
+  before recording size and SHA-256 evidence.
+- `Nf04RestoreCoordinator` treats timeout, client loss, and nonzero completion as
+  unknown. It first settles the exact local launcher, then delegates exact
+  backend identity, cancellation, termination, and independent absence proof to
+  a bounded monitor. Caller cancellation stops the launcher but cannot cancel
+  this bounded writer cleanup. The coordinator never labels reconciliation as a
+  successful restore.
+- `Nf04DockerInspector` reads only exact recorded container/network IDs and the
+  recorded volume name. It compares live IDs, labels, image, mounts, loopback
+  port, volume mountpoint/driver, and network evidence; it does not discover a
+  substitute by a broad name search.
+- `loadNf04Fixture` checks `APP_ENV=test`, exact database name/OID/system ID/role,
+  and the full ordered migration-hash history before opening one transaction.
+  Stable synthetic
+  IDs cover the relationships in section 5. Exact re-entry validates the whole
+  fixture; partial or conflicting state fails without being overwritten.
+
+The only installed command entry is deliberately narrow:
+
+```text
+pnpm --filter @mental-health/api nf04:drill validate-manifest <absolute-manifest-path>
+pnpm --filter @mental-health/api nf04:drill load-fixture <absolute-manifest-path>
+```
+
+The command reads no repository `.env`, accepts no connection string or password
+on the command line, emits only allowlisted run metadata, and obtains credentials
+from the exact protected run-local file named by the redacted manifest. Loading
+also performs a fresh exact Docker inspection and database identity query. The
+full harness is not exposed as an executable command in this batch because its
+real resource-creation, account-deletion HTTP, and database-backend-monitor
+adapters have not yet received execution review. This is a fail-closed staged
+delivery, not an invitation to call internal classes manually.
+
+Tests use fake process/Docker/backend adapters and temporary filesystem paths for
+archive and restore failure paths. One integration suite creates a uniquely
+named database ending in `_test` on an already protected test server, migrates it
+from zero, loads or rejects the fixture, and drops only that exact generated
+database after rechecking the PostgreSQL system identity. That limited database
+test is not the two-container drill and does not produce an archive.
 
 ## 6. Consistency point and process quiescence
 
@@ -603,6 +654,12 @@ The first execution is accepted only when:
 - exact resources and secrets were cleaned up; and
 - the report says **Local synthetic drill passed** rather than **Production
   recovery ready**.
+
+The tooling tests completed before that first execution do not satisfy this
+checklist. In particular, actual PostgreSQL 18.6 image startup, migrations inside
+the source container, `pg_dump`, `pg_restore --list`, both archive handoffs,
+account deletion, restore-writer observation/exit, restored-data validation, and
+resource cleanup remain **Not verified** until the separately authorized drill.
 
 ## 12. Production readiness still open
 
