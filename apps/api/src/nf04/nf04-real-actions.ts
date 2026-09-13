@@ -63,6 +63,11 @@ import {
   type Nf04AvailableBytesReader,
 } from './nf04-preparation';
 import type { Nf04ProcessRunner, Nf04RunningProcess } from './nf04-process';
+import {
+  Nf04ReadinessDeadlineError,
+  waitForNf04Readiness,
+  waitForNf04ReadinessInterval,
+} from './nf04-readiness';
 import { Nf04RestoreCoordinator, PostgresNf04RestoreBackendMonitor } from './nf04-restore';
 import {
   WindowsNf04StableFileCleanupAdapter,
@@ -1628,16 +1633,23 @@ export class SystemNf04RealActionRuntime implements Nf04RealActionRuntime {
   }
 
   private async waitForDatabase(pool: Pool): Promise<void> {
-    const deadline = Date.now() + this.config.operationTimeoutMs;
-    while (Date.now() < deadline) {
-      try {
-        await pool.query('SELECT 1');
-        return;
-      } catch {
-        await boundedWait(100);
-      }
+    try {
+      await waitForNf04Readiness({
+        timeoutMs: this.config.operationTimeoutMs,
+        retryIntervalMs: 100,
+        probe: async () => {
+          try {
+            await pool.query('SELECT 1');
+            return true;
+          } catch {
+            return false;
+          }
+        },
+      });
+    } catch (error) {
+      if (!(error instanceof Nf04ReadinessDeadlineError)) throw error;
+      fail('database readiness deadline expired');
     }
-    fail('database readiness deadline expired');
   }
 
   private fixtureSecrets(manifest: Nf04ExecutableManifest) {
@@ -2100,7 +2112,7 @@ async function waitForHealth(
   while (Date.now() < deadline) {
     const exited = await Promise.race([
       process.result.then(() => true),
-      boundedWait(100).then(() => false),
+      waitForNf04ReadinessInterval(100).then(() => false),
     ]);
     if (exited) fail('isolated API exited before readiness');
     try {
@@ -2135,13 +2147,6 @@ async function safeErrorCode(response: Response): Promise<string | undefined> {
   } catch {
     return undefined;
   }
-}
-
-function boundedWait(milliseconds: number): Promise<void> {
-  return new Promise((resolvePromise) => {
-    const timer = setTimeout(resolvePromise, milliseconds);
-    timer.unref();
-  });
 }
 
 async function withNf04ValidationView<T>(
