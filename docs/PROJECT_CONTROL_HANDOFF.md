@@ -235,6 +235,11 @@ controls.
   and the corresponding real PostgreSQL/socket behavior. No scheduler, production
   retention policy, crash/rolling-overlap protection, or production recovery
   guarantee is delivered.
+- NF-04 has a documentation-only local synthetic PostgreSQL backup/restore drill
+  contract. No backup or restore has been executed. The plan uses two
+  isolated PostgreSQL 18.6 instances, synthetic data, guarded `_test` targets, and
+  pre-/post-account-deletion recovery points; production backup, restore, deletion
+  suppression, retention, encryption, and recovery objectives remain unresolved.
 
 ## Immediate Next Step
 
