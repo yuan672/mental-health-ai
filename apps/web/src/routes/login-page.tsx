@@ -1,6 +1,7 @@
-import { type CSSProperties, type FormEvent, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router';
 import loginArt from '../assets/login-sleep.png';
+import loginRoom from '../assets/login-room.png';
 import { useSession } from '../app/session-provider';
 import { safeReturnTo } from '../app/return-to';
 import { copy } from '../locales';
@@ -16,6 +17,27 @@ export function LoginPage() {
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [catState, setCatState] = useState<'rest' | 'peek' | 'caught' | 'sleep'>('rest');
+  const catTimerRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (catTimerRef.current !== null) globalThis.clearTimeout(catTimerRef.current);
+    },
+    [],
+  );
+
+  const wakeCat = () => {
+    if (catTimerRef.current !== null) globalThis.clearTimeout(catTimerRef.current);
+    setCatState('peek');
+    catTimerRef.current = globalThis.setTimeout(() => setCatState('rest'), 14_900);
+  };
+
+  const catchCat = () => {
+    if (catTimerRef.current !== null) globalThis.clearTimeout(catTimerRef.current);
+    setCatState('caught');
+    catTimerRef.current = globalThis.setTimeout(() => setCatState('sleep'), 1_100);
+  };
 
   if (session.state.status === 'authenticated') {
     return <Navigate replace to={safeReturnTo(searchParams.get('returnTo'))} />;
@@ -36,10 +58,16 @@ export function LoginPage() {
   };
 
   return (
-    <main
-      className="auth-page design-auth-page login-auth-page"
-      style={{ '--auth-art': `url(${loginArt})` } as CSSProperties}
-    >
+    <main className="auth-page design-auth-page login-auth-page" data-cat-state={catState}>
+      <div className="login-cat-scene" aria-hidden="true">
+        <img className="login-room-art" src={loginRoom} alt="" />
+        <img className="login-cat-layer" src={loginArt} alt="" />
+        <span className="login-cat-zzz">
+          <i>z</i>
+          <i>z</i>
+          <i>z</i>
+        </span>
+      </div>
       <header className="login-auth-header">
         <Link className="login-auth-brand" to="/" aria-label="安心支持，返回首页">
           <img src={brandArt} alt="" />
@@ -84,7 +112,10 @@ export function LoginPage() {
                 required
                 placeholder="请输入邮箱"
                 value={email}
-                onChange={(event) => setEmail(event.target.value)}
+                onChange={(event) => {
+                  setEmail(event.target.value);
+                  wakeCat();
+                }}
               />
             </div>
           </div>
@@ -99,7 +130,10 @@ export function LoginPage() {
                 required
                 placeholder="请输入密码"
                 value={password}
-                onChange={(event) => setPassword(event.target.value)}
+                onChange={(event) => {
+                  setPassword(event.target.value);
+                  wakeCat();
+                }}
               />
               <button
                 type="button"
@@ -142,8 +176,22 @@ export function LoginPage() {
         </p>
       </section>
       <p className="login-cat-caption" aria-hidden="true">
-        慢慢来，小猫在。
+        {catState === 'peek'
+          ? '让我悄悄看一眼……'
+          : catState === 'rest'
+            ? '慢慢来，小猫在。'
+            : '呼……我已经睡着啦。'}
       </p>
+      <button
+        type="button"
+        className="login-cat-hotspot"
+        aria-label={
+          catState === 'peek' ? '发现一只偷看的小猫，点一下让它装睡' : '小猫正在睡觉，轻轻看看它'
+        }
+        onPointerEnter={catchCat}
+        onFocus={catchCat}
+        onClick={catchCat}
+      />
       <footer className="login-auth-footer">
         <span>登录后可查看服务条款与隐私说明</span>
       </footer>

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from 'react-router';
 import cozyDiary from '../assets/cozy-diary.png';
 import cozyHero from '../assets/cozy-hero.png';
@@ -7,6 +8,7 @@ import { Icon } from '../shared/icons';
 
 export function HomePage() {
   const product = useProductData();
+  const [homeMood, setHomeMood] = useState<'happy' | 'sad' | 'relaxed'>('relaxed');
 
   return (
     <main className="home-page" aria-labelledby="home-title">
@@ -34,22 +36,34 @@ export function HomePage() {
           <section className="home-mood-card" aria-labelledby="home-mood-title">
             <h2 id="home-mood-title">此刻，你感觉怎么样？</h2>
             <p>选一只最像现在的你的小猫。</p>
-            <div className="home-cat-row" aria-hidden="true">
-              <CatArt mood="happy" />
-              <CatArt mood="sad" />
-              <CatArt mood="relaxed" />
-            </div>
+            <fieldset className="home-cat-row">
+              <legend className="visually-hidden">选择此刻的心情</legend>
+              {(['happy', 'sad', 'relaxed'] as const).map((mood) => (
+                <label key={mood}>
+                  <input
+                    type="radio"
+                    name="home-mood"
+                    checked={homeMood === mood}
+                    onChange={() => setHomeMood(mood)}
+                  />
+                  <span>
+                    <CatArt mood={mood} />
+                    <strong>{mood === 'happy' ? '开心' : mood === 'sad' ? '委屈' : '放松'}</strong>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
             <Link className="text-link" to="/app/mood">
               记录此刻的心情 <Icon name="arrow-right" />
             </Link>
           </section>
 
-          <section className="home-knowledge-card" aria-labelledby="home-knowledge-title">
+          <section className="home-knowledge-card" aria-labelledby="home-diary-title">
             <div>
-              <h2 id="home-knowledge-title">给今天留一点空间</h2>
-              <p>读一小段经过整理的知识，也许会多一点理解自己的角度。</p>
-              <Link className="button button-secondary" to="/app/knowledge">
-                去知识中心
+              <h2 id="home-diary-title">给今天留一页</h2>
+              <p>天气、心情，还有那些小小的日常。</p>
+              <Link className="button button-secondary" to="/app/diary">
+                打开日记本
               </Link>
             </div>
             <img src={cozyDiary} alt="" aria-hidden="true" />

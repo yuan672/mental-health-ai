@@ -28,19 +28,21 @@ function AppShellContent() {
   const drawerRef = useRef<HTMLDivElement>(null);
   const drawerTriggerRef = useRef<HTMLButtonElement>(null);
 
-  const routeTitle = location.pathname.includes('/chat/incognito')
+  const routeTitle = location.pathname.startsWith('/app/chat/incognito')
     ? '无痕对话'
-    : location.pathname.includes('/chat')
+    : location.pathname.startsWith('/app/chat')
       ? '聊一聊'
-      : location.pathname.includes('/mood')
+      : location.pathname.startsWith('/app/mood')
         ? '心情记录'
-        : location.pathname.includes('/knowledge')
-          ? '心理知识'
-          : location.pathname.includes('/profile')
-            ? '账号信息'
-            : location.pathname.includes('/privacy')
-              ? '隐私与数据'
-              : '首页';
+        : location.pathname.startsWith('/app/diary')
+          ? '日记本'
+          : location.pathname.startsWith('/app/knowledge')
+            ? '心理知识'
+            : location.pathname.startsWith('/app/profile')
+              ? '账号信息'
+              : location.pathname.startsWith('/app/privacy')
+                ? '隐私与数据'
+                : '首页';
   const today = new Intl.DateTimeFormat('zh-CN', {
     month: 'numeric',
     day: 'numeric',
@@ -122,16 +124,34 @@ function AppShellContent() {
         </button>
         <nav className="product-navigation primary-navigation" aria-label="日常支持">
           <NavLink to="/app/home">
-            <Icon name="home" /> <span>首页</span>
+            <span className="nav-symbol">
+              <Icon name="home" />
+            </span>
+            <span className="nav-copy">首页</span>
           </NavLink>
           <NavLink to="/app/chat">
-            <Icon name="message" /> <span>聊一聊</span>
+            <span className="nav-symbol">
+              <Icon name="message" />
+            </span>
+            <span className="nav-copy">聊一聊</span>
           </NavLink>
           <NavLink to="/app/mood">
-            <Icon name="edit" /> <span>心情记录</span>
+            <span className="nav-symbol">
+              <Icon name="edit" />
+            </span>
+            <span className="nav-copy">心情记录</span>
+          </NavLink>
+          <NavLink to="/app/diary">
+            <span className="nav-symbol">
+              <Icon name="book" />
+            </span>
+            <span className="nav-copy">日记本</span>
           </NavLink>
           <NavLink to="/app/knowledge">
-            <Icon name="book-open" /> <span>心理知识</span>
+            <span className="nav-symbol">
+              <Icon name="book-open" />
+            </span>
+            <span className="nav-copy">心理知识</span>
           </NavLink>
         </nav>
         <div className="history-sidebar">
@@ -244,16 +264,34 @@ function AppShellContent() {
             </NavLink>
             <nav className="product-navigation primary-navigation" aria-label="日常支持">
               <NavLink to="/app/home" onClick={() => setDrawerOpen(false)}>
-                <Icon name="home" /> <span>首页</span>
+                <span className="nav-symbol">
+                  <Icon name="home" />
+                </span>
+                <span className="nav-copy">首页</span>
               </NavLink>
               <NavLink to="/app/chat" onClick={() => setDrawerOpen(false)}>
-                <Icon name="message" /> <span>聊一聊</span>
+                <span className="nav-symbol">
+                  <Icon name="message" />
+                </span>
+                <span className="nav-copy">聊一聊</span>
               </NavLink>
               <NavLink to="/app/mood" onClick={() => setDrawerOpen(false)}>
-                <Icon name="edit" /> <span>心情记录</span>
+                <span className="nav-symbol">
+                  <Icon name="edit" />
+                </span>
+                <span className="nav-copy">心情记录</span>
+              </NavLink>
+              <NavLink to="/app/diary" onClick={() => setDrawerOpen(false)}>
+                <span className="nav-symbol">
+                  <Icon name="book" />
+                </span>
+                <span className="nav-copy">日记本</span>
               </NavLink>
               <NavLink to="/app/knowledge" onClick={() => setDrawerOpen(false)}>
-                <Icon name="book-open" /> <span>心理知识</span>
+                <span className="nav-symbol">
+                  <Icon name="book-open" />
+                </span>
+                <span className="nav-copy">心理知识</span>
               </NavLink>
             </nav>
             <ConversationHistory

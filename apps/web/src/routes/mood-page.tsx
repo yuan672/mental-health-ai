@@ -115,6 +115,7 @@ function MoodFields({
   disabled?: boolean;
 }) {
   const count = codePointLength(value.note);
+  const [playingMood, setPlayingMood] = useState<number | null>(null);
   return (
     <div className="mood-fields">
       <fieldset disabled={disabled} aria-describedby={`${prefix}-score-help`}>
@@ -124,13 +125,20 @@ function MoodFields({
         </p>
         <div className="mood-score-options">
           {[1, 2, 3, 4, 5].map((score) => (
-            <label key={score}>
+            <label
+              className={playingMood === score ? 'is-playing' : undefined}
+              key={score}
+              onAnimationEnd={() => setPlayingMood(null)}
+            >
               <input
                 type="radio"
                 name={`${prefix}-score`}
                 value={score}
                 checked={value.moodScore === score}
-                onChange={() => onChange({ ...value, moodScore: score })}
+                onChange={() => {
+                  setPlayingMood(score);
+                  onChange({ ...value, moodScore: score });
+                }}
               />
               <span>
                 <CatArt mood={scoreCats[score]!} />

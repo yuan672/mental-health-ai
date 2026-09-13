@@ -5,6 +5,8 @@ import {
   FiBook,
   FiBookOpen,
   FiCheck,
+  FiChevronLeft,
+  FiChevronRight,
   FiChevronDown,
   FiClock,
   FiEdit3,
@@ -12,6 +14,7 @@ import {
   FiEyeOff,
   FiHeart,
   FiHome,
+  FiImage,
   FiLock,
   FiLogOut,
   FiMail,
@@ -19,6 +22,7 @@ import {
   FiMessageCircle,
   FiPlus,
   FiRefreshCw,
+  FiSearch,
   FiSend,
   FiShield,
   FiStar,
@@ -33,6 +37,8 @@ type IconName =
   | 'book'
   | 'book-open'
   | 'check'
+  | 'chevron-left'
+  | 'chevron-right'
   | 'chevron-down'
   | 'clock'
   | 'edit'
@@ -40,6 +46,7 @@ type IconName =
   | 'eye-off'
   | 'heart'
   | 'home'
+  | 'image'
   | 'lock'
   | 'log-out'
   | 'mail'
@@ -47,6 +54,7 @@ type IconName =
   | 'message'
   | 'plus'
   | 'refresh'
+  | 'search'
   | 'send'
   | 'shield'
   | 'sparkles'
@@ -59,6 +67,8 @@ const icons: Record<IconName, IconType> = {
   book: FiBook,
   'book-open': FiBookOpen,
   check: FiCheck,
+  'chevron-left': FiChevronLeft,
+  'chevron-right': FiChevronRight,
   'chevron-down': FiChevronDown,
   clock: FiClock,
   edit: FiEdit3,
@@ -66,6 +76,7 @@ const icons: Record<IconName, IconType> = {
   'eye-off': FiEyeOff,
   heart: FiHeart,
   home: FiHome,
+  image: FiImage,
   lock: FiLock,
   'log-out': FiLogOut,
   mail: FiMail,
@@ -73,6 +84,7 @@ const icons: Record<IconName, IconType> = {
   message: FiMessageCircle,
   plus: FiPlus,
   refresh: FiRefreshCw,
+  search: FiSearch,
   send: FiSend,
   shield: FiShield,
   sparkles: FiStar,

@@ -9,6 +9,9 @@ const moodScreenshotDirectory = fileURLToPath(
 const knowledgeScreenshotDirectory = fileURLToPath(
   new URL('../../../docs/reviews/phase-5e-knowledge-base-web/', import.meta.url),
 );
+const replacementScreenshotDirectory = fileURLToPath(
+  new URL('../../../docs/reviews/replacement-frontend/', import.meta.url),
+);
 
 async function login(page: Page): Promise<void> {
   await page.goto('/login');
@@ -16,6 +19,7 @@ async function login(page: Page): Promise<void> {
   await page.getByLabel('密码').fill(PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
   await expect(page).toHaveURL(/\/app\/chat$/u);
+  await expect(page.locator('.page-cat-loader')).toHaveCount(0);
 }
 
 async function clearConversationHistory(page: Page): Promise<void> {
@@ -55,10 +59,19 @@ test('landing, login, protected app shell, and logout', async ({ page }) => {
   await expect(page.getByText('安心支持', { exact: true }).first()).toBeVisible();
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('今天，也可以慢慢来。');
   await page.getByRole('link', { name: '登录' }).click();
+  await expect(page.locator('.page-cat-loader')).toBeVisible();
+  if (process.env.UPDATE_REPLACEMENT_SCREENSHOTS === '1') {
+    await page.waitForTimeout(260);
+    await page.screenshot({
+      path: `${replacementScreenshotDirectory}route-transition.png`,
+    });
+  }
+  await expect(page.locator('.page-cat-loader')).toHaveCount(0);
   await page.getByLabel('邮箱').fill(EMAIL);
   await page.getByLabel('密码').fill(PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
   await expect(page).toHaveURL(/\/app\/chat$/u);
+  await expect(page.locator('.page-cat-loader')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: '新对话' })).toBeVisible();
   await page.getByRole('button', { name: '退出' }).click();
   await expect(page).toHaveURL(/\/login\?returnTo=/u);
@@ -651,4 +664,63 @@ test('Knowledge reader wraps valid long content at mobile and desktop widths', a
       });
     }
   }
+});
+
+test('local diary opens, records a day, restores it after refresh, and stays plain text', async ({
+  page,
+}) => {
+  await login(page);
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        const request = indexedDB.deleteDatabase('cozy-diary-notebooks');
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+        request.onblocked = () => reject(new Error('Synthetic diary database is busy'));
+      }),
+  );
+  await page.goto('/app/diary/shelf');
+  for (const width of [320, 390, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    ).toBe(true);
+  }
+  if (process.env.UPDATE_REPLACEMENT_SCREENSHOTS === '1') {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.screenshot({
+      path: `${replacementScreenshotDirectory}diary-shelf-desktop.png`,
+      fullPage: true,
+    });
+  }
+
+  await page.getByRole('button', { name: '打开日记本：给自己的日记' }).click();
+  await page.locator('.diary-mood-option').filter({ hasText: '开心' }).click();
+  await page.getByRole('button', { name: '接着选天气' }).click();
+  await page.locator('.diary-weather-option').filter({ hasText: '晴天' }).click();
+  await page.getByRole('button', { name: '开始写日记' }).click();
+  await page.getByLabel('日记标题').fill('阳光落在桌面上');
+  await page.getByLabel('日记正文').fill('<script>alert(1)</script> 今天给自己留了一点时间。');
+  if (process.env.UPDATE_REPLACEMENT_SCREENSHOTS === '1') {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByLabel('日记标题').scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `${replacementScreenshotDirectory}diary-writing-mobile.png`,
+    });
+  }
+  await page.getByRole('button', { name: '保存这一页' }).click();
+
+  await expect(page.getByRole('heading', { name: '阳光落在桌面上' })).toBeVisible();
+  await expect(page.getByText('<script>alert(1)</script> 今天给自己留了一点时间。')).toBeVisible();
+  await expect(page.locator('.diary-reader script')).toHaveCount(0);
+  await expect(page.getByText('已保存在此浏览器')).toBeVisible();
+
+  const entryUrl = page.url();
+  await page.reload();
+  await expect(page).toHaveURL(entryUrl);
+  await expect(page.getByRole('heading', { name: '阳光落在桌面上' })).toBeVisible();
+  await page.getByRole('button', { name: /过往日记/u }).click();
+  await expect(page.getByRole('button', { name: /阳光落在桌面上/u })).toBeVisible();
 });

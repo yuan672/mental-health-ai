@@ -33,6 +33,7 @@ export function CatArt({
   return (
     <img
       className={`cat-art ${className}`.trim()}
+      data-cat-mood={mood}
       src={artByMood[mood]}
       alt={alt}
       aria-hidden={alt ? undefined : 'true'}

@@ -3,12 +3,13 @@
 ## Reference and scope
 
 - Visual source of truth: the project-owner supplied
-  `gemini-code-1789133107873.html` prototype.
+  `C:\Users\23757\Desktop\gemini-code-1789133107873.html` prototype (SHA-256
+  `27b6001822b339c2aa3c5f52a28e01eac783187e7fc3232eab8086db40135496`).
 - Local review capture set:
   `E:\study-project\handoff\frontend-design-reference\`.
 - Implemented surfaces: Landing, Login, Registration, authenticated Home, Chat,
-  Incognito Chat, Mood, Knowledge list/detail, Profile, Privacy, shared App Shell,
-  navigation, drawers, dialogs, and responsive states.
+  Incognito Chat, Mood, local Diary notebooks, Knowledge list/detail, Profile,
+  Privacy, shared App Shell, navigation, drawers, dialogs, and responsive states.
 - Existing backend contracts remain authoritative for authentication, registration,
   Consent, Session invalidation, AI safety, persistent/Incognito data boundaries,
   quota, Mood, Knowledge, and deletion behavior.
@@ -21,15 +22,27 @@ rounded paper-like cards, compact navigation, two-column desktop compositions, a
 single-column mobile flow. The previous frontend's visual system is not retained as
 a design constraint.
 
+The prototype motion language is also implemented: eight mood-specific cat
+reactions, the breathing/waiting/petting chat companion, the reactive login cat,
+paper-pull navigation, animated weather choices, notebook opening/closing and page
+turns, plus the cat-led route transition. Reduced-motion preferences bypass the
+non-essential movement while retaining every operation.
+
 Reviewed at desktop and narrow widths, including 1280 x 720, 390 x 844, and the
 browser regression widths 320, 390, and 1440 pixels. Long content, chat composition,
-mobile navigation, Mood controls, Knowledge cards, dialogs, and safe-area spacing
-were included in the review.
+mobile navigation, Mood controls, Knowledge cards, diary writing/history, dialogs,
+and safe-area spacing were included in the review. Visual evidence:
+
+- `E:\study-project\mental-health-ai\docs\reviews\replacement-frontend\route-transition.png`
+- `E:\study-project\mental-health-ai\docs\reviews\replacement-frontend\diary-shelf-desktop.png`
+- `E:\study-project\mental-health-ai\docs\reviews\replacement-frontend\diary-writing-mobile.png`
 
 ## Intentional product-contract deviations from the prototype
 
-- Prototype-only diary persistence is omitted because no matching accepted backend
-  contract exists in this scope.
+- Diary entries follow the supplied prototype's local-only model. They are stored
+  in IndexedDB under the authenticated user ID, stay out of the server conversation
+  history, and are labelled as saved in this browser. Logging out unmounts and
+  clears the visible diary state; a different account reads a different key.
 - Login credentials, message bodies, drafts, and other sensitive content are not
   persisted in browser storage.
 - Registration never generates fake age-verification evidence or invents Consent
@@ -43,10 +56,13 @@ were included in the review.
 ## Findings and resolution
 
 - P0: none.
-- P1: none. A legacy `.app-layout` grid rule that collapsed the replacement main
-  canvas was overridden, and the mobile account drawer now exposes logout.
-- P2: none. Decorative artwork no longer intercepts interactive Mood controls;
-  grounded-response capability headers and replacement page labels are covered by
-  browser regression tests.
+- P1: none. During the final browser pass, the extra Diary navigation item exposed
+  a short-viewport sidebar collision; the history list now owns a bounded scrolling
+  region and no longer sits beneath Delete All. Login focus motion was moved to CSS
+  so it cannot race controlled credential fields.
+- P2: none. Diary subroutes retain the Diary shell title, fieldsets do not inherit
+  unwanted borders, and open-book overlays cannot intercept controls. Route
+  replacement from a new Chat to its persistent ID keeps the same transition and
+  does not disturb the active stream owner.
 
 final result: passed

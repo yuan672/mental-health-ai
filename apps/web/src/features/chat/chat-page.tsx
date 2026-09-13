@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useEffect, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import chatCat from '../../assets/chat-cat.png';
 import chatNook from '../../assets/chat-nook.png';
@@ -24,6 +24,22 @@ export function ChatPage() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [petting, setPetting] = useState(false);
+  const petTimerRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (petTimerRef.current !== null) globalThis.clearTimeout(petTimerRef.current);
+    },
+    [],
+  );
+
+  const petCat = () => {
+    if (petTimerRef.current !== null) globalThis.clearTimeout(petTimerRef.current);
+    setPetting(false);
+    requestAnimationFrame(() => setPetting(true));
+    petTimerRef.current = globalThis.setTimeout(() => setPetting(false), 1_450);
+  };
 
   const selectRoute = workspace.selectRoute;
   useEffect(() => {
@@ -225,10 +241,26 @@ export function ChatPage() {
         ) : null}
       </section>
 
-      <aside className="chat-companion desktop-wide-only" aria-hidden="true">
+      <aside
+        className={`chat-companion desktop-wide-only${workspace.active ? ' is-waiting' : ''}${petting ? ' is-petting' : ''}`}
+        aria-label="小猫陪伴角落"
+      >
         <img className="chat-nook" src={chatNook} alt="" />
-        <img className="chat-cat" src={chatCat} alt="" />
-        <p>慢慢来，我在听。</p>
+        <button
+          type="button"
+          className="chat-pet"
+          aria-label="摸摸小猫"
+          onPointerEnter={petCat}
+          onFocus={petCat}
+          onClick={petCat}
+        >
+          <img className="chat-cat" src={chatCat} alt="" draggable={false} />
+          <span>{petting ? '小猫蹭蹭你' : '摸摸小猫'}</span>
+        </button>
+        <p>{workspace.active ? '正在整理回应，慢慢来。' : '慢慢说，也可以停一会儿。'}</p>
+        <Link to="/app/diary">
+          想写下来？去日记本 <Icon name="arrow-right" />
+        </Link>
       </aside>
 
       <form className="composer" onSubmit={(event) => void submit(event)}>
