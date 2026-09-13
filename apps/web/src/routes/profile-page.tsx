@@ -2,6 +2,7 @@ import type { ProfileResponse } from '@mental-health/types';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { getProfile } from '../api/mood';
+import { CatArt } from '../shared/cat-art';
 
 const dateFormatter = new Intl.DateTimeFormat('zh-CN', {
   year: 'numeric',
@@ -58,9 +59,12 @@ export function ProfilePage() {
   return (
     <main className="profile-page" aria-labelledby="profile-title">
       <header className="profile-header">
-        <p className="eyebrow">账号</p>
-        <h1 id="profile-title">个人资料</h1>
-        <p>这里只展示已有账号事实，不收集额外个人资料。</p>
+        <div>
+          <p className="eyebrow">账号</p>
+          <h1 id="profile-title">关于你</h1>
+          <p>这里只展示已有账号事实，不收集额外个人资料。</p>
+        </div>
+        <CatArt mood="hopeful" />
       </header>
       {loading ? <p aria-busy="true">正在加载账号资料…</p> : null}
       {error ? (

@@ -17,6 +17,15 @@ import {
   updateMoodEntry,
 } from '../api/mood';
 import { ConfirmDialog } from '../shared/confirm-dialog';
+import { CatArt, type CatMood } from '../shared/cat-art';
+
+const scoreCats: Record<number, CatMood> = {
+  1: 'sad',
+  2: 'sleepy',
+  3: 'shy',
+  4: 'relaxed',
+  5: 'happy',
+};
 
 const emotionOptions: ReadonlyArray<Readonly<{ value: MoodEmotion; label: string }>> = [
   { value: 'joyful', label: '愉快' },
@@ -123,7 +132,10 @@ function MoodFields({
                 checked={value.moodScore === score}
                 onChange={() => onChange({ ...value, moodScore: score })}
               />
-              <span>{score}</span>
+              <span>
+                <CatArt mood={scoreCats[score]!} />
+                <strong>{score}</strong>
+              </span>
             </label>
           ))}
         </div>
@@ -502,9 +514,12 @@ export function MoodPage() {
   return (
     <main className="mood-page" aria-labelledby="mood-title">
       <header className="mood-header">
-        <p className="eyebrow">个人记录</p>
-        <h1 id="mood-title">心情记录</h1>
-        <p>记录当下感受，按自己的节奏回看。这里不是医疗诊断、持续监测或紧急响应渠道。</p>
+        <div>
+          <p className="eyebrow">个人记录</p>
+          <h1 id="mood-title">此刻，你感觉怎么样？</h1>
+          <p>记录当下感受，按自己的节奏回看。这里不是医疗诊断、持续监测或紧急响应渠道。</p>
+        </div>
+        <CatArt mood="hopeful" />
       </header>
 
       {error ? (

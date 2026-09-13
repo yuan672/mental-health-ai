@@ -177,24 +177,28 @@ export function ConversationHistory({
   onNewChat,
   onSelect,
   navigationDisabled = false,
+  showNewChat = true,
 }: {
   onNewChat: () => void;
   onSelect?: () => void;
   navigationDisabled?: boolean;
+  showNewChat?: boolean;
 }) {
   const history = useConversationHistory();
   return (
     <nav className="history" aria-label="聊天记录">
       <div className="history-heading">
         <h2>聊天记录</h2>
-        <button
-          type="button"
-          className="button button-small"
-          disabled={navigationDisabled}
-          onClick={onNewChat}
-        >
-          新对话
-        </button>
+        {showNewChat ? (
+          <button
+            type="button"
+            className="button button-small"
+            disabled={navigationDisabled}
+            onClick={onNewChat}
+          >
+            新对话
+          </button>
+        ) : null}
       </div>
       {history.loading ? (
         <p className="muted" aria-busy="true">

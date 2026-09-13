@@ -1,7 +1,11 @@
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router';
+import chatCat from '../../assets/chat-cat.png';
+import chatNook from '../../assets/chat-nook.png';
 import { useProductData } from '../../app/product-data-provider';
 import { ConfirmDialog } from '../../shared/confirm-dialog';
+import { Icon } from '../../shared/icons';
+import { KnowledgeReferences } from './knowledge-references';
 import { useChatWorkspace } from './chat-workspace';
 
 const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
@@ -67,38 +71,43 @@ export function ChatPage() {
     workspace.stream.status === 'failed' && workspace.stream.error?.code === 'CONSENT_REQUIRED';
 
   return (
-    <main className="chat-page" aria-labelledby="chat-title">
+    <main className="chat-page designed-chat-page" aria-labelledby="chat-title">
       <header className="chat-header">
         <div>
-          <p className="eyebrow">普通聊天</p>
+          <p className="eyebrow">安心支持</p>
           <h1 id="chat-title">
             {workspace.conversation
               ? dateTimeFormatter.format(new Date(workspace.conversation.createdAt))
               : '新对话'}
           </h1>
         </div>
-        {workspace.conversation ? (
-          <div className="chat-actions">
-            <button
-              type="button"
-              className="button button-secondary button-small"
-              disabled={
-                workspace.conversation.isSaved || saveBusy || workspace.reconciliationPending
-              }
-              onClick={() => void save()}
-            >
-              {workspace.conversation.isSaved ? '已保留' : saveBusy ? '保存中…' : '保留对话'}
-            </button>
-            <button
-              type="button"
-              className="button button-quiet button-small"
-              disabled={workspace.reconciliationPending}
-              onClick={() => setDeleteOpen(true)}
-            >
-              删除
-            </button>
-          </div>
-        ) : null}
+        <div className="chat-actions">
+          <Link className="button button-secondary button-small" to="/app/chat/incognito">
+            无痕聊天
+          </Link>
+          {workspace.conversation ? (
+            <>
+              <button
+                type="button"
+                className="button button-secondary button-small"
+                disabled={
+                  workspace.conversation.isSaved || saveBusy || workspace.reconciliationPending
+                }
+                onClick={() => void save()}
+              >
+                {workspace.conversation.isSaved ? '已保留' : saveBusy ? '保存中…' : '保留对话'}
+              </button>
+              <button
+                type="button"
+                className="button button-quiet button-small"
+                disabled={workspace.reconciliationPending}
+                onClick={() => setDeleteOpen(true)}
+              >
+                删除
+              </button>
+            </>
+          ) : null}
+        </div>
       </header>
 
       {workspace.notice ? (
@@ -156,6 +165,7 @@ export function ChatPage() {
             <li className={`message message-${message.role}`} key={message.id}>
               <span className="message-author">{message.role === 'user' ? '你' : '支持助手'}</span>
               <p>{message.content}</p>
+              <KnowledgeReferences references={message.knowledgeReferences} />
             </li>
           ))}
           {workspace.pendingUserMessage ? (
@@ -168,6 +178,7 @@ export function ChatPage() {
             <li className="message message-assistant message-transient">
               <span className="message-author">支持助手</span>
               <p>{workspace.stream.text}</p>
+              <KnowledgeReferences references={workspace.stream.knowledgeReferences} />
             </li>
           ) : null}
         </ol>
@@ -214,6 +225,12 @@ export function ChatPage() {
         ) : null}
       </section>
 
+      <aside className="chat-companion desktop-wide-only" aria-hidden="true">
+        <img className="chat-nook" src={chatNook} alt="" />
+        <img className="chat-cat" src={chatCat} alt="" />
+        <p>慢慢来，我在听。</p>
+      </aside>
+
       <form className="composer" onSubmit={(event) => void submit(event)}>
         {!product.loading && !aiEnabled ? (
           <p className="capability-note" role="status">
@@ -253,7 +270,7 @@ export function ChatPage() {
               className="button"
               disabled={!aiEnabled || !workspace.draft.trim() || workspace.reconciliationPending}
             >
-              发送
+              <Icon name="send" /> <span className="visually-hidden">发送</span>
             </button>
           )}
         </div>

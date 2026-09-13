@@ -1,10 +1,17 @@
-import type { AiChatRequest, AiStreamEvent } from '@mental-health/types';
+import {
+  KNOWLEDGE_REFERENCES_CAPABILITY_HEADER,
+  KNOWLEDGE_REFERENCES_CAPABILITY_VERSION,
+  type AiChatRequest,
+  type AiStreamEventV2,
+} from '@mental-health/types';
 import { z } from 'zod';
 import { parseApiError, readCsrfToken } from '../api/client';
+import { knowledgeReferencesSchema } from '../api/schemas';
 import { notifySessionInvalidated } from '../api/session-events';
 import { publicEnv } from '../config/env';
 
-const aiStreamEventSchema = z.discriminatedUnion('type', [
+const finishReasonSchema = z.enum(['stop', 'length', 'content_filter', 'tool_call', 'unknown']);
+const aiStreamEventSchema = z.union([
   z.object({
     type: z.literal('turn.started'),
     data: z.discriminatedUnion('mode', [
@@ -27,6 +34,7 @@ const aiStreamEventSchema = z.discriminatedUnion('type', [
           turnId: z.string().uuid(),
           sequence: z.number().int().positive(),
           text: z.string(),
+          deliveryMode: z.enum(['immediate', 'commit_with_references']),
         })
         .strict(),
       z
@@ -35,30 +43,63 @@ const aiStreamEventSchema = z.discriminatedUnion('type', [
           generationId: z.string().uuid(),
           sequence: z.number().int().positive(),
           text: z.string(),
+          deliveryMode: z.enum(['immediate', 'commit_with_references']),
         })
         .strict(),
     ]),
   }),
-  z.object({
-    type: z.literal('turn.completed'),
-    data: z.discriminatedUnion('mode', [
-      z
+  z.union([
+    z.object({
+      type: z.literal('turn.completed'),
+      data: z
         .object({
           mode: z.literal('persistent'),
           turnId: z.string().uuid(),
           assistantMessageId: z.string().uuid(),
-          finishReason: z.enum(['stop', 'length', 'content_filter', 'tool_call', 'unknown']),
+          finishReason: finishReasonSchema,
+          deliveryMode: z.literal('immediate'),
+          knowledgeReferences: knowledgeReferencesSchema.length(0),
         })
         .strict(),
-      z
+    }),
+    z.object({
+      type: z.literal('turn.completed'),
+      data: z
+        .object({
+          mode: z.literal('persistent'),
+          turnId: z.string().uuid(),
+          assistantMessageId: z.string().uuid(),
+          finishReason: finishReasonSchema,
+          deliveryMode: z.literal('commit_with_references'),
+          knowledgeReferences: knowledgeReferencesSchema.min(1),
+        })
+        .strict(),
+    }),
+    z.object({
+      type: z.literal('turn.completed'),
+      data: z
         .object({
           mode: z.literal('incognito'),
           generationId: z.string().uuid(),
-          finishReason: z.enum(['stop', 'length', 'content_filter', 'tool_call', 'unknown']),
+          finishReason: finishReasonSchema,
+          deliveryMode: z.literal('immediate'),
+          knowledgeReferences: knowledgeReferencesSchema.length(0),
         })
         .strict(),
-    ]),
-  }),
+    }),
+    z.object({
+      type: z.literal('turn.completed'),
+      data: z
+        .object({
+          mode: z.literal('incognito'),
+          generationId: z.string().uuid(),
+          finishReason: finishReasonSchema,
+          deliveryMode: z.literal('commit_with_references'),
+          knowledgeReferences: knowledgeReferencesSchema.min(1),
+        })
+        .strict(),
+    }),
+  ]),
   z.object({
     type: z.literal('turn.failed'),
     data: z.discriminatedUnion('mode', [
@@ -100,7 +141,7 @@ export type ExistingAiTurn = z.infer<typeof existingTurnResponseSchema>['data'][
 
 export type AiChatConnection =
   | Readonly<{ kind: 'existing'; turn: ExistingAiTurn }>
-  | Readonly<{ kind: 'stream'; events: AsyncIterable<AiStreamEvent> }>;
+  | Readonly<{ kind: 'stream'; events: AsyncIterable<AiStreamEventV2> }>;
 
 export class AiChatRequestError extends Error {
   constructor(
@@ -124,7 +165,7 @@ function nextFrame(buffer: string): { frame: string; remainder: string } | null 
   };
 }
 
-function parseFrame(frame: string): AiStreamEvent | null {
+function parseFrame(frame: string): AiStreamEventV2 | null {
   const eventType = frame
     .split(/\r?\n/u)
     .find((line) => line.startsWith('event:'))
@@ -138,12 +179,12 @@ function parseFrame(frame: string): AiStreamEvent | null {
   if (!eventType || !data) {
     return null;
   }
-  return aiStreamEventSchema.parse({ type: eventType, data: JSON.parse(data) }) as AiStreamEvent;
+  return aiStreamEventSchema.parse({ type: eventType, data: JSON.parse(data) }) as AiStreamEventV2;
 }
 
 export async function* parseAiEventStream(
   stream: ReadableStream<Uint8Array>,
-): AsyncIterable<AiStreamEvent> {
+): AsyncIterable<AiStreamEventV2> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -174,9 +215,9 @@ export async function* parseAiEventStream(
 }
 
 async function* validateStreamMode(
-  events: AsyncIterable<AiStreamEvent>,
+  events: AsyncIterable<AiStreamEventV2>,
   expectedMode: AiChatRequest['mode'],
-): AsyncIterable<AiStreamEvent> {
+): AsyncIterable<AiStreamEventV2> {
   let terminalReceived = false;
   for await (const event of events) {
     if (event.data.mode !== expectedMode) {
@@ -210,6 +251,7 @@ export async function startAiChatStream(
       Accept: 'text/event-stream',
       'Content-Type': 'application/json',
       'x-csrf-token': csrfToken,
+      [KNOWLEDGE_REFERENCES_CAPABILITY_HEADER]: KNOWLEDGE_REFERENCES_CAPABILITY_VERSION,
     },
     body: JSON.stringify(input),
     signal,
@@ -222,6 +264,17 @@ export async function startAiChatStream(
       notifySessionInvalidated();
     }
     throw new AiChatRequestError(error.code, error.message, response.status);
+  }
+
+  if (
+    response.headers.get(KNOWLEDGE_REFERENCES_CAPABILITY_HEADER) !==
+    KNOWLEDGE_REFERENCES_CAPABILITY_VERSION
+  ) {
+    throw new AiChatRequestError(
+      'CLIENT_CAPABILITY_REQUIRED',
+      '当前版本无法安全显示知识引用，请更新后重试',
+      406,
+    );
   }
 
   if (contentType.includes('application/json')) {

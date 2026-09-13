@@ -1,15 +1,15 @@
 import type {
   ConversationDetailResponse,
   ConversationListResponse,
-  ConversationMessagesResponse,
+  ConversationMessagesResponseV2,
   DeleteConversationHistoryResponse,
   DeleteConversationResponse,
 } from '@mental-health/types';
-import { apiRequest } from './client';
+import { ApiClientError, apiRequest } from './client';
 import {
   conversationDetailResponseSchema,
   conversationListResponseSchema,
-  conversationMessagesResponseSchema,
+  conversationMessagesResponseV2Schema,
   deleteConversationResponseSchema,
   deleteHistoryResponseSchema,
 } from './schemas';
@@ -46,11 +46,23 @@ export function listMessages(
   conversationId: string,
   cursor?: string | null,
   signal?: AbortSignal,
-): Promise<ConversationMessagesResponse> {
+): Promise<ConversationMessagesResponseV2> {
   return apiRequest(
     pagedPath(`/conversations/${encodeURIComponent(conversationId)}/messages`, cursor),
-    conversationMessagesResponseSchema,
-    signal ? { signal } : {},
+    conversationMessagesResponseV2Schema,
+    {
+      ...(signal ? { signal } : {}),
+      headers: { 'X-MH-Knowledge-References': '1' },
+      validateResponse: (response) => {
+        if (response.headers.get('X-MH-Knowledge-References') !== '1') {
+          throw new ApiClientError(
+            'CLIENT_CAPABILITY_REQUIRED',
+            '当前版本无法安全显示知识引用，请更新后重试',
+            406,
+          );
+        }
+      },
+    },
   );
 }
 

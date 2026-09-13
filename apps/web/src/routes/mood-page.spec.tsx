@@ -110,7 +110,8 @@ describe('Mood page', () => {
     expect(await screen.findByText('平均 3.5 分 · 1 条')).toBeInTheDocument();
     expect(screen.getAllByText('未记录')).toHaveLength(6);
     expect(screen.getByText(unsafeText)).toBeInTheDocument();
-    expect(view.container.querySelector('img')).toBeNull();
+    expect(view.container.querySelector('img[src="x"]')).toBeNull();
+    expect(view.container.querySelector('img[onerror]')).toBeNull();
     expect(view.container.querySelector('script')).toBeNull();
 
     await userEvent.click(screen.getByRole('button', { name: '加载更多' }));

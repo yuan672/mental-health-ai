@@ -18,7 +18,7 @@ describe('App', () => {
 
     render(<App />);
 
-    expect(screen.getByRole('heading', { name: '在这里，慢慢说也可以。' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '今天，也可以慢慢来。' })).toBeInTheDocument();
     expect(screen.getByText(/不提供医疗诊断/)).toBeInTheDocument();
     await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
     expect(String(fetcher.mock.calls[0]?.[0])).toContain('/auth/session');

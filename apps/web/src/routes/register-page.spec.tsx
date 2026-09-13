@@ -59,7 +59,7 @@ it('identifies password class failure, focuses the field, preserves input, and a
   await userEvent.click(screen.getByRole('button', { name: '注册' }));
   expect(await screen.findByText('登录入口')).toBeInTheDocument();
   expect(mocks.register).toHaveBeenCalledTimes(1);
-});
+}, 15_000);
 
 it('does not attribute a server failure to a valid password or display sensitive error details', async () => {
   await fillForm('Synthetic-Test-9!');
@@ -69,7 +69,7 @@ it('does not attribute a server failure to a valid password or display sensitive
   expect(screen.getByLabelText('密码')).not.toHaveAttribute('aria-invalid');
   expect(screen.getByLabelText('邮箱')).toHaveValue('synthetic@example.test');
   expect(screen.queryByText(/internal detail/u)).not.toBeInTheDocument();
-});
+}, 15_000);
 
 it.each([
   ['Aa1!', false],

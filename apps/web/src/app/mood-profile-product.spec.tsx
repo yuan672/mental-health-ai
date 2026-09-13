@@ -112,9 +112,13 @@ describe('Mood/Profile product integration', () => {
     vi.stubGlobal('fetch', fetcher);
     renderProduct('/app/mood');
 
-    expect(await screen.findByText('仅属于当前会话用户的合成心情正文')).toBeInTheDocument();
+    expect(
+      await screen.findByText('仅属于当前会话用户的合成心情正文', undefined, {
+        timeout: 5_000,
+      }),
+    ).toBeInTheDocument();
     expect(screen.getByText(/不是医疗诊断、持续监测或紧急响应渠道/u)).toBeInTheDocument();
-    await userEvent.click(screen.getAllByRole('link', { name: '个人资料' })[0]!);
+    await userEvent.click(screen.getAllByRole('link', { name: '账号信息' })[0]!);
     expect(await screen.findByText('phase5d-e2e@example.test')).toBeInTheDocument();
     expect(screen.getByText('成年资格已验证。此页面不展示验证方式或内部证据。')).toBeVisible();
     expect(

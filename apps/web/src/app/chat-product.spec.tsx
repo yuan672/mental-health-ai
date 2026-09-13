@@ -15,9 +15,13 @@ const OTHER_CONVERSATION_ID = '44444444-4444-4444-8444-444444444445';
 const TURN_ID = '55555555-5555-4555-8555-555555555555';
 const ASSISTANT_ID = '66666666-6666-4666-8666-666666666666';
 const CREATED_AT = '2026-09-10T08:00:00.000Z';
+const V2_STREAM_HEADERS = {
+  'content-type': 'text/event-stream',
+  'X-MH-Knowledge-References': '1',
+};
 
 function success(data: unknown): Response {
-  return Response.json({ success: true, data });
+  return Response.json({ success: true, data }, { headers: { 'X-MH-Knowledge-References': '1' } });
 }
 
 function session(userId = USER_A): Response {
@@ -286,7 +290,7 @@ describe('Phase 5B product flows', () => {
         if (init?.signal) {
           streamState.signal = init.signal;
         }
-        return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
+        return new Response(stream, { headers: V2_STREAM_HEADERS });
       }
       if (url.pathname === `/conversations/${CONVERSATION_ID}`) {
         return success({
@@ -308,6 +312,7 @@ describe('Phase 5B product flows', () => {
                   content: '合成页面消息',
                   sequence: 1,
                   createdAt: CREATED_AT,
+                  knowledgeReferences: [],
                 },
                 {
                   id: ASSISTANT_ID,
@@ -315,6 +320,7 @@ describe('Phase 5B product flows', () => {
                   content: '合成流式回复。',
                   sequence: 2,
                   createdAt: CREATED_AT,
+                  knowledgeReferences: [],
                 },
               ]
             : [],
@@ -336,7 +342,7 @@ describe('Phase 5B product flows', () => {
     expect(streamState.signal?.aborted).toBe(false);
     streamState.controller?.enqueue(
       encoder.encode(
-        `event: message.segment\ndata: {"mode":"persistent","turnId":"${TURN_ID}","sequence":1,"text":"合成流式回复。"}\n\nevent: turn.completed\ndata: {"mode":"persistent","turnId":"${TURN_ID}","assistantMessageId":"${ASSISTANT_ID}","finishReason":"stop"}\n\n`,
+        `event: message.segment\ndata: {"mode":"persistent","turnId":"${TURN_ID}","sequence":1,"text":"合成流式回复。","deliveryMode":"immediate"}\n\nevent: turn.completed\ndata: {"mode":"persistent","turnId":"${TURN_ID}","assistantMessageId":"${ASSISTANT_ID}","finishReason":"stop","deliveryMode":"immediate","knowledgeReferences":[]}\n\n`,
       ),
     );
     historyReady = true;
@@ -385,15 +391,12 @@ describe('Phase 5B product flows', () => {
         return success({ conversations: [], nextCursor: null });
       }
       if (url.pathname === '/ai/chat/stream') {
-        return Response.json({
-          success: true,
-          data: {
-            turn: {
-              id: TURN_ID,
-              conversationId: CONVERSATION_ID,
-              status: 'failed',
-              assistantMessageId: null,
-            },
+        return success({
+          turn: {
+            id: TURN_ID,
+            conversationId: CONVERSATION_ID,
+            status: 'failed',
+            assistantMessageId: null,
           },
         });
       }
@@ -430,7 +433,7 @@ describe('Phase 5B product flows', () => {
     document.cookie = 'mh_csrf=synthetic-csrf; Path=/';
     const body = [
       `event: turn.started\ndata: {"mode":"persistent","turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\n`,
-      `event: message.segment\ndata: {"mode":"persistent","turnId":"${TURN_ID}","sequence":1,"text":"合成最低安全提示。"}\n\n`,
+      `event: message.segment\ndata: {"mode":"persistent","turnId":"${TURN_ID}","sequence":1,"text":"合成最低安全提示。","deliveryMode":"immediate"}\n\n`,
       `event: turn.failed\ndata: {"mode":"persistent","turnId":"${TURN_ID}","code":"DATABASE_ERROR","message":"本轮未能保存"}\n\n`,
     ].join('');
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async (input) => {
@@ -438,7 +441,7 @@ describe('Phase 5B product flows', () => {
       const base = baseJsonResponse(url.pathname + url.search);
       if (base) return base;
       if (url.pathname === '/ai/chat/stream') {
-        return new Response(body, { headers: { 'content-type': 'text/event-stream' } });
+        return new Response(body, { headers: V2_STREAM_HEADERS });
       }
       throw new Error(`Unhandled request ${String(input)}`);
     });
@@ -490,7 +493,7 @@ describe('Phase 5B product flows', () => {
             streamState.controller?.error(init.signal?.reason),
           );
         }
-        return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
+        return new Response(stream, { headers: V2_STREAM_HEADERS });
       }
       throw new Error(`Unhandled request ${String(input)}`);
     });
@@ -531,7 +534,7 @@ describe('Phase 5B product flows', () => {
         streamState.controller = controller;
         controller.enqueue(
           encoder.encode(
-            `event: turn.started\ndata: {"mode":"persistent","turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\nevent: message.segment\ndata: {"mode":"persistent","turnId":"${TURN_ID}","sequence":1,"text":"合成流式敏感正文"}\n\n`,
+            `event: turn.started\ndata: {"mode":"persistent","turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\nevent: message.segment\ndata: {"mode":"persistent","turnId":"${TURN_ID}","sequence":1,"text":"合成流式敏感正文","deliveryMode":"immediate"}\n\n`,
           ),
         );
       },
@@ -567,6 +570,7 @@ describe('Phase 5B product flows', () => {
               content: initialSensitiveText,
               sequence: 2,
               createdAt: CREATED_AT,
+              knowledgeReferences: [],
             },
           ],
           nextCursor: 'synthetic-message-cursor',
@@ -579,7 +583,7 @@ describe('Phase 5B product flows', () => {
             streamState.controller?.error(init.signal?.reason),
           );
         }
-        return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
+        return new Response(stream, { headers: V2_STREAM_HEADERS });
       }
       if (url.pathname === `/conversations/${CONVERSATION_ID}/save`) {
         return Response.json(
@@ -618,6 +622,7 @@ describe('Phase 5B product flows', () => {
             content: lateSensitiveText,
             sequence: 1,
             createdAt: CREATED_AT,
+            knowledgeReferences: [],
           },
         ],
         nextCursor: null,
@@ -655,6 +660,7 @@ describe('Phase 5B product flows', () => {
               content: payload,
               sequence: 1,
               createdAt: CREATED_AT,
+              knowledgeReferences: [],
             },
           ],
           nextCursor: null,
@@ -717,6 +723,7 @@ describe('Phase 5B product flows', () => {
               content: '用户 B 选择的合成聊天',
               sequence: 1,
               createdAt: CREATED_AT,
+              knowledgeReferences: [],
             },
           ],
           nextCursor: null,
@@ -742,6 +749,7 @@ describe('Phase 5B product flows', () => {
             content: '迟到的用户 A 合成聊天',
             sequence: 1,
             createdAt: CREATED_AT,
+            knowledgeReferences: [],
           },
         ],
         nextCursor: null,
@@ -767,7 +775,7 @@ describe('Phase 5B product flows', () => {
         const turnId = streamNumber === 1 ? TURN_ID : '55555555-5555-4555-8555-555555555556';
         return new Response(
           `event: turn.started\ndata: {"mode":"persistent","turnId":"${turnId}","conversationId":"${CONVERSATION_ID}"}\n\nevent: turn.failed\ndata: {"mode":"persistent","turnId":"${turnId}","code":"AI_PROVIDER_UNAVAILABLE","message":"合成失败"}\n\n`,
-          { headers: { 'content-type': 'text/event-stream' } },
+          { headers: V2_STREAM_HEADERS },
         );
       }
       throw new Error(`Unhandled request ${String(input)}`);
@@ -785,7 +793,7 @@ describe('Phase 5B product flows', () => {
 
   it('reuses clientRequestId only when reconciling a network-uncertain result', async () => {
     document.cookie = 'mh_csrf=synthetic-csrf; Path=/';
-    const requestBodies: Array<{ clientRequestId: string }> = [];
+    const requestBodies: Array<{ clientRequestId: string; conversationId?: string }> = [];
     let attempt = 0;
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
       const url = new URL(String(input));
@@ -805,18 +813,40 @@ describe('Phase 5B product flows', () => {
       const base = baseJsonResponse(url.pathname + url.search);
       if (base) return base;
       if (url.pathname === '/ai/chat/stream') {
-        requestBodies.push(JSON.parse(String(init?.body)) as { clientRequestId: string });
+        requestBodies.push(
+          JSON.parse(String(init?.body)) as {
+            clientRequestId: string;
+            conversationId?: string;
+          },
+        );
         attempt += 1;
-        if (attempt === 1) throw new TypeError('synthetic uncertain network result');
-        return Response.json({
-          success: true,
-          data: {
-            turn: {
-              id: TURN_ID,
-              conversationId: CONVERSATION_ID,
-              status: 'streaming',
-              assistantMessageId: null,
-            },
+        if (attempt === 1) {
+          const encoder = new TextEncoder();
+          let pullCount = 0;
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              pull(controller) {
+                if (pullCount === 0) {
+                  pullCount += 1;
+                  controller.enqueue(
+                    encoder.encode(
+                      `event: turn.started\ndata: {"mode":"persistent","turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\n`,
+                    ),
+                  );
+                  return;
+                }
+                controller.error(new TypeError('synthetic uncertain network result'));
+              },
+            }),
+            { headers: V2_STREAM_HEADERS },
+          );
+        }
+        return success({
+          turn: {
+            id: TURN_ID,
+            conversationId: CONVERSATION_ID,
+            status: 'streaming',
+            assistantMessageId: null,
           },
         });
       }
@@ -844,6 +874,7 @@ describe('Phase 5B product flows', () => {
     await userEvent.click(await screen.findByRole('button', { name: '核对本轮结果' }));
     await waitFor(() => expect(requestBodies).toHaveLength(2));
     expect(requestBodies[1]?.clientRequestId).toBe(requestBodies[0]?.clientRequestId);
+    expect(requestBodies[1]?.conversationId).toBe(CONVERSATION_ID);
     expect(screen.getByRole('button', { name: '核对本轮结果' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '重新发送' })).not.toBeInTheDocument();
     expect(composer).toBeDisabled();
@@ -856,6 +887,34 @@ describe('Phase 5B product flows', () => {
     expect(
       fetcher.mock.calls.filter(([request]) => String(request).includes('/ai/chat/stream')),
     ).toHaveLength(2);
+  });
+
+  it('does not replay a create-style request when an uncertain result has no conversation id', async () => {
+    document.cookie = 'mh_csrf=synthetic-csrf; Path=/';
+    let streamRequests = 0;
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      const base = baseJsonResponse(url.pathname + url.search);
+      if (base) return base;
+      if (url.pathname === '/ai/chat/stream') {
+        streamRequests += 1;
+        throw new TypeError('synthetic uncertain network result before acknowledgement');
+      }
+      throw new Error(`Unhandled request ${String(input)}`);
+    });
+    vi.stubGlobal('fetch', fetcher);
+    renderProduct('/app/chat');
+    const composer = await screen.findByLabelText('输入消息');
+    await waitFor(() => expect(composer).toBeEnabled());
+    await userEvent.type(composer, '合成的未绑定不确定请求');
+    await userEvent.click(screen.getByRole('button', { name: '发送' }));
+    await userEvent.click(await screen.findByRole('button', { name: '核对本轮结果' }));
+
+    expect(streamRequests).toBe(1);
+    expect(
+      await screen.findByText(/尚未取得原聊天标识，无法在不新建聊天的前提下自动核对/u),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '核对本轮结果' })).toBeInTheDocument();
   });
 
   it('uses the server delete-all count and clears the product history state', async () => {
@@ -914,7 +973,7 @@ describe('Phase 5B product flows', () => {
             active.controller?.error(init.signal?.reason),
           );
         }
-        return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
+        return new Response(stream, { headers: V2_STREAM_HEADERS });
       }
       if (url.pathname === `/conversations/${CONVERSATION_ID}`) {
         return success({

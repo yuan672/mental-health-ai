@@ -1,4 +1,4 @@
-import type { ConversationMessage, ConversationMetadata } from '@mental-health/types';
+import type { ConversationMessageV2, ConversationMetadata } from '@mental-health/types';
 import {
   createContext,
   type ReactNode,
@@ -37,11 +37,12 @@ type LastSubmission = Readonly<{
   message: string;
   clientRequestId: string;
   uncertain: boolean;
+  recoveryConversationId: string | null;
 }>;
 
 type ChatWorkspaceContextValue = Readonly<{
   conversation: ConversationMetadata | null;
-  messages: ConversationMessage[];
+  messages: ConversationMessageV2[];
   nextMessageCursor: string | null;
   loadStatus: LoadStatus;
   loadError: string | null;
@@ -83,7 +84,7 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
   const aiChatEnabled = product.capabilities?.aiChatEnabled;
   const refreshQuota = product.refreshQuota;
   const [conversation, setConversation] = useState<ConversationMetadata | null>(null);
-  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [messages, setMessages] = useState<ConversationMessageV2[]>([]);
   const [nextMessageCursor, setNextMessageCursor] = useState<string | null>(null);
   const [loadStatus, setLoadStatus] = useState<LoadStatus>('idle');
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -222,30 +223,45 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
   );
 
   const executeSubmission = useCallback(
-    async (message: string, clientRequestId: string, preserveUncertain = false) => {
+    async (
+      message: string,
+      clientRequestId: string,
+      preserveUncertain = false,
+      boundConversationId?: string,
+    ) => {
       if (streamAbortRef.current) return;
       if (aiChatEnabled !== true) {
         updateStream(failChatStream(streamRef.current, 'AI_CHAT_DISABLED', 'AI 对话当前未开放'));
         return;
       }
       const controller = new AbortController();
+      let recoveryConversationId = boundConversationId ?? conversationIdRef.current;
       streamAbortRef.current = controller;
       setPendingUserMessage(message);
-      setLastSubmission({ message, clientRequestId, uncertain: preserveUncertain });
+      setLastSubmission({
+        message,
+        clientRequestId,
+        uncertain: preserveUncertain,
+        recoveryConversationId,
+      });
       updateStream(beginChatStream());
 
       try {
-        const previousConversationId = conversationIdRef.current;
+        const previousConversationId = recoveryConversationId;
         const connection = await startAiChatStream(
           {
             mode: 'persistent',
             clientRequestId,
-            ...(conversationIdRef.current ? { conversationId: conversationIdRef.current } : {}),
+            ...(recoveryConversationId ? { conversationId: recoveryConversationId } : {}),
             message,
           },
           controller.signal,
         );
         if (connection.kind === 'existing') {
+          if (recoveryConversationId && connection.turn.conversationId !== recoveryConversationId) {
+            throw new AiChatRequestError('INVALID_STREAM_RESPONSE', '核对结果与原聊天不一致', 502);
+          }
+          recoveryConversationId = connection.turn.conversationId;
           if (previousConversationId !== connection.turn.conversationId) {
             routeTransitionRef.current = connection.turn.conversationId;
             navigate(`/app/chat/${connection.turn.conversationId}`, { replace: true });
@@ -265,7 +281,12 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
             setLastSubmission(null);
             updateStream(cancelChatStream(streamRef.current));
           } else if (connection.turn.status === 'failed') {
-            setLastSubmission({ message, clientRequestId, uncertain: false });
+            setLastSubmission({
+              message,
+              clientRequestId,
+              uncertain: false,
+              recoveryConversationId,
+            });
             updateStream(
               failChatStream(
                 streamRef.current,
@@ -274,7 +295,12 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
               ),
             );
           } else {
-            setLastSubmission({ message, clientRequestId, uncertain: true });
+            setLastSubmission({
+              message,
+              clientRequestId,
+              uncertain: true,
+              recoveryConversationId,
+            });
             updateStream(
               failChatStream(
                 streamRef.current,
@@ -295,6 +321,13 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
           const next = reduceChatStreamEvent(streamRef.current, event);
           updateStream(next);
           if (event.type === 'turn.started') {
+            recoveryConversationId = event.data.conversationId;
+            setLastSubmission({
+              message,
+              clientRequestId,
+              uncertain: preserveUncertain,
+              recoveryConversationId,
+            });
             if (conversationIdRef.current !== event.data.conversationId) {
               routeTransitionRef.current = event.data.conversationId;
               navigate(`/app/chat/${event.data.conversationId}`, { replace: true });
@@ -320,7 +353,12 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
         } else {
           const requestError = error instanceof AiChatRequestError ? error : null;
           const uncertain = requestError === null;
-          setLastSubmission({ message, clientRequestId, uncertain });
+          setLastSubmission({
+            message,
+            clientRequestId,
+            uncertain,
+            recoveryConversationId,
+          });
           updateStream(
             failChatStream(
               streamRef.current,
@@ -340,8 +378,18 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
   );
 
   const runSubmission = useCallback(
-    async (message: string, clientRequestId: string, preserveUncertain = false) => {
-      const promise = executeSubmission(message, clientRequestId, preserveUncertain);
+    async (
+      message: string,
+      clientRequestId: string,
+      preserveUncertain = false,
+      boundConversationId?: string,
+    ) => {
+      const promise = executeSubmission(
+        message,
+        clientRequestId,
+        preserveUncertain,
+        boundConversationId,
+      );
       activePromiseRef.current = promise;
       try {
         await promise;
@@ -423,7 +471,18 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
       },
       reconcileUncertainTurn: async () => {
         if (!lastSubmission?.uncertain || streamAbortRef.current) return;
-        await runSubmission(lastSubmission.message, lastSubmission.clientRequestId, true);
+        if (!lastSubmission.recoveryConversationId) {
+          await refreshHistory();
+          if (!mountedRef.current) return;
+          setNotice('尚未取得原聊天标识，无法在不新建聊天的前提下自动核对。请查看最新聊天记录。');
+          return;
+        }
+        await runSubmission(
+          lastSubmission.message,
+          lastSubmission.clientRequestId,
+          true,
+          lastSubmission.recoveryConversationId,
+        );
       },
       startNewChat: async () => {
         if (lastSubmission?.uncertain) return;
@@ -482,6 +541,7 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
       nextMessageCursor,
       notice,
       pendingUserMessage,
+      refreshHistory,
       runSubmission,
       selectRoute,
       stream,

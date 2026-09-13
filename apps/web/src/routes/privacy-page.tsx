@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiClientError } from '../api/client';
 import { getConsentHistory, mutateConsent } from '../api/consents';
 import { ConfirmDialog } from '../shared/confirm-dialog';
+import { CatArt } from '../shared/cat-art';
 
 const consentNames: Record<ConsentType, string> = {
   terms_of_service: '服务条款',
@@ -319,9 +320,12 @@ export function PrivacyPage() {
   return (
     <main className="privacy-page" aria-labelledby="privacy-title">
       <header className="privacy-header">
-        <p className="eyebrow">隐私与数据</p>
-        <h1 id="privacy-title">管理同意与了解数据边界</h1>
-        <p>你可以查看当前必要文档和历史决定，并对服务器明确允许的版本作出接受或撤回选择。</p>
+        <div>
+          <p className="eyebrow">隐私与数据</p>
+          <h1 id="privacy-title">你的空间，由你做主</h1>
+          <p>查看必要文档和历史决定，并对服务器允许的版本作出接受或撤回选择。</p>
+        </div>
+        <CatArt mood="relaxed" />
       </header>
 
       {error ? (

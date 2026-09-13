@@ -58,10 +58,15 @@ function incognitoStream(text = '这是合成的无痕安全回复。'): Respons
   return new Response(
     [
       `event: turn.started\ndata: {"mode":"incognito","generationId":"${GENERATION_ID}"}\n\n`,
-      `event: message.segment\ndata: {"mode":"incognito","generationId":"${GENERATION_ID}","sequence":1,"text":"${text}"}\n\n`,
-      `event: turn.completed\ndata: {"mode":"incognito","generationId":"${GENERATION_ID}","finishReason":"stop"}\n\n`,
+      `event: message.segment\ndata: {"mode":"incognito","generationId":"${GENERATION_ID}","sequence":1,"text":"${text}","deliveryMode":"immediate"}\n\n`,
+      `event: turn.completed\ndata: {"mode":"incognito","generationId":"${GENERATION_ID}","finishReason":"stop","deliveryMode":"immediate","knowledgeReferences":[]}\n\n`,
     ].join(''),
-    { headers: { 'content-type': 'text/event-stream' } },
+    {
+      headers: {
+        'content-type': 'text/event-stream',
+        'x-mh-knowledge-references': '1',
+      },
+    },
   );
 }
 
@@ -162,10 +167,15 @@ describe('Phase 5C Incognito and privacy product flows', () => {
           return new Response(
             [
               `event: turn.started\ndata: {"mode":"incognito","generationId":"${GENERATION_ID}"}\n\n`,
-              `event: message.segment\ndata: {"mode":"incognito","generationId":"${GENERATION_ID}","sequence":1,"text":"已显示的最低安全提示。"}\n\n`,
+              `event: message.segment\ndata: {"mode":"incognito","generationId":"${GENERATION_ID}","sequence":1,"text":"已显示的最低安全提示。","deliveryMode":"immediate"}\n\n`,
               `event: turn.failed\ndata: {"mode":"incognito","generationId":"${GENERATION_ID}","code":"DATABASE_ERROR","message":"本轮未完成"}\n\n`,
             ].join(''),
-            { headers: { 'content-type': 'text/event-stream' } },
+            {
+              headers: {
+                'content-type': 'text/event-stream',
+                'x-mh-knowledge-references': '1',
+              },
+            },
           );
         }
         return incognitoStream('第二轮合成回复。');
@@ -467,9 +477,7 @@ describe('Phase 5C Incognito and privacy product flows', () => {
     vi.stubGlobal('fetch', fetcher);
     renderProduct('/app/privacy');
 
-    expect(
-      await screen.findByRole('heading', { name: '管理同意与了解数据边界' }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '你的空间，由你做主' })).toBeInTheDocument();
     expect(await screen.findAllByText('版本 terms-v1')).toHaveLength(3);
     expect(screen.getAllByText('尚未接受')).toHaveLength(2);
     expect(screen.getByText(/必要的 Risk Event、审计记录和备份/)).toBeInTheDocument();

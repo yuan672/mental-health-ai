@@ -25,7 +25,7 @@ describe('AI fetch stream client', () => {
   it('parses SSE frames split across network chunks', async () => {
     const source = [
       `event: turn.started\ndata: {"mode":"persistent","turnId":"${TURN_ID}",`,
-      `"conversationId":"${CONVERSATION_ID}"}\n\nevent: message.segment\ndata: {"mode":"persistent","turnId":"${TURN_ID}","sequence":1,"text":"你好。"}\n\n`,
+      `"conversationId":"${CONVERSATION_ID}"}\n\nevent: message.segment\ndata: {"mode":"persistent","turnId":"${TURN_ID}","sequence":1,"text":"你好。","deliveryMode":"immediate"}\n\n`,
     ];
 
     const events = [];
@@ -40,7 +40,13 @@ describe('AI fetch stream client', () => {
       },
       {
         type: 'message.segment',
-        data: { mode: 'persistent', turnId: TURN_ID, sequence: 1, text: '你好。' },
+        data: {
+          mode: 'persistent',
+          turnId: TURN_ID,
+          sequence: 1,
+          text: '你好。',
+          deliveryMode: 'immediate',
+        },
       },
     ]);
   });
@@ -51,8 +57,8 @@ describe('AI fetch stream client', () => {
     for await (const event of parseAiEventStream(
       chunkedStream([
         `event: turn.started\ndata: {"mode":"incognito","generationId":"${generationId}"}\n\n`,
-        `event: message.segment\ndata: {"mode":"incognito","generationId":"${generationId}","sequence":1,"text":"临时回复。"}\n\n`,
-        `event: turn.completed\ndata: {"mode":"incognito","generationId":"${generationId}","finishReason":"stop"}\n\n`,
+        `event: message.segment\ndata: {"mode":"incognito","generationId":"${generationId}","sequence":1,"text":"临时回复。","deliveryMode":"immediate"}\n\n`,
+        `event: turn.completed\ndata: {"mode":"incognito","generationId":"${generationId}","finishReason":"stop","deliveryMode":"immediate","knowledgeReferences":[]}\n\n`,
       ]),
     )) {
       events.push(event);
@@ -64,14 +70,17 @@ describe('AI fetch stream client', () => {
 
   it('rejects a response mode that does not match the Incognito request', async () => {
     document.cookie = 'mh_csrf=csrf-test-token; Path=/';
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(
-        new Response(
-          `event: turn.started\ndata: {"mode":"persistent","turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\n`,
-          { headers: { 'content-type': 'text/event-stream' } },
-        ),
-      );
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        `event: turn.started\ndata: {"mode":"persistent","turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\n`,
+        {
+          headers: {
+            'content-type': 'text/event-stream',
+            'X-MH-Knowledge-References': '1',
+          },
+        },
+      ),
+    );
     const result = await startAiChatStream(
       {
         mode: 'incognito',
@@ -94,17 +103,20 @@ describe('AI fetch stream client', () => {
   it('rejects a stream that closes without a terminal event', async () => {
     document.cookie = 'mh_csrf=csrf-test-token; Path=/';
     const generationId = '44444444-4444-4444-8444-444444444444';
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(
-        new Response(
-          [
-            `event: turn.started\ndata: {"mode":"incognito","generationId":"${generationId}"}\n\n`,
-            `event: message.segment\ndata: {"mode":"incognito","generationId":"${generationId}","sequence":1,"text":"已审核片段。"}\n\n`,
-          ].join(''),
-          { headers: { 'content-type': 'text/event-stream' } },
-        ),
-      );
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        [
+          `event: turn.started\ndata: {"mode":"incognito","generationId":"${generationId}"}\n\n`,
+          `event: message.segment\ndata: {"mode":"incognito","generationId":"${generationId}","sequence":1,"text":"已审核片段。","deliveryMode":"immediate"}\n\n`,
+        ].join(''),
+        {
+          headers: {
+            'content-type': 'text/event-stream',
+            'X-MH-Knowledge-References': '1',
+          },
+        },
+      ),
+    );
     const result = await startAiChatStream(
       {
         mode: 'incognito',
@@ -132,14 +144,17 @@ describe('AI fetch stream client', () => {
   it('uses POST, cookies, CSRF, body, and AbortSignal without EventSource', async () => {
     document.cookie = 'mh_csrf=csrf-test-token; Path=/';
     const signal = new AbortController().signal;
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(
-        new Response(
-          `event: turn.started\ndata: {"mode":"persistent","turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\n`,
-          { headers: { 'content-type': 'text/event-stream' } },
-        ),
-      );
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        `event: turn.started\ndata: {"mode":"persistent","turnId":"${TURN_ID}","conversationId":"${CONVERSATION_ID}"}\n\n`,
+        {
+          headers: {
+            'content-type': 'text/event-stream',
+            'X-MH-Knowledge-References': '1',
+          },
+        },
+      ),
+    );
 
     const result = await startAiChatStream(
       {
@@ -159,7 +174,10 @@ describe('AI fetch stream client', () => {
         method: 'POST',
         credentials: 'include',
         signal,
-        headers: expect.objectContaining({ 'x-csrf-token': 'csrf-test-token' }),
+        headers: expect.objectContaining({
+          'x-csrf-token': 'csrf-test-token',
+          'X-MH-Knowledge-References': '1',
+        }),
       }),
     );
     expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
@@ -185,7 +203,12 @@ describe('AI fetch stream client', () => {
             },
           },
         },
-        { headers: { 'content-type': 'application/json' } },
+        {
+          headers: {
+            'content-type': 'application/json',
+            'X-MH-Knowledge-References': '1',
+          },
+        },
       ),
     );
 

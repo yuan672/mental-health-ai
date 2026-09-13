@@ -2,6 +2,8 @@ import type { KnowledgeArticleSummary } from '@mental-health/types';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { listKnowledgeArticles } from '../api/knowledge';
+import { CatArt } from '../shared/cat-art';
+import { Icon } from '../shared/icons';
 import { KnowledgeStatus, formatKnowledgeDate } from './knowledge-presentation';
 
 function isAbortError(error: unknown): boolean {
@@ -70,12 +72,15 @@ export function KnowledgeListPage() {
   return (
     <main className="knowledge-page" aria-labelledby="knowledge-title">
       <header className="knowledge-header">
-        <p className="eyebrow">教育内容</p>
-        <h1 id="knowledge-title">知识中心</h1>
-        <p>浏览有版本和来源记录的心理健康教育内容。</p>
-        <p className="knowledge-boundary">
-          内容仅供一般教育与自我了解，不替代医疗诊断、治疗或紧急支持。
-        </p>
+        <div>
+          <p className="eyebrow">教育内容</p>
+          <h1 id="knowledge-title">给自己多一点理解</h1>
+          <p>浏览有版本和来源记录的心理健康教育内容。</p>
+          <p className="knowledge-boundary">
+            内容仅供一般教育与自我了解，不替代医疗诊断、治疗或紧急支持。
+          </p>
+        </div>
+        <CatArt mood="sleepy" />
       </header>
 
       {loading ? <p aria-busy="true">正在加载知识内容…</p> : null}
@@ -107,8 +112,9 @@ export function KnowledgeListPage() {
       ) : null}
       {articles.length > 0 ? (
         <ul className="knowledge-list" aria-label="知识文章">
-          {articles.map((article) => (
+          {articles.map((article, index) => (
             <li key={article.articleKey} className="knowledge-card">
+              <CatArt mood={index % 2 === 0 ? 'shy' : 'sleepy'} className="knowledge-card-cat" />
               <div className="knowledge-card-meta">
                 <KnowledgeStatus article={article} />
                 <span>版本 {article.version}</span>
@@ -135,6 +141,12 @@ export function KnowledgeListPage() {
                   <dd>{article.sourcePublishers.join('、')}</dd>
                 </div>
               </dl>
+              <Link
+                className="knowledge-card-link"
+                to={`/app/knowledge/${encodeURIComponent(article.articleKey)}`}
+              >
+                阅读文章 <Icon name="arrow-right" />
+              </Link>
             </li>
           ))}
         </ul>

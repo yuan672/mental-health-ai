@@ -1,4 +1,4 @@
-import type { AiStreamEvent } from '@mental-health/types';
+import type { AiStreamEventV2 } from '@mental-health/types';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
@@ -68,7 +68,7 @@ function workspace(
   };
 }
 
-async function* consentRequiredStream(): AsyncIterable<AiStreamEvent> {
+async function* consentRequiredStream(): AsyncIterable<AiStreamEventV2> {
   yield {
     type: 'turn.started',
     data: { mode: 'incognito', generationId: GENERATION_ID },
@@ -80,6 +80,7 @@ async function* consentRequiredStream(): AsyncIterable<AiStreamEvent> {
       generationId: GENERATION_ID,
       sequence: 1,
       text: '已显示的最低安全提示。',
+      deliveryMode: 'immediate',
     },
   };
   yield {

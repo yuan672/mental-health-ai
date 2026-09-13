@@ -13,11 +13,23 @@ describe('chat stream reducer', () => {
     });
     const first = reduceChatStreamEvent(started, {
       type: 'message.segment',
-      data: { mode: 'persistent', turnId: TURN_ID, sequence: 1, text: '先听见你。' },
+      data: {
+        mode: 'persistent',
+        turnId: TURN_ID,
+        sequence: 1,
+        text: '先听见你。',
+        deliveryMode: 'immediate',
+      },
     });
     const second = reduceChatStreamEvent(first, {
       type: 'message.segment',
-      data: { mode: 'persistent', turnId: TURN_ID, sequence: 2, text: '我们慢慢来。' },
+      data: {
+        mode: 'persistent',
+        turnId: TURN_ID,
+        sequence: 2,
+        text: '我们慢慢来。',
+        deliveryMode: 'immediate',
+      },
     });
     const completed = reduceChatStreamEvent(second, {
       type: 'turn.completed',
@@ -26,6 +38,8 @@ describe('chat stream reducer', () => {
         turnId: TURN_ID,
         assistantMessageId: MESSAGE_ID,
         finishReason: 'stop',
+        deliveryMode: 'immediate',
+        knowledgeReferences: [],
       },
     });
 
@@ -46,7 +60,13 @@ describe('chat stream reducer', () => {
     expect(() =>
       reduceChatStreamEvent(started, {
         type: 'message.segment',
-        data: { mode: 'persistent', turnId: TURN_ID, sequence: 2, text: 'out-of-order' },
+        data: {
+          mode: 'persistent',
+          turnId: TURN_ID,
+          sequence: 2,
+          text: 'out-of-order',
+          deliveryMode: 'immediate',
+        },
       }),
     ).toThrow('segment sequence');
   });
@@ -85,6 +105,7 @@ describe('chat stream reducer', () => {
         turnId: TURN_ID,
         sequence: 1,
         text: '请立即寻求现实世界的帮助。',
+        deliveryMode: 'immediate',
       },
     });
     const failed = reduceChatStreamEvent(safetyPrompt, {
@@ -113,11 +134,23 @@ describe('chat stream reducer', () => {
     });
     const segment = reduceChatStreamEvent(started, {
       type: 'message.segment',
-      data: { mode: 'incognito', generationId, sequence: 1, text: '临时回复。' },
+      data: {
+        mode: 'incognito',
+        generationId,
+        sequence: 1,
+        text: '临时回复。',
+        deliveryMode: 'immediate',
+      },
     });
     const completed = reduceChatStreamEvent(segment, {
       type: 'turn.completed',
-      data: { mode: 'incognito', generationId, finishReason: 'stop' },
+      data: {
+        mode: 'incognito',
+        generationId,
+        finishReason: 'stop',
+        deliveryMode: 'immediate',
+        knowledgeReferences: [],
+      },
     });
 
     expect(completed).toMatchObject({
@@ -141,7 +174,13 @@ describe('chat stream reducer', () => {
     expect(() =>
       reduceChatStreamEvent(started, {
         type: 'message.segment',
-        data: { mode: 'persistent', turnId: TURN_ID, sequence: 1, text: 'wrong mode' },
+        data: {
+          mode: 'persistent',
+          turnId: TURN_ID,
+          sequence: 1,
+          text: 'wrong mode',
+          deliveryMode: 'immediate',
+        },
       }),
     ).toThrow('segment sequence');
 
@@ -151,5 +190,63 @@ describe('chat stream reducer', () => {
         data: { mode: 'incognito', generationId },
       }),
     ).toThrow('duplicated or out of order');
+  });
+
+  it('keeps grounded text hidden until a matching completion commits its references', () => {
+    const reference = {
+      articleKey: 'synthetic-grounding',
+      title: '合成知识文章',
+      version: 1,
+      contentOrigin: 'synthetic_fixture' as const,
+      reviewStatus: 'unverified' as const,
+      reviewedAt: null,
+      availability: 'currently_published' as const,
+      sources: [
+        {
+          linkState: 'available' as const,
+          ordinal: 1,
+          publisherName: '合成发布者',
+          sourceTitle: '合成来源',
+          sourcePublishedAt: null,
+          sourceVersionLabel: null,
+          sourceLocator: null,
+          retrievedAt: '2026-09-13T00:00:00.000Z',
+          sourceUrl: 'https://synthetic.test/source',
+        },
+      ],
+    };
+    const started = reduceChatStreamEvent(beginChatStream(), {
+      type: 'turn.started',
+      data: { mode: 'persistent', turnId: TURN_ID, conversationId: CONVERSATION_ID },
+    });
+    const pending = reduceChatStreamEvent(started, {
+      type: 'message.segment',
+      data: {
+        mode: 'persistent',
+        turnId: TURN_ID,
+        sequence: 1,
+        text: '暂存的知识回答。',
+        deliveryMode: 'commit_with_references',
+      },
+    });
+
+    expect(pending).toMatchObject({ text: '', pendingText: '暂存的知识回答。' });
+
+    const completed = reduceChatStreamEvent(pending, {
+      type: 'turn.completed',
+      data: {
+        mode: 'persistent',
+        turnId: TURN_ID,
+        assistantMessageId: MESSAGE_ID,
+        finishReason: 'stop',
+        deliveryMode: 'commit_with_references',
+        knowledgeReferences: [reference],
+      },
+    });
+    expect(completed).toMatchObject({
+      text: '暂存的知识回答。',
+      pendingText: '',
+      knowledgeReferences: [reference],
+    });
   });
 });

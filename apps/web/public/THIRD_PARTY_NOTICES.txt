@@ -1,0 +1,6 @@
+Feather Icons (provided through react-icons)
+Copyright (c) 2013-2023 Cole Bemis
+Licensed under the MIT License: https://github.com/feathericons/feather/blob/master/LICENSE
+
+The watercolor artwork used by this frontend was extracted from the visual prototype
+supplied by the project owner for this implementation.

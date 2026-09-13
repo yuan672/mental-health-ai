@@ -25,8 +25,8 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
   production content remains unverified and unpublished; the bounded LLM +
   Knowledge architecture is accepted in ADR-019 and the Knowledge AI-A backend is
   engineering complete and delivered by PR #25; Knowledge AI-B remains pending,
-  with its former Web implementation direction paused for a replacement frontend,
-  so Phase 5E is not phase-complete
+  with its replacement Web implementation now in review on a dedicated feature
+  branch, so Phase 5E is not phase-complete
 - Phase 6 — Admin and operations features: ADR-020 staff-identity and
   least-privilege backend design accepted; Batch 1 identity/session/authorization
   implementation is merged through PR #27 and its deterministic cancellation-test
@@ -156,11 +156,14 @@ safety, or validation for clinical use.
   through [PR #34](https://github.com/yuan672/mental-health-ai/pull/34). All Admin
   UI and production enablement remain outside completed scope.
 
-The existing Web is not a design constraint for the replacement frontend. New page,
-style, component, interaction, and Knowledge AI-B reducer work is paused in this
-backend task. The v2 streaming/history capability, delivery-mode, reference,
-reconciliation, 406, Session, Consent, CSRF, privacy, and data-minimization backend
-contracts remain authoritative and ready for a replacement frontend to consume.
+The project-owner supplied HTML prototype is the visual source of truth for the
+replacement Web experience. A dedicated feature branch now replaces the former
+visual direction across public, authenticated, chat, Mood, Knowledge, Profile, and
+Privacy surfaces and adds the pending Knowledge AI-B client delivery/reconciliation
+contract. This work remains under review and is not yet merged or phase-complete.
+The v2 streaming/history capability, delivery mode, reference, reconciliation,
+406, Session, Consent, CSRF, privacy, and data-minimization backend contracts remain
+authoritative; the visual replacement does not weaken them.
 
 ## Phase 5C Batch Scope and Open Consent Product Flow
 
@@ -217,9 +220,9 @@ controls.
 
 ## Active Parallel Work
 
-- Replacement frontend design and implementation are user-owned and outside this
-  backend task. No uncommitted AI-B work was present when the backend Admin design
-  branch was created.
+- Replacement frontend design is project-owner supplied. Its implementation and
+  Knowledge AI-B client integration are isolated on a dedicated feature branch and
+  remain pending review; no Admin UI is included.
 - ADR-021 accepts the minimum process-local HTTP rate-limit and credential-work
   protection architecture. Its bounded local/demo implementation is merged through
   PR #37. It adds no schema, dependency, external service, or frontend work and
@@ -256,9 +259,10 @@ controls.
 
 ## Immediate Next Step
 
-Use `docs/backend-integration-handoff.md` as the backend capability and protocol
-index for the user-owned replacement frontend. Knowledge AI-B and every Admin UI
-remain pending client work; keep augmentation and Admin HTTP disabled by default,
+Review the dedicated replacement-frontend feature branch against the project-owner
+supplied HTML prototype and `docs/backend-integration-handoff.md`. Knowledge AI-B
+client integration remains pending until that branch is accepted and merged; every
+Admin UI remains outside it. Keep augmentation and Admin HTTP disabled by default,
 and retain the v2 reader plus v1 history guard. Keep the bounded NF-02 account-
 deletion backend disabled by default and unavailable in Staging/Production. The
 three candidate articles remain unverified and unpublished, and production

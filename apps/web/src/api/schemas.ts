@@ -1,5 +1,79 @@
 import { z } from 'zod';
 
+const boundedCodePointText = (maximum: number) =>
+  z
+    .string()
+    .min(1)
+    .refine((value) => Array.from(value).length <= maximum);
+
+const credentialFreeHttpsUrlSchema = z
+  .string()
+  .url()
+  .max(2048)
+  .refine((value) => {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !url.username && !url.password;
+  });
+
+const knowledgeReferenceSourceSchema = z.discriminatedUnion('linkState', [
+  z
+    .object({
+      linkState: z.literal('available'),
+      ordinal: z.number().int().positive().max(20),
+      publisherName: boundedCodePointText(160),
+      sourceTitle: boundedCodePointText(320),
+      sourcePublishedAt: z.string().datetime({ offset: true }).nullable(),
+      sourceVersionLabel: boundedCodePointText(120).nullable(),
+      sourceLocator: boundedCodePointText(160).nullable(),
+      retrievedAt: z.string().datetime({ offset: true }),
+      sourceUrl: credentialFreeHttpsUrlSchema,
+    })
+    .strict(),
+  z
+    .object({
+      linkState: z.literal('unavailable'),
+      ordinal: z.number().int().positive().max(20),
+      publisherName: boundedCodePointText(160),
+      sourceTitle: boundedCodePointText(320),
+      sourcePublishedAt: z.string().datetime({ offset: true }).nullable(),
+      sourceVersionLabel: boundedCodePointText(120).nullable(),
+      sourceLocator: boundedCodePointText(160).nullable(),
+      retrievedAt: z.string().datetime({ offset: true }),
+    })
+    .strict(),
+]);
+
+export const knowledgeReferenceSchema = z
+  .object({
+    articleKey: z
+      .string()
+      .min(1)
+      .max(100)
+      .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u),
+    title: boundedCodePointText(160),
+    version: z.number().int().positive(),
+    contentOrigin: z.enum(['curated', 'synthetic_fixture']),
+    reviewStatus: z.enum(['unverified', 'source_verified']),
+    reviewedAt: z.string().datetime({ offset: true }).nullable(),
+    availability: z.enum(['currently_published', 'no_longer_available']),
+    sources: z.array(knowledgeReferenceSourceSchema).min(1).max(20),
+  })
+  .strict()
+  .superRefine((reference, context) => {
+    if (
+      new Set(reference.sources.map((source) => source.ordinal)).size !== reference.sources.length
+    )
+      context.addIssue({ code: 'custom', path: ['sources'], message: '来源顺序必须唯一' });
+    if (reference.contentOrigin === 'curated' && reference.reviewStatus !== 'source_verified')
+      context.addIssue({ code: 'custom', path: ['reviewStatus'], message: '正式引用必须已核验' });
+    if (reference.contentOrigin === 'synthetic_fixture' && reference.reviewStatus !== 'unverified')
+      context.addIssue({ code: 'custom', path: ['reviewStatus'], message: '测试引用必须未核验' });
+    if ((reference.reviewStatus === 'source_verified') !== (reference.reviewedAt !== null))
+      context.addIssue({ code: 'custom', path: ['reviewedAt'], message: '核验状态与日期不一致' });
+  });
+
+export const knowledgeReferencesSchema = z.array(knowledgeReferenceSchema).max(2);
+
 function isSafeDocumentHref(value: string): boolean {
   if (/^\/consent-documents\/[a-z0-9.-]+\/[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+[.]html$/u.test(value)) {
     return !value.split('/').some((segment) => segment === '..' || segment === '.');
@@ -129,6 +203,37 @@ export const conversationMessagesResponseSchema = z
               createdAt: z.string().datetime({ offset: true }),
             })
             .strict(),
+        ),
+        nextCursor: z.string().nullable(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const conversationMessagesResponseV2Schema = z
+  .object({
+    success: z.literal(true),
+    data: z
+      .object({
+        messages: z.array(
+          z
+            .object({
+              id: z.string().uuid(),
+              role: z.enum(['user', 'assistant']),
+              content: z.string(),
+              sequence: z.number().int().positive(),
+              createdAt: z.string().datetime({ offset: true }),
+              knowledgeReferences: knowledgeReferencesSchema,
+            })
+            .strict()
+            .superRefine((message, context) => {
+              if (message.role === 'user' && message.knowledgeReferences.length > 0)
+                context.addIssue({
+                  code: 'custom',
+                  path: ['knowledgeReferences'],
+                  message: '用户消息不能携带知识引用',
+                });
+            }),
         ),
         nextCursor: z.string().nullable(),
       })

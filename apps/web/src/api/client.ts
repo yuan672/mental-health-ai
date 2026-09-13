@@ -43,6 +43,8 @@ type ApiRequestOptions = Readonly<{
   signal?: AbortSignal;
   csrf?: boolean;
   notifyOnUnauthorized?: boolean;
+  headers?: Readonly<Record<string, string>>;
+  validateResponse?: (response: Response) => void;
 }>;
 
 export async function apiRequest<T>(
@@ -53,6 +55,7 @@ export async function apiRequest<T>(
 ): Promise<T> {
   const method = options.method ?? 'GET';
   const headers = new Headers({ Accept: 'application/json' });
+  for (const [name, value] of Object.entries(options.headers ?? {})) headers.set(name, value);
   if (options.body !== undefined) headers.set('Content-Type', 'application/json');
   if (options.csrf) {
     const token = readCsrfToken();
@@ -76,6 +79,8 @@ export async function apiRequest<T>(
     }
     throw new ApiClientError(error.code, error.message, response.status);
   }
+
+  options.validateResponse?.(response);
 
   try {
     return schema.parse(await response.json());

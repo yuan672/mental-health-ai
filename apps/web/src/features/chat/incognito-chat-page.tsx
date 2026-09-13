@@ -1,4 +1,4 @@
-import type { AiStreamEvent } from '@mental-health/types';
+import type { AiStreamEventV2, KnowledgeReference } from '@mental-health/types';
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { createIncognitoContext, endIncognitoContext } from '../../api/incognito';
@@ -13,12 +13,14 @@ import {
 } from '../../ai/chat-stream-state';
 import { useProductData } from '../../app/product-data-provider';
 import { createClientRequestId } from './client-request-id';
+import { KnowledgeReferences } from './knowledge-references';
 import { useChatWorkspace } from './chat-workspace';
 
 type EphemeralMessage = Readonly<{
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  knowledgeReferences: KnowledgeReference[];
 }>;
 
 type ContextState =
@@ -29,7 +31,7 @@ function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError';
 }
 
-function isForGeneration(event: AiStreamEvent, generationId: string | null): boolean {
+function isForGeneration(event: AiStreamEventV2, generationId: string | null): boolean {
   return event.data.mode === 'incognito' && event.type === 'turn.started'
     ? generationId === null || event.data.generationId === generationId
     : event.data.mode === 'incognito' && event.data.generationId === generationId;
@@ -172,12 +174,19 @@ export function IncognitoChatPage() {
       updateStream(beginChatStream());
       setError(null);
       setNotice(null);
-      const retainTerminalContent = (text: string) => {
+      const retainTerminalContent = (text: string, references: KnowledgeReference[] = []) => {
         setMessages((current) => [
           ...current,
-          { id: createClientRequestId(), role: 'user', content: message },
+          { id: createClientRequestId(), role: 'user', content: message, knowledgeReferences: [] },
           ...(text
-            ? [{ id: createClientRequestId(), role: 'assistant' as const, content: text }]
+            ? [
+                {
+                  id: createClientRequestId(),
+                  role: 'assistant' as const,
+                  content: text,
+                  knowledgeReferences: references,
+                },
+              ]
             : []),
         ]);
         setPendingUserMessage(null);
@@ -212,7 +221,7 @@ export function IncognitoChatPage() {
           const next = reduceChatStreamEvent(streamRef.current, event);
           updateStream(next);
           if (event.type === 'turn.completed') {
-            retainTerminalContent(next.text);
+            retainTerminalContent(next.text, next.knowledgeReferences);
             setNotice('回复已完成。无痕普通聊天不会进入长期聊天记录。');
             break;
           }
@@ -232,6 +241,11 @@ export function IncognitoChatPage() {
           if (requestError?.code === 'AI_INCOGNITO_CONTEXT_LOST') {
             terminateLocal('lost');
             setNotice('无痕上下文已失效或因服务重启而丢失；旧内容无法恢复。');
+            return;
+          }
+          if (streamRef.current.deliveryMode === 'commit_with_references') {
+            terminateLocal('lost');
+            setNotice('知识回答未完整送达，当前无痕上下文已结束；不会自动重新生成。');
             return;
           }
           const next = failChatStream(
@@ -360,6 +374,7 @@ export function IncognitoChatPage() {
                     {message.role === 'user' ? '你' : '支持助手'}
                   </span>
                   <p>{message.content}</p>
+                  <KnowledgeReferences references={message.knowledgeReferences} />
                 </li>
               ))}
               {pendingUserMessage && stream.status !== 'completed' ? (

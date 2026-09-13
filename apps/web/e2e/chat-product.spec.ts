@@ -52,8 +52,8 @@ async function clearMoodHistory(page: Page): Promise<void> {
 
 test('landing, login, protected app shell, and logout', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByText('心理健康 AI 支持系统', { exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('在这里，慢慢说也可以。');
+  await expect(page.getByText('安心支持', { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('今天，也可以慢慢来。');
   await page.getByRole('link', { name: '登录' }).click();
   await page.getByLabel('邮箱').fill(EMAIL);
   await page.getByLabel('密码').fill(PASSWORD);
@@ -137,10 +137,14 @@ test('approved safety text remains visible when persistence later fails', async 
   await page.route('**/ai/chat/stream', async (route) => {
     await route.fulfill({
       status: 200,
-      contentType: 'text/event-stream',
+      headers: {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'X-MH-Knowledge-References': '1',
+        'Access-Control-Expose-Headers': 'X-MH-Knowledge-References',
+      },
       body: [
         `event: turn.started\ndata: {"mode":"persistent","turnId":"${turnId}","conversationId":"${conversationId}"}\n\n`,
-        `event: message.segment\ndata: {"mode":"persistent","turnId":"${turnId}","sequence":1,"text":"这是合成的最低安全提示。"}\n\n`,
+        `event: message.segment\ndata: {"mode":"persistent","turnId":"${turnId}","sequence":1,"text":"这是合成的最低安全提示。","deliveryMode":"immediate"}\n\n`,
         `event: turn.failed\ndata: {"mode":"persistent","turnId":"${turnId}","code":"DATABASE_ERROR","message":"本轮未能保存"}\n\n`,
       ].join(''),
     });
@@ -282,7 +286,7 @@ test('Privacy opens a versioned synthetic document and exact-replays an unknown 
 }) => {
   await login(page);
   await page.goto('/app/privacy');
-  await expect(page.getByRole('heading', { name: '管理同意与了解数据边界' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '你的空间，由你做主' })).toBeVisible();
 
   const documentPagePromise = context.waitForEvent('page');
   await page
@@ -346,7 +350,7 @@ test('two Privacy tabs resolve a stale revision without automatic acceptance', a
   await page.goto('/app/privacy');
   const stalePage = await context.newPage();
   await stalePage.goto('/app/privacy');
-  await expect(stalePage.getByRole('heading', { name: '管理同意与了解数据边界' })).toBeVisible();
+  await expect(stalePage.getByRole('heading', { name: '你的空间，由你做主' })).toBeVisible();
 
   await page.getByRole('button', { name: '撤回隐私政策版本 1.1' }).click();
   await page.getByRole('dialog').getByRole('button', { name: '确认撤回' }).click();
@@ -371,7 +375,7 @@ test('Mood/Profile supports the complete synthetic P0 lifecycle', async ({ page 
   await login(page);
   await clearMoodHistory(page);
   await page.goto('/app/mood');
-  await expect(page.getByRole('heading', { name: '心情记录' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '此刻，你感觉怎么样？' })).toBeVisible();
   await expect(page.getByText(/不是医疗诊断、持续监测或紧急响应渠道/u)).toBeVisible();
 
   await page.getByRole('radio', { name: '2' }).click();
@@ -446,7 +450,7 @@ test('Mood/Profile supports the complete synthetic P0 lifecycle', async ({ page 
   await page.getByRole('button', { name: '打开聊天记录' }).click();
   await page
     .getByRole('dialog', { name: '聊天记录' })
-    .getByRole('link', { name: '个人资料' })
+    .getByRole('link', { name: '账号信息' })
     .click();
   await expect(page).toHaveURL(/\/app\/profile$/u);
   await expect(page.getByText(EMAIL)).toBeVisible();
@@ -455,6 +459,7 @@ test('Mood/Profile supports the complete synthetic P0 lifecycle', async ({ page 
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: `${moodScreenshotDirectory}profile-mobile.png` });
   }
+  await page.getByRole('button', { name: '打开聊天记录' }).click();
   await page.getByRole('button', { name: '退出' }).click();
   await expect(page).toHaveURL(/\/login\?returnTo=/u);
   await expect(page.getByText('第一条已编辑的合成记录。')).toHaveCount(0);
@@ -464,7 +469,7 @@ test('Mood preserves read-only unknown-create recovery across a range change', a
   await login(page);
   await clearMoodHistory(page);
   await page.goto('/app/mood');
-  await expect(page.getByRole('heading', { name: '心情记录' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '此刻，你感觉怎么样？' })).toBeVisible();
 
   let moodCreateCalls = 0;
   await page.route('**/mood-entries*', async (route) => {
@@ -507,7 +512,7 @@ test('Knowledge reader shows exact synthetic evidence and remains session-bound'
   await login(page);
   await page.goto('/app/knowledge');
 
-  await expect(page.getByRole('heading', { name: '知识中心' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '给自己多一点理解' })).toBeVisible();
   await expect(page.getByText('测试内容 · 未核验')).toBeVisible();
   await expect(page.getByText('版本 1')).toBeVisible();
   await expect(page.getByText('合成测试发布者')).toBeVisible();
@@ -556,7 +561,7 @@ test('Knowledge reader shows exact synthetic evidence and remains session-bound'
   }
 
   await page.getByRole('link', { name: '← 返回知识中心' }).click();
-  await expect(page.getByRole('heading', { name: '知识中心' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '给自己多一点理解' })).toBeVisible();
   await page.getByRole('button', { name: '退出' }).click();
   await expect(page).toHaveURL(/\/login\?returnTo=/u);
   await expect(page.getByText('这段合成正文只用于自动化测试。')).toHaveCount(0);

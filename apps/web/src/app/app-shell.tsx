@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { NavLink, Outlet } from 'react-router';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
+import brandArt from '../assets/cozy-brand.png';
 import { ChatWorkspaceProvider, useChatWorkspace } from '../features/chat/chat-workspace';
 import {
   ConversationHistory,
   ConversationHistoryProvider,
 } from '../features/conversations/conversation-history';
 import { copy } from '../locales';
+import { CatArt } from '../shared/cat-art';
 import { ConfirmDialog } from '../shared/confirm-dialog';
+import { Icon } from '../shared/icons';
 import { ProductDataProvider, useProductData } from './product-data-provider';
 import { useSession } from './session-provider';
 
 function AppShellContent() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const session = useSession();
   const product = useProductData();
   const workspace = useChatWorkspace();
@@ -22,6 +27,25 @@ function AppShellContent() {
   const [deleteAllError, setDeleteAllError] = useState<string | null>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
   const drawerTriggerRef = useRef<HTMLButtonElement>(null);
+
+  const routeTitle = location.pathname.includes('/chat/incognito')
+    ? '无痕对话'
+    : location.pathname.includes('/chat')
+      ? '聊一聊'
+      : location.pathname.includes('/mood')
+        ? '心情记录'
+        : location.pathname.includes('/knowledge')
+          ? '心理知识'
+          : location.pathname.includes('/profile')
+            ? '账号信息'
+            : location.pathname.includes('/privacy')
+              ? '隐私与数据'
+              : '首页';
+  const today = new Intl.DateTimeFormat('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    weekday: 'short',
+  }).format(new Date());
 
   useEffect(() => {
     if (!drawerOpen) return;
@@ -80,82 +104,123 @@ function AppShellContent() {
 
   return (
     <div className="app-shell">
-      <header className="app-header">
-        <button
-          ref={drawerTriggerRef}
-          className="icon-button mobile-only"
-          type="button"
-          aria-label="打开聊天记录"
-          onClick={() => setDrawerOpen(true)}
-        >
-          ☰
-        </button>
-        <div className="app-brand">
-          <span className="brand-mark" aria-hidden="true">
-            安
+      <aside className="app-sidebar desktop-only">
+        <NavLink className="app-brand" to="/app/home">
+          <img src={brandArt} alt="" aria-hidden="true" />
+          <span>
+            <strong>{copy.app.shortName}</strong>
+            <small>在这里，慢慢来</small>
           </span>
-          <span>{copy.app.shortName}</span>
-        </div>
-        <div className="app-header-actions">
-          {product.quota ? (
-            <span className="quota-summary" aria-label={`今日剩余 ${product.quota.remaining} 次`}>
-              今日剩余 {product.quota.remaining}/{product.quota.dailyLimit}
-            </span>
-          ) : null}
-          <button
-            type="button"
-            className="button button-quiet button-small"
-            onClick={() => void runLogout()}
-          >
-            退出
-          </button>
-        </div>
-      </header>
-      {logoutError ? (
-        <p className="app-error" role="alert">
-          {logoutError}
-        </p>
-      ) : null}
-      {product.error ? (
-        <p className="app-error" role="alert">
-          {product.error}
-        </p>
-      ) : null}
-      {deletedCount !== null ? (
-        <p className="app-status" role="status">
-          已删除 {deletedCount} 次普通聊天。
-        </p>
-      ) : null}
-      <div className="app-layout">
-        <aside className="history-sidebar desktop-only">
-          <nav className="product-navigation" aria-label="产品功能">
-            <NavLink to="/app/chat/incognito">无痕聊天</NavLink>
-            <NavLink to="/app/mood">心情记录</NavLink>
-            <NavLink to="/app/knowledge">知识中心</NavLink>
-            <NavLink to="/app/profile">个人资料</NavLink>
-            <NavLink to="/app/privacy">隐私与数据</NavLink>
-          </nav>
+        </NavLink>
+        <button
+          type="button"
+          className="button button-secondary new-chat-button"
+          disabled={workspace.reconciliationPending}
+          onClick={() => void workspace.startNewChat()}
+        >
+          <Icon name="plus" /> 新对话
+        </button>
+        <nav className="product-navigation primary-navigation" aria-label="日常支持">
+          <NavLink to="/app/home">
+            <Icon name="home" /> <span>首页</span>
+          </NavLink>
+          <NavLink to="/app/chat">
+            <Icon name="message" /> <span>聊一聊</span>
+          </NavLink>
+          <NavLink to="/app/mood">
+            <Icon name="edit" /> <span>心情记录</span>
+          </NavLink>
+          <NavLink to="/app/knowledge">
+            <Icon name="book-open" /> <span>心理知识</span>
+          </NavLink>
+        </nav>
+        <div className="history-sidebar">
           <ConversationHistory
             navigationDisabled={workspace.reconciliationPending}
             onNewChat={() => void workspace.startNewChat()}
+            showNewChat={false}
           />
           <button
             type="button"
             className="button button-quiet delete-all-button"
+            aria-label="删除全部聊天"
             disabled={workspace.reconciliationPending}
             onClick={() => setDeleteAllOpen(true)}
           >
-            删除全部聊天
+            清空全部聊天
           </button>
-        </aside>
-        <Outlet />
+        </div>
+        <div className="sidebar-bottom">
+          <CatArt mood="sleepy" className="sidebar-cat" />
+          <nav className="product-navigation account-navigation" aria-label="账号与数据">
+            <NavLink to="/app/profile">
+              <Icon name="user" /> <span>账号信息</span>
+            </NavLink>
+            <NavLink to="/app/privacy">
+              <Icon name="shield" /> <span>隐私与数据</span>
+            </NavLink>
+            <button type="button" onClick={() => void runLogout()}>
+              <Icon name="log-out" /> <span>退出</span>
+            </button>
+          </nav>
+        </div>
+      </aside>
+      <div className="app-main">
+        <header className="app-header">
+          <div className="app-header-leading">
+            <button
+              ref={drawerTriggerRef}
+              className="icon-button mobile-only"
+              type="button"
+              aria-label="打开聊天记录"
+              onClick={() => setDrawerOpen(true)}
+            >
+              <Icon name="menu" />
+            </button>
+            <span>{routeTitle}</span>
+          </div>
+          <div className="app-header-actions">
+            <time dateTime={new Date().toISOString()}>{today}</time>
+            {product.quota && location.pathname.includes('/chat') ? (
+              <span className="quota-summary" aria-label={`今日剩余 ${product.quota.remaining} 次`}>
+                今日剩余 {product.quota.remaining}/{product.quota.dailyLimit}
+              </span>
+            ) : null}
+            <button
+              className="avatar-button"
+              type="button"
+              aria-label="查看账号信息"
+              onClick={() => navigate('/app/profile')}
+            >
+              <img src={brandArt} alt="" aria-hidden="true" />
+            </button>
+          </div>
+        </header>
+        {logoutError ? (
+          <p className="app-error" role="alert">
+            {logoutError}
+          </p>
+        ) : null}
+        {product.error ? (
+          <p className="app-error" role="alert">
+            {product.error}
+          </p>
+        ) : null}
+        {deletedCount !== null ? (
+          <p className="app-status" role="status">
+            已删除 {deletedCount} 次普通聊天。
+          </p>
+        ) : null}
+        <div className="app-layout">
+          <Outlet />
+        </div>
       </div>
       {drawerOpen ? (
         <div
           className="drawer-backdrop"
           onMouseDown={(event) => event.target === event.currentTarget && setDrawerOpen(false)}
         >
-          <div
+          <aside
             ref={drawerRef}
             className="history-drawer"
             role="dialog"
@@ -168,8 +233,29 @@ function AppShellContent() {
               aria-label="关闭聊天记录"
               onClick={() => setDrawerOpen(false)}
             >
-              ×
+              <Icon name="x" />
             </button>
+            <NavLink className="app-brand" to="/app/home" onClick={() => setDrawerOpen(false)}>
+              <img src={brandArt} alt="" aria-hidden="true" />
+              <span>
+                <strong>{copy.app.shortName}</strong>
+                <small>在这里，慢慢来</small>
+              </span>
+            </NavLink>
+            <nav className="product-navigation primary-navigation" aria-label="日常支持">
+              <NavLink to="/app/home" onClick={() => setDrawerOpen(false)}>
+                <Icon name="home" /> <span>首页</span>
+              </NavLink>
+              <NavLink to="/app/chat" onClick={() => setDrawerOpen(false)}>
+                <Icon name="message" /> <span>聊一聊</span>
+              </NavLink>
+              <NavLink to="/app/mood" onClick={() => setDrawerOpen(false)}>
+                <Icon name="edit" /> <span>心情记录</span>
+              </NavLink>
+              <NavLink to="/app/knowledge" onClick={() => setDrawerOpen(false)}>
+                <Icon name="book-open" /> <span>心理知识</span>
+              </NavLink>
+            </nav>
             <ConversationHistory
               navigationDisabled={workspace.reconciliationPending}
               onNewChat={() => {
@@ -178,35 +264,36 @@ function AppShellContent() {
               }}
               onSelect={() => setDrawerOpen(false)}
             />
-            <nav className="product-navigation" aria-label="产品功能">
-              <NavLink to="/app/chat/incognito" onClick={() => setDrawerOpen(false)}>
-                无痕聊天
-              </NavLink>
-              <NavLink to="/app/mood" onClick={() => setDrawerOpen(false)}>
-                心情记录
-              </NavLink>
-              <NavLink to="/app/knowledge" onClick={() => setDrawerOpen(false)}>
-                知识中心
-              </NavLink>
+            <nav className="product-navigation account-navigation" aria-label="账号与数据">
               <NavLink to="/app/profile" onClick={() => setDrawerOpen(false)}>
-                个人资料
+                <Icon name="user" /> <span>账号信息</span>
               </NavLink>
               <NavLink to="/app/privacy" onClick={() => setDrawerOpen(false)}>
-                隐私与数据
+                <Icon name="shield" /> <span>隐私与数据</span>
               </NavLink>
+              <button
+                type="button"
+                onClick={() => {
+                  setDrawerOpen(false);
+                  void runLogout();
+                }}
+              >
+                <Icon name="log-out" /> <span>退出</span>
+              </button>
             </nav>
             <button
               type="button"
               className="button button-quiet delete-all-button"
+              aria-label="删除全部聊天"
               disabled={workspace.reconciliationPending}
               onClick={() => {
                 setDrawerOpen(false);
                 setDeleteAllOpen(true);
               }}
             >
-              删除全部聊天
+              清空全部聊天
             </button>
-          </div>
+          </aside>
         </div>
       ) : null}
       <ConfirmDialog
