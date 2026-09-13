@@ -574,6 +574,12 @@ describe('ADR-022 account deletion backend integration', () => {
       await releaseDelete.promise;
     };
     const service = app.get(AccountDeletionService);
+    const reservation = jest.spyOn(
+      service as unknown as {
+        reserve(userId: string, requestedOperationId: string): unknown;
+      },
+      'reserve',
+    );
     const input = () => ({
       session: {
         id: account.sessionId,
@@ -586,14 +592,17 @@ describe('ADR-022 account deletion backend integration', () => {
       deadlineAt: new Date(Date.now() + 10_000),
     });
     const first = service.deleteCurrentAccount(input());
-    const second = service.deleteCurrentAccount(input());
+    let second: Promise<void> | undefined;
     try {
       await auditInserted.promise;
+      second = service.deleteCurrentAccount(input());
+      await waitForCondition(() => reservation.mock.calls.length === 2);
       expect(service.diagnostics()).toEqual({ unresolved: 1, users: 1 });
       releaseDelete.resolve(undefined);
       await expect(Promise.all([first, second])).resolves.toHaveLength(2);
     } finally {
       releaseDelete.resolve(undefined);
+      reservation.mockRestore();
     }
     expect(
       await database.database.select().from(users).where(eq(users.id, account.userId)),
