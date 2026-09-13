@@ -227,25 +227,24 @@ controls.
   deployment, or production enablement.
 - ADR-022 accepts the NF-02 data-lifecycle and account-deletion architecture only
   for a Development/Test, controlled single-process local/demo backend. PR #38 is
-  merged; the separate `feature/account-deletion-backend` implementation adds the
-  bounded API and tests without a Schema/Migration or frontend change and remains
-  a Draft PR pending review. Its final-readiness repair closes locked Session-time
-  observation, connected-request timeout reporting after lifecycle admission,
-  unresolved-terminal retry ownership, and the corresponding real PostgreSQL/socket
-  evidence. No scheduler, production retention policy, crash/rolling-overlap
-  protection, or production recovery guarantee is delivered.
+  the merged design delivery; PR #39 is the bounded implementation delivery and
+  adds the API and tests without a Schema/Migration or frontend change. Its final
+  acceptance evidence covers locked Session-time observation, actual Persistent and
+  Incognito orchestration on both sides of account termination, connected-request
+  timeout reporting after lifecycle admission, unresolved-terminal retry ownership,
+  and the corresponding real PostgreSQL/socket behavior. No scheduler, production
+  retention policy, crash/rolling-overlap protection, or production recovery
+  guarantee is delivered.
 
 ## Immediate Next Step
 
 Use `docs/backend-integration-handoff.md` as the backend capability and protocol
 index for the user-owned replacement frontend. Knowledge AI-B and every Admin UI
 remain pending client work; keep augmentation and Admin HTTP disabled by default,
-and retain the v2 reader plus v1 history guard. Review the separate bounded NF-02
-local/demo backend implementation; it must remain disabled by default and outside
-Staging/Production. The three candidate
-articles remain unverified and
-unpublished, and production policy/content review and real-model evaluation remain
-separate work.
+and retain the v2 reader plus v1 history guard. Keep the bounded NF-02 account-
+deletion backend disabled by default and unavailable in Staging/Production. The
+three candidate articles remain unverified and unpublished, and production
+policy/content review and real-model evaluation remain separate work.
 
 ## Source of Truth
 

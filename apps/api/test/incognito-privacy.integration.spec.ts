@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   aiTurns,
+  auditLogs,
   consentDecisions,
   conversations,
   count,
@@ -8,6 +9,7 @@ import {
   eq,
   messages,
   migrate,
+  passwordCredentials,
   quotaConsumptions,
   riskEvents,
   sessions,
@@ -38,6 +40,11 @@ import {
   type LLMRiskClassificationCandidate,
 } from '../src/ai/providers/llm-provider';
 import { AppModule } from '../src/app.module';
+import {
+  ACCOUNT_DELETION_REPOSITORY_HOOKS,
+  type AccountDeletionRepositoryHooks,
+} from '../src/account-deletion/account-deletion.repository';
+import { PasswordHasherService } from '../src/auth/password-hasher.service';
 import { hashSessionToken } from '../src/auth/sessions.service';
 import { AppExceptionFilter } from '../src/common/filters/app-exception.filter';
 import { env } from '../src/config/env';
@@ -59,6 +66,7 @@ import {
 import type { SafetyAssessmentContext } from '../src/safety/safety.types';
 
 const WEB_ORIGIN = 'http://localhost:5173';
+const ACCOUNT_DELETION_PASSWORD = 'Synthetic-Deletion-9-Password!';
 
 type Deferred<T = void> = {
   promise: Promise<T>;
@@ -247,6 +255,10 @@ describe('Phase 5C Incognito and privacy API integration', () => {
   let consentLifecycle: ConsentLifecycleRepository;
   let consentExecutions: ConsentExecutionCoordinator;
   let quota: QuotaService;
+  let passwordHash: string;
+  let accountDeletionHooks: AccountDeletionRepositoryHooks & {
+    afterUserLocked?: AccountDeletionRepositoryHooks['afterUserLocked'];
+  };
   const provider = new ControlledGenerationProvider();
   const riskClassifier = new ControlledRiskClassifier();
   const outputClassifier = new AllowingOutputClassifier();
@@ -287,13 +299,20 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     consentLifecycle = moduleRef.get(ConsentLifecycleRepository);
     consentExecutions = moduleRef.get(ConsentExecutionCoordinator);
     quota = moduleRef.get(QuotaService);
+    passwordHash = await moduleRef.get(PasswordHasherService).hash(ACCOUNT_DELETION_PASSWORD);
+    accountDeletionHooks = moduleRef.get(ACCOUNT_DELETION_REPOSITORY_HOOKS);
   }, 60_000);
 
   beforeEach(() => {
+    delete accountDeletionHooks.afterUserLocked;
     provider.reset();
     riskClassifier.reset();
     outputClassifier.reset();
     env.AI_CHAT_ENABLED = true;
+  });
+
+  afterEach(() => {
+    delete accountDeletionHooks.afterUserLocked;
   });
 
   afterAll(async () => {
@@ -306,6 +325,12 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     const now = new Date();
     const userId = randomUUID();
     await database.database.insert(users).values({ id: userId, createdAt: now });
+    await database.database.insert(passwordCredentials).values({
+      userId,
+      email: `phase5c-${randomUUID()}@example.test`,
+      passwordHash,
+      createdAt: now,
+    });
     if (withRequiredConsents) {
       await insertRequiredConsentFixtures(database.database, userId, now);
     }
@@ -380,6 +405,14 @@ describe('Phase 5C Incognito and privacy API integration', () => {
 
   function stream(auth: AuthFixture, body: Record<string, unknown>) {
     return mutation(auth, '/ai/chat/stream').send(body);
+  }
+
+  function deleteAccount(auth: AuthFixture, operationId: string = randomUUID()) {
+    return mutation(auth, '/account/deletion').send({
+      operationId,
+      currentPassword: ACCOUNT_DELETION_PASSWORD,
+      acknowledgeIrreversible: true,
+    });
   }
 
   async function chatRowCounts() {
@@ -1142,6 +1175,191 @@ describe('Phase 5C Incognito and privacy API integration', () => {
     expect(contexts.get(auth.userId, auth.sessionId, contextId)).toBeNull();
     expect(provider.streamCalls).toBe(1);
   });
+
+  it('aborts an actual Persistent generation on account deletion and rejects late output', async () => {
+    provider.reset('wait-for-release');
+    const auth = await createAuth();
+    const operationId = randomUUID();
+    const pending = stream(auth, {
+      mode: 'persistent',
+      clientRequestId: randomUUID(),
+      message: '合成的账号删除 Persistent 竞态输入',
+    });
+    const responsePromise = pending.then((response) => response);
+
+    try {
+      await provider.dispatched.promise;
+      const [conversation] = await database.database
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(eq(conversations.userId, auth.userId))
+        .limit(1);
+      expect(conversation).toBeDefined();
+      expect(provider.streamSignals[0]?.aborted).toBe(false);
+
+      await deleteAccount(auth, operationId).expect(204);
+      expect(provider.streamSignals[0]?.aborted).toBe(true);
+      provider.releaseLateResult();
+
+      const response = await responsePromise;
+      expect(response.text).not.toContain('这是合成且安全的回复。');
+      expect(response.text).not.toContain('event: message.segment');
+      expect(response.text).not.toContain('event: turn.completed');
+      expect(
+        await database.database.select().from(users).where(eq(users.id, auth.userId)),
+      ).toHaveLength(0);
+      expect(
+        await database.database
+          .select()
+          .from(conversations)
+          .where(eq(conversations.userId, auth.userId)),
+      ).toHaveLength(0);
+      expect(
+        await database.database.select().from(aiTurns).where(eq(aiTurns.userId, auth.userId)),
+      ).toHaveLength(0);
+      expect(
+        await database.database
+          .select()
+          .from(quotaConsumptions)
+          .where(eq(quotaConsumptions.userId, auth.userId)),
+      ).toHaveLength(0);
+      expect(
+        await database.database
+          .select()
+          .from(messages)
+          .where(eq(messages.conversationId, conversation!.id)),
+      ).toHaveLength(0);
+      expect(
+        await database.database
+          .select()
+          .from(auditLogs)
+          .where(eq(auditLogs.idempotencyKey, `account-deleted:${operationId}`)),
+      ).toHaveLength(1);
+      expect(consentExecutions.accountTerminationDiagnostics()).toEqual({ terminals: 0 });
+    } finally {
+      provider.releaseLateResult();
+    }
+  });
+
+  it('aborts an actual Incognito generation on account deletion without persistent chat rows', async () => {
+    provider.reset('wait-for-release');
+    const auth = await createAuth();
+    const contextId = await createContext(auth);
+    const operationId = randomUUID();
+    const before = await chatRowCounts();
+    const pending = stream(auth, {
+      mode: 'incognito',
+      contextId,
+      clientRequestId: randomUUID(),
+      message: '合成的账号删除 Incognito 竞态输入',
+    });
+    const responsePromise = pending.then((response) => response);
+
+    try {
+      await provider.dispatched.promise;
+      expect(provider.streamSignals[0]?.aborted).toBe(false);
+
+      await deleteAccount(auth, operationId).expect(204);
+      expect(provider.streamSignals[0]?.aborted).toBe(true);
+      expect(contexts.get(auth.userId, auth.sessionId, contextId)).toBeNull();
+      provider.releaseLateResult();
+
+      const response = await responsePromise;
+      expect(response.text).not.toContain('这是合成且安全的回复。');
+      expect(response.text).not.toContain('event: message.segment');
+      expect(response.text).not.toContain('event: turn.completed');
+      expect(await chatRowCounts()).toEqual(before);
+      expect(
+        await database.database
+          .select()
+          .from(quotaConsumptions)
+          .where(eq(quotaConsumptions.userId, auth.userId)),
+      ).toHaveLength(0);
+      expect(
+        await database.database
+          .select()
+          .from(auditLogs)
+          .where(eq(auditLogs.idempotencyKey, `account-deleted:${operationId}`)),
+      ).toHaveLength(1);
+      expect(consentExecutions.accountTerminationDiagnostics()).toEqual({ terminals: 0 });
+    } finally {
+      provider.releaseLateResult();
+    }
+  });
+
+  it('blocks actual Persistent and Incognito orchestration after the account terminal wins', async () => {
+    const auth = await createAuth();
+    const contextId = await createContext(auth);
+    const terminalInstalled = deferred();
+    const releaseDeletion = deferred();
+    const bothExecutionsRegistered = deferred();
+    const originalRegisterPending = consentExecutions.registerPending.bind(consentExecutions);
+    let registeredExecutions = 0;
+    const registerPendingSpy = jest
+      .spyOn(consentExecutions, 'registerPending')
+      .mockImplementation((input) => {
+        const execution = originalRegisterPending(input);
+        registeredExecutions += 1;
+        if (registeredExecutions === 2) bothExecutionsRegistered.resolve();
+        return execution;
+      });
+    accountDeletionHooks.afterUserLocked = async () => {
+      terminalInstalled.resolve();
+      await releaseDeletion.promise;
+    };
+    const deletion = deleteAccount(auth).then((response) => response);
+
+    try {
+      await terminalInstalled.promise;
+      expect(contexts.get(auth.userId, auth.sessionId, contextId)).toBeNull();
+
+      const persistentResponse = stream(auth, {
+        mode: 'persistent',
+        clientRequestId: randomUUID(),
+        message: '合成的终结标记后 Persistent 输入',
+      }).then((response) => response);
+      const incognitoResponse = stream(auth, {
+        mode: 'incognito',
+        contextId,
+        clientRequestId: randomUUID(),
+        message: '合成的终结标记后 Incognito 输入',
+      }).then((response) => response);
+
+      await bothExecutionsRegistered.promise;
+
+      expect(provider.streamCalls).toBe(0);
+      expect(riskClassifier.calls).toBe(0);
+      expect(
+        await database.database
+          .select()
+          .from(conversations)
+          .where(eq(conversations.userId, auth.userId)),
+      ).toHaveLength(0);
+      expect(
+        await database.database
+          .select()
+          .from(quotaConsumptions)
+          .where(eq(quotaConsumptions.userId, auth.userId)),
+      ).toHaveLength(0);
+
+      releaseDeletion.resolve();
+      expect((await deletion).status).toBe(204);
+      const rejected = await Promise.all([persistentResponse, incognitoResponse]);
+      expect(rejected.map((response) => response.status)).toEqual([400, 400]);
+      expect(rejected.map((response) => response.body.error.code)).toEqual([
+        'CONSENT_REQUIRED',
+        'CONSENT_REQUIRED',
+      ]);
+      expect(provider.streamCalls).toBe(0);
+      expect(riskClassifier.calls).toBe(0);
+      expect(consentExecutions.accountTerminationDiagnostics()).toEqual({ terminals: 0 });
+    } finally {
+      releaseDeletion.resolve();
+      delete accountDeletionHooks.afterUserLocked;
+      await deletion.catch(() => undefined);
+      registerPendingSpy.mockRestore();
+    }
+  }, 10_000);
 
   it('clears an active Incognito context on logout and rejects late output', async () => {
     provider.reset('wait-for-release');

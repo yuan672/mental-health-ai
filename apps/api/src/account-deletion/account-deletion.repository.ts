@@ -16,7 +16,7 @@ export const ACCOUNT_DELETION_REPOSITORY_HOOKS = Symbol('ACCOUNT_DELETION_REPOSI
 
 export type AccountDeletionRepositoryHooks = Readonly<{
   afterCommitted?: (input: { userId: string; operationId: string }) => void | Promise<void>;
-  afterUserLocked?: () => void | Promise<void>;
+  afterUserLocked?: (input: { transactionStartedAt: Date }) => void | Promise<void>;
   afterSessionValidated?: () => void | Promise<void>;
   afterRequiredAuditInserted?: () => void | Promise<void>;
   whileConfirmationUserLockPending?: () => void | Promise<void>;
@@ -78,7 +78,11 @@ export class AccountDeletionRepository {
         .limit(1)
         .for('update');
       if (!owner) throw new AccountDeletionRepositoryPreconditionError('user_missing');
-      await this.hooks.afterUserLocked?.();
+      if (this.hooks.afterUserLocked) {
+        await this.hooks.afterUserLocked({
+          transactionStartedAt: await this.transactionStartedAt(transaction),
+        });
+      }
 
       const [session] = await transaction
         .select({
@@ -194,5 +198,18 @@ export class AccountDeletionRepository {
     const row = result.rows[0] as { observed_at?: Date | string } | undefined;
     if (!row?.observed_at) throw new Error('database_observation_time_missing');
     return row.observed_at instanceof Date ? row.observed_at : new Date(row.observed_at);
+  }
+
+  private async transactionStartedAt(
+    transaction: Parameters<Parameters<typeof this.database.database.transaction>[0]>[0],
+  ): Promise<Date> {
+    const result = await transaction.execute(
+      sql`SELECT transaction_timestamp() AS transaction_started_at`,
+    );
+    const row = result.rows[0] as { transaction_started_at?: Date | string } | undefined;
+    if (!row?.transaction_started_at) throw new Error('database_transaction_time_missing');
+    return row.transaction_started_at instanceof Date
+      ? row.transaction_started_at
+      : new Date(row.transaction_started_at);
   }
 }

@@ -787,29 +787,36 @@ describe('ADR-022 account deletion backend integration', () => {
     ).toHaveLength(0);
   });
 
-  it('rejects a Session that expires after the early guard but before the locked final check', async () => {
+  it('rejects expiry after transaction start but before the locked final Session check', async () => {
     const account = await seedAccount();
-    const userLocked = deferred();
-    const continueFinalCheck = deferred();
-    hooks.afterUserLocked = async () => {
-      userLocked.resolve(undefined);
-      await continueFinalCheck.promise;
-    };
-    const response = post(account, command())
-      .expect(401)
-      .then((value) => value);
-    try {
-      await userLocked.promise;
+    let transactionStartedAt: Date | undefined;
+    let expiresAt: Date | undefined;
+    let finalClock: Date | undefined;
+    hooks.afterUserLocked = async (timing) => {
+      transactionStartedAt = timing.transactionStartedAt;
+      expiresAt = new Date(timing.transactionStartedAt.getTime() + 1);
       await database.database
         .update(sessions)
-        .set({ expiresAt: new Date(Date.now() - 1_000) })
+        .set({ expiresAt })
         .where(eq(sessions.id, account.sessionId));
-      continueFinalCheck.resolve(undefined);
-      const result = await response;
-      expect(result.body.error.code).toBe('UNAUTHENTICATED');
-    } finally {
-      continueFinalCheck.resolve(undefined);
-    }
+      await waitForCondition(async () => {
+        const result = await migrationClient.pool.query<{ observed_at: Date | string }>(
+          'SELECT clock_timestamp() AS observed_at',
+        );
+        const observed = result.rows[0]?.observed_at;
+        if (!observed) throw new Error('Missing final Session-check clock fixture');
+        finalClock = observed instanceof Date ? observed : new Date(observed);
+        return finalClock.getTime() >= expiresAt!.getTime();
+      });
+    };
+
+    const response = await post(account, command()).expect(401);
+    expect(response.body.error.code).toBe('UNAUTHENTICATED');
+    expect(transactionStartedAt).toBeInstanceOf(Date);
+    expect(expiresAt).toBeInstanceOf(Date);
+    expect(finalClock).toBeInstanceOf(Date);
+    expect(transactionStartedAt!.getTime()).toBeLessThan(expiresAt!.getTime());
+    expect(expiresAt!.getTime()).toBeLessThanOrEqual(finalClock!.getTime());
     expect(
       await database.database.select().from(users).where(eq(users.id, account.userId)),
     ).toHaveLength(1);

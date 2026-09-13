@@ -39,6 +39,13 @@ and clears idle and active Incognito contexts. New Consent binding, Incognito
 creation, Provider dispatch, output emission, message append, and completion fail
 closed while an unresolved marker remains.
 
+The request abort signal prevents lifecycle admission after a cancelled password
+check, and the bounded attempt slot is not released until the verifier promise has
+settled. Native Argon2 computation itself is not claimed to be interruptible. The
+cancellation regression uses a controlled verifier replacement to prove the
+application boundary; it does not claim that a running native Argon2 operation is
+preempted.
+
 The database transaction locks the authenticated User and exact Session, then reads
 one `clock_timestamp()` observation for the final Session-expiry decision and the
 required Audit time. An early HTTP Session guard never substitutes for this locked
