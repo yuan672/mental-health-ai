@@ -13,7 +13,7 @@ async function bootstrap(): Promise<void> {
   app.enableCors(createCorsOptions());
   app.enableShutdownHooks();
 
-  await app.listen(env.APP_PORT, '0.0.0.0');
+  await app.listen(env.APP_PORT, env.APP_HOST);
 }
 
 void bootstrap();

@@ -1,0 +1,30 @@
+# Install only after completing the README. This file is not installed/enabled.
+[Unit]
+Description=Mental Health API (one process)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mental-health
+Group=mental-health
+WorkingDirectory=/srv/mental-health-ai/current/apps/api
+EnvironmentFile=/etc/mental-health-ai/api.env
+# The release must not contain a copied development .env.
+ExecStartPre=/usr/bin/test ! -e /srv/mental-health-ai/current/.env
+ExecStart=/usr/bin/node dist/src/main.js
+# Do not automatically resume unresolved in-memory lifecycle state after a crash.
+# Automatic restart requires the production deletion/recovery design to be applied.
+Restart=no
+TimeoutStopSec=180
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -17,6 +17,7 @@ const environmentSchema = z
   .object({
     APP_ENV: z.enum(['development', 'test', 'staging', 'production']).default('development'),
     APP_PORT: z.coerce.number().int().min(1).max(65535).default(3001),
+    APP_HOST: z.enum(['127.0.0.1', '0.0.0.0', '::1', '::']).default('0.0.0.0'),
     DATABASE_URL: z
       .string()
       .min(1)
