@@ -187,6 +187,7 @@ export class KnowledgeRetrievalService {
       }
 
       const bundles = this.policy.select(input.query, candidates, this.config.contextTokenBudget);
+      throwIfTerminated(input.signal, input.deadlineAt);
       return bundles.length === 0
         ? { kind: 'no_hit', policyVersion: KNOWLEDGE_RETRIEVAL_POLICY_VERSION }
         : { kind: 'hit', policyVersion: KNOWLEDGE_RETRIEVAL_POLICY_VERSION, bundles };

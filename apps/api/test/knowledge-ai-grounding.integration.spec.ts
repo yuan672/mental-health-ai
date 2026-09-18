@@ -21,6 +21,8 @@ import { Test } from '@nestjs/testing';
 import { resolve } from 'node:path';
 import { AppModule } from '../src/app.module';
 import { AiOrchestrationService } from '../src/ai/ai-orchestration.service';
+import { INSUFFICIENT_KNOWLEDGE_MESSAGE } from '../src/ai/grounding/grounded-response.schema';
+import { parseAiStreamEventV2 } from '../src/ai/ai-public.schemas';
 import { AiExecutionTotalTimeoutError } from '../src/ai/runtime/active-ai-execution.registry';
 import {
   KNOWLEDGE_AUGMENTATION_CONFIG,
@@ -87,7 +89,12 @@ const PROVIDER_METADATA = {
   requestId: 'synthetic-grounding-trace',
 } as const;
 
-type GroundedMode = 'success' | 'invalid_reference' | 'malformed';
+type GroundedMode =
+  | 'success'
+  | 'invalid_reference'
+  | 'malformed'
+  | 'insufficient_evidence'
+  | 'contradictory_evidence';
 
 class GroundingProvider implements LLMProvider {
   groundedMode: GroundedMode = 'success';
@@ -138,10 +145,18 @@ class GroundingProvider implements LLMProvider {
       const raw =
         this.groundedMode === 'malformed'
           ? '{not-json'
-          : JSON.stringify({
-              answer: this.groundedAnswer,
-              usedReferenceIds: [this.groundedMode === 'invalid_reference' ? 'K2' : 'K1'],
-            });
+          : this.groundedMode === 'insufficient_evidence' ||
+              this.groundedMode === 'contradictory_evidence'
+            ? JSON.stringify({
+                status: 'insufficient_evidence',
+                answer: this.groundedMode === 'contradictory_evidence' ? '不得交付的猜测正文' : '',
+                usedReferenceIds: [],
+              })
+            : JSON.stringify({
+                status: 'supported',
+                answer: this.groundedAnswer,
+                usedReferenceIds: [this.groundedMode === 'invalid_reference' ? 'K2' : 'K1'],
+              });
       const splitAt = Math.max(1, Math.floor(raw.length / 2));
       yield { type: 'text_delta', text: raw.slice(0, splitAt) };
       this.groundedPartial.resolve();
@@ -585,6 +600,124 @@ describe('Knowledge-grounded AI integration boundary', () => {
     ]);
   });
 
+  it('delivers and persists only the fixed no-reference explanation for insufficient evidence', async () => {
+    const userId = await createUser();
+    await fixtures.publishSynthetic(
+      syntheticManifest('insufficient-context', 'insufficientunique'),
+    );
+    provider.groundedMode = 'insufficient_evidence';
+    const prepared = await preparePersistent(userId, 'insufficientunique', 'v2');
+    const events = await collectPersistent(prepared);
+    for (const event of events) expect(() => parseAiStreamEventV2(event)).not.toThrow();
+    expect(events.filter((event) => event.type === 'message.segment')).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({
+          text: INSUFFICIENT_KNOWLEDGE_MESSAGE,
+          deliveryMode: 'immediate',
+        }),
+      }),
+    ]);
+    expect(events.at(-1)).toMatchObject({
+      type: 'turn.completed',
+      data: {
+        deliveryMode: 'immediate',
+        knowledgeReferences: [],
+      },
+    });
+    expect(provider.streamCalls).toBe(1);
+    expect(provider.ordinaryCalls).toBe(0);
+    expect(postGate.candidates).toEqual([
+      expect.objectContaining({ candidateSegment: INSUFFICIENT_KNOWLEDGE_MESSAGE }),
+    ]);
+    const stored = await database.database
+      .select({ content: messages.content })
+      .from(messages)
+      .where(eq(messages.role, 'assistant'));
+    expect(stored).toEqual([{ content: INSUFFICIENT_KNOWLEDGE_MESSAGE }]);
+    await expect(
+      database.database.select().from(assistantMessageKnowledgeReferences),
+    ).resolves.toHaveLength(0);
+    await expect(quota.getUsage(userId, new Date())).resolves.toMatchObject({ usedCount: 1 });
+    await expect(
+      conversationAccess.listMessages(
+        userId,
+        prepared.turn.conversationId,
+        { limit: 20, cursor: undefined },
+        'v2',
+        new Date(),
+      ),
+    ).resolves.toMatchObject({
+      data: {
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'assistant',
+            content: INSUFFICIENT_KNOWLEDGE_MESSAGE,
+            knowledgeReferences: [],
+          }),
+        ]),
+      },
+    });
+    const replay = await orchestration.preparePersistentTurn(
+      { userId, sessionId: randomUUID() },
+      {
+        clientRequestId: prepared.turn.clientRequestId,
+        conversationId: prepared.turn.conversationId,
+        message: 'insufficientunique',
+      },
+      new AbortController().signal,
+      new Date(),
+      'v2',
+    );
+    expect(replay.kind).toBe('existing');
+    expect(provider.streamCalls).toBe(1);
+  });
+
+  it('keeps insufficient-evidence Incognito output ephemeral and reference-free without regenerating', async () => {
+    const userId = await createUser();
+    const sessionId = randomUUID();
+    await fixtures.publishSynthetic(
+      syntheticManifest('incognito-insufficient', 'incognitoinsufficient'),
+    );
+    provider.groundedMode = 'insufficient_evidence';
+    const context = await incognitoContexts.create(
+      { id: sessionId, userId, expiresAt: new Date(Date.now() + 60_000), revokedAt: null },
+      new Date(),
+    );
+    const prepared = await orchestration.prepareIncognitoTurn(
+      { userId, sessionId },
+      {
+        mode: 'incognito',
+        clientRequestId: randomUUID(),
+        contextId: context.id,
+        message: 'incognitoinsufficient',
+      },
+      new AbortController().signal,
+      new Date(),
+      'v2',
+    );
+    if (prepared.kind !== 'ready') throw new Error('Expected a prepared Incognito turn');
+    const events = await collectIncognito(prepared);
+    for (const event of events) expect(() => parseAiStreamEventV2(event)).not.toThrow();
+    expect(events.at(-1)).toMatchObject({
+      type: 'turn.completed',
+      data: { deliveryMode: 'immediate', knowledgeReferences: [] },
+    });
+    expect(provider.streamCalls).toBe(1);
+    expect(provider.ordinaryCalls).toBe(0);
+    expect(postGate.candidates).toEqual([
+      expect.objectContaining({ candidateSegment: INSUFFICIENT_KNOWLEDGE_MESSAGE }),
+    ]);
+    expect(incognitoStore.get(userId, sessionId, context.id, new Date())?.messages).toEqual([
+      { role: 'user', content: 'incognitoinsufficient' },
+      { role: 'assistant', content: INSUFFICIENT_KNOWLEDGE_MESSAGE },
+    ]);
+    await expect(database.database.select().from(messages)).resolves.toHaveLength(0);
+    await expect(database.database.select().from(aiTurns)).resolves.toHaveLength(0);
+    await expect(
+      database.database.select().from(assistantMessageKnowledgeReferences),
+    ).resolves.toHaveLength(0);
+  });
+
   it('full-buffers a v2 hit, safety-checks once, and commits text plus exact references atomically', async () => {
     const userId = await createUser();
     await fixtures.publishSynthetic(syntheticManifest('grounded-hit', 'groundingunique'));
@@ -684,14 +817,15 @@ describe('Knowledge-grounded AI integration boundary', () => {
   });
 
   it.each([
-    { finishReason: 'stop' as const, expectedUsage: 0 },
-    { finishReason: 'length' as const, expectedUsage: 1 },
+    { mode: 'invalid_reference' as const, finishReason: 'stop' as const, expectedUsage: 0 },
+    { mode: 'invalid_reference' as const, finishReason: 'length' as const, expectedUsage: 1 },
+    { mode: 'contradictory_evidence' as const, finishReason: 'stop' as const, expectedUsage: 0 },
   ])(
-    'rejects an unoffered reference without content or references and applies $finishReason billing',
-    async ({ finishReason, expectedUsage }) => {
+    'rejects $mode without content or references and applies $finishReason billing',
+    async ({ mode, finishReason, expectedUsage }) => {
       const userId = await createUser();
       await fixtures.publishSynthetic(syntheticManifest('invalid-reference', 'invalidrefunique'));
-      provider.groundedMode = 'invalid_reference';
+      provider.groundedMode = mode;
       provider.finishReason = finishReason;
       const prepared = await preparePersistent(userId, 'invalidrefunique', 'v2');
 

@@ -1,0 +1,129 @@
+{
+  "description": "Synthetic retrieval-only comparison; not reviewed medical content or model evaluation.",
+  "articles": [
+    {
+      "articleKey": "synthetic-stress-breaks",
+      "title": "工作压力与休息安排",
+      "summary": "工作压力时可以考虑休息安排，了解适用条件。",
+      "contentBlocks": [
+        { "type": "heading", "level": 2, "text": "工作压力时的休息安排" },
+        {
+          "type": "paragraph",
+          "text": "工作压力时，可以按自己的实际条件安排一次短暂休息。这是供讨论的合成示例。"
+        },
+        { "type": "heading", "level": 3, "text": "适用条件" },
+        {
+          "type": "paragraph",
+          "text": "仅在本人愿意、现场条件允许且不会影响当前安全责任时尝试；做不到也不代表个人失败。"
+        },
+        {
+          "type": "callout",
+          "tone": "important",
+          "text": "本示例不保证效果，不能用于诊断或替代专业帮助。"
+        }
+      ]
+    },
+    {
+      "articleKey": "synthetic-worry-notes",
+      "title": "用纸笔写下担忧",
+      "summary": "写下担忧、区分可行动事项，了解纸笔练习的边界。",
+      "contentBlocks": [
+        { "type": "heading", "level": 2, "text": "用纸笔整理担忧" },
+        {
+          "type": "paragraph",
+          "text": "可以写下担忧，再看看其中有没有现在愿意处理的一件小事。这是本站编写的合成示例。"
+        },
+        {
+          "type": "list",
+          "style": "unordered",
+          "items": ["由本人决定是否记录及何时停止。", "不需要完成固定数量。"]
+        },
+        {
+          "type": "paragraph",
+          "text": "如果这种方式让自己更不舒服，或没有私密空间，可以跳过，不必强迫自己。"
+        },
+        {
+          "type": "callout",
+          "tone": "important",
+          "text": "不承诺这些步骤能够解决问题或带来特定效果。"
+        }
+      ]
+    },
+    {
+      "articleKey": "synthetic-asking-support",
+      "title": "向信任的人表达需要并寻求支持",
+      "summary": "寻求支持、表达需要与个人边界。",
+      "contentBlocks": [
+        { "type": "heading", "level": 2, "text": "向信任的人表达需要" },
+        {
+          "type": "paragraph",
+          "text": "可以先询问对方是否方便倾听，再表达需要什么样的支持。这是合成沟通示例。"
+        },
+        {
+          "type": "paragraph",
+          "text": "由本人选择愿意透露的细节，也可以停止谈话；不要求向任何人完整交代经历。"
+        },
+        {
+          "type": "callout",
+          "tone": "information",
+          "text": "对方是否回应不能作为评价本人价值的依据。"
+        }
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "query": "工作压力怎么安排休息",
+      "expectedArticle": "synthetic-stress-breaks",
+      "requiredOrdinals": [1, 2, 3, 4, 5]
+    },
+    {
+      "query": "工作压力休息一定有效吗",
+      "expectedArticle": "synthetic-stress-breaks",
+      "requiredOrdinals": [1, 2, 3, 4, 5]
+    },
+    {
+      "query": "工作压力时我能做些什么",
+      "expectedArticle": "synthetic-stress-breaks",
+      "requiredOrdinals": [1, 2, 3, 4, 5]
+    },
+    {
+      "query": "休息安排有不适用情形吗",
+      "expectedArticle": "synthetic-stress-breaks",
+      "requiredOrdinals": [1, 2, 3, 4, 5]
+    },
+    {
+      "query": "如何用纸笔整理担忧",
+      "expectedArticle": "synthetic-worry-notes",
+      "requiredOrdinals": [1, 2, 3, 4, 5]
+    },
+    {
+      "query": "写下担忧后下一步是什么",
+      "expectedArticle": "synthetic-worry-notes",
+      "requiredOrdinals": [1, 2, 3, 4, 5]
+    },
+    {
+      "query": "写下担忧能保证问题解决吗",
+      "expectedArticle": "synthetic-worry-notes",
+      "requiredOrdinals": [1, 2, 3, 4, 5]
+    },
+    {
+      "query": "不方便写下担忧怎么办",
+      "expectedArticle": "synthetic-worry-notes",
+      "requiredOrdinals": [1, 2, 3, 4, 5]
+    },
+    {
+      "query": "如何向信任的人表达需要",
+      "expectedArticle": "synthetic-asking-support",
+      "requiredOrdinals": [1, 2, 3, 4]
+    },
+    {
+      "query": "寻求支持时必须透露所有细节吗",
+      "expectedArticle": "synthetic-asking-support",
+      "requiredOrdinals": [1, 2, 3, 4],
+      "knownLexicalMiss": true
+    },
+    { "query": "推荐股票涨幅", "expectedArticle": null, "requiredOrdinals": [] },
+    { "query": "欧洲火车时刻表", "expectedArticle": null, "requiredOrdinals": [] }
+  ]
+}

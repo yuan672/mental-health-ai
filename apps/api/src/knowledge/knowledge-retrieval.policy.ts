@@ -1,12 +1,13 @@
 import type { KnowledgeContentBlockRecord } from '@mental-health/database';
 import { Injectable } from '@nestjs/common';
 import type { AppEnvironment } from '../config/env';
+import { buildKnowledgeRetrievalChunks, knowledgeSearchWords } from './knowledge-retrieval-chunks';
 import type {
   KnowledgeRetrievalCandidate,
   KnowledgeRetrievalSource,
 } from './knowledge-retrieval.schemas';
 
-export const KNOWLEDGE_RETRIEVAL_POLICY_VERSION = 'lexical-v1';
+export const KNOWLEDGE_RETRIEVAL_POLICY_VERSION = 'lexical-children-v3';
 export const KNOWLEDGE_RETRIEVAL_CANDIDATE_LIMIT = 50;
 export const KNOWLEDGE_RETRIEVAL_SCAN_LIMIT = KNOWLEDGE_RETRIEVAL_CANDIDATE_LIMIT + 1;
 export const KNOWLEDGE_RETRIEVAL_MAX_SELECTIONS = 2;
@@ -139,6 +140,30 @@ function estimateBlockTokens(block: KnowledgeContentBlockRecord): number {
   return estimateTokens(blockText(block)) + 8;
 }
 
+function sectionContext(blocks: readonly KnowledgeContentBlockRecord[]): {
+  sections: readonly (readonly number[])[];
+  sharedOrdinals: readonly number[];
+} {
+  const sections: number[][] = [];
+  const preamble: number[] = [];
+  const callouts: number[] = [];
+  let current = preamble;
+  for (const [index, block] of blocks.entries()) {
+    const ordinal = index + 1;
+    if (block.type === 'heading' && block.level === 2) {
+      current = [];
+      sections.push(current);
+    }
+    current.push(ordinal);
+    if (block.type === 'callout') callouts.push(ordinal);
+  }
+  return {
+    sections: sections.length === 0 ? [preamble] : [preamble, ...sections],
+    // Without scope metadata, conservatively retain all callouts for every hit.
+    sharedOrdinals: [...new Set([...preamble, ...callouts])],
+  };
+}
+
 function stableCandidateOrder(left: RankedCandidate, right: RankedCandidate): number {
   if (left.score !== right.score) return right.score - left.score;
   if (left.candidate.articleKey < right.candidate.articleKey) return -1;
@@ -198,6 +223,7 @@ export class KnowledgeRetrievalPolicy {
     const queryTerms = extractKnowledgeLexicalTerms(query);
     if (queryTerms.length === 0 || candidates.length === 0) return [];
     const querySet = new Set(queryTerms);
+    const queryWords = knowledgeSearchWords(query);
 
     const indexed = candidates.map((candidate) => {
       const title = intersectTerms(candidate.title, querySet);
@@ -214,7 +240,29 @@ export class KnowledgeRetrievalPolicy {
       unionInto(all, summary);
       unionInto(all, headings);
       unionInto(all, body);
-      return { candidate, title, summary, headings, body, all, blockMatches };
+      const chunks = buildKnowledgeRetrievalChunks(candidate.contentBlocks);
+      const allWords = new Set(
+        knowledgeSearchWords([candidate.title, candidate.summary].join(' '), MAX_INDEX_TERMS),
+      );
+      const wordMatches = chunks.map((chunk) => {
+        const words = new Set(
+          knowledgeSearchWords([...chunk.headingPath, chunk.text].join(' '), MAX_INDEX_TERMS),
+        );
+        unionInto(allWords, words);
+        return { ordinal: chunk.ordinal, matches: queryWords.filter((word) => words.has(word)) };
+      });
+      const matchedWords = queryWords.filter((word) => allWords.has(word));
+      return {
+        candidate,
+        title,
+        summary,
+        headings,
+        body,
+        all,
+        blockMatches,
+        wordMatches,
+        matchedWords,
+      };
     });
 
     const documentFrequency = new Map<string, number>();
@@ -252,22 +300,43 @@ export class KnowledgeRetrievalPolicy {
         );
       }, 0);
       const normalizedScore = maximumScore === 0 ? 0 : weightedScore / maximumScore;
+      const bestWordMatches = Math.max(
+        0,
+        ...indexedCandidate.wordMatches.map((chunk) => chunk.matches.length),
+      );
+      const wordHit =
+        bestWordMatches >= 2 && indexedCandidate.matchedWords.length / queryWords.length >= 0.4;
       if (
-        distinctMatches < requiredMatches ||
-        coverage < MIN_COVERAGE ||
-        normalizedScore < MIN_NORMALIZED_SCORE
+        !wordHit &&
+        (distinctMatches < requiredMatches ||
+          coverage < MIN_COVERAGE ||
+          normalizedScore < MIN_NORMALIZED_SCORE)
       ) {
         return [];
       }
 
       const blockScores = indexedCandidate.blockMatches.map((block) => ({
         ordinal: block.ordinal,
-        score: Array.from(block.matches).reduce(
-          (total, term) => total + (inverseFrequency.get(term) ?? 1) * block.weight,
-          0,
-        ),
+        score:
+          Array.from(block.matches).reduce(
+            (total, term) => total + (inverseFrequency.get(term) ?? 1) * block.weight,
+            0,
+          ) +
+          Math.max(
+            0,
+            ...indexedCandidate.wordMatches
+              .filter((chunk) => chunk.ordinal === block.ordinal)
+              .map((chunk) => chunk.matches.length),
+          ) *
+            4,
       }));
-      return [{ candidate: indexedCandidate.candidate, score: weightedScore, blockScores }];
+      return [
+        {
+          candidate: indexedCandidate.candidate,
+          score: weightedScore + indexedCandidate.matchedWords.length * 32 + bestWordMatches * 8,
+          blockScores,
+        },
+      ];
     });
     ranked.sort(stableCandidateOrder);
 
@@ -275,32 +344,57 @@ export class KnowledgeRetrievalPolicy {
     let remainingTokens = tokenBudget;
     for (const rankedCandidate of ranked) {
       if (selected.length >= KNOWLEDGE_RETRIEVAL_MAX_SELECTIONS) break;
+      if (rankedCandidate.score < ranked[0]!.score * 0.8) continue;
       const candidate = rankedCandidate.candidate;
       if (candidate.reviewStatus === 'professional_reviewed') continue;
       const fixedTokens = estimateTokens(candidate.title) + estimateTokens(candidate.summary) + 16;
       if (fixedTokens >= remainingTokens) continue;
 
       let articleRemaining = remainingTokens - fixedTokens;
-      const selectedOrdinals: number[] = [];
-      const blocksByScore = rankedCandidate.blockScores
-        .filter((block) => block.score > 0)
-        .slice()
-        .sort((left, right) => right.score - left.score || left.ordinal - right.ordinal);
-      for (const scored of blocksByScore) {
-        const block = candidate.contentBlocks[scored.ordinal - 1];
-        if (!block) continue;
-        const estimate = estimateBlockTokens(block);
+      const selectedOrdinals = new Set<number>();
+      const { sections, sharedOrdinals } = sectionContext(candidate.contentBlocks);
+      const rankedSections = sections
+        .filter((ordinals) =>
+          ordinals.some((ordinal) => candidate.contentBlocks[ordinal - 1]!.type !== 'heading'),
+        )
+        .map((ordinals) => ({
+          ordinals,
+          score: Math.max(
+            ...ordinals.map((ordinal) => rankedCandidate.blockScores[ordinal - 1]!.score),
+          ),
+        }))
+        .filter((section) => section.score > 0)
+        .sort((left, right) => right.score - left.score || left.ordinals[0]! - right.ordinals[0]!);
+      // Small-to-Big: a short article is its own safest parent. This also retains
+      // caveats in a different section that are not tagged as callouts.
+      const wholeArticleCost = candidate.contentBlocks.reduce(
+        (sum, block) => sum + estimateBlockTokens(block),
+        0,
+      );
+      if (rankedSections.length > 0 && wholeArticleCost <= articleRemaining) {
+        candidate.contentBlocks.forEach((_, index) => selectedOrdinals.add(index + 1));
+        articleRemaining -= wholeArticleCost;
+      }
+      for (const section of rankedSections) {
+        const added = [...new Set([...section.ordinals, ...sharedOrdinals])].filter(
+          (ordinal) => !selectedOrdinals.has(ordinal),
+        );
+        const estimate = added.reduce(
+          (total, ordinal) => total + estimateBlockTokens(candidate.contentBlocks[ordinal - 1]!),
+          0,
+        );
         if (estimate > articleRemaining) continue;
-        selectedOrdinals.push(scored.ordinal);
+        for (const ordinal of added) selectedOrdinals.add(ordinal);
         articleRemaining -= estimate;
       }
-      if (selectedOrdinals.length === 0) continue;
+      if (selectedOrdinals.size === 0) continue;
 
-      selectedOrdinals.sort((left, right) => left - right);
-      const blocks = selectedOrdinals.flatMap((ordinal) => {
-        const block = candidate.contentBlocks[ordinal - 1];
-        return block ? [{ ordinal, block }] : [];
-      });
+      const blocks = [...selectedOrdinals]
+        .sort((left, right) => left - right)
+        .flatMap((ordinal) => {
+          const block = candidate.contentBlocks[ordinal - 1];
+          return block ? [{ ordinal, block }] : [];
+        });
       const estimatedTokens = remainingTokens - articleRemaining;
       const referenceId = selected.length === 0 ? 'K1' : 'K2';
       selected.push({

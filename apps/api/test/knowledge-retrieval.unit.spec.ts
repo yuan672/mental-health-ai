@@ -13,6 +13,7 @@ import {
   type KnowledgeRetrievalRuntimeConfig,
 } from '../src/knowledge/knowledge-retrieval.service';
 import { knowledgeRetrievalCandidateSchema } from '../src/knowledge/knowledge-retrieval.schemas';
+import contextCases from './fixtures/knowledge-context-cases.json';
 
 const NOW = new Date('2026-09-11T08:00:00.000Z');
 
@@ -92,6 +93,33 @@ function repositoryMock() {
 describe('KnowledgeRetrievalPolicy', () => {
   const policy = new KnowledgeRetrievalPolicy();
 
+  it.each(contextCases.queries)(
+    'preserves complete context for fixed query: $query',
+    (testCase) => {
+      const candidates = contextCases.articles.map((article) =>
+        knowledgeRetrievalCandidateSchema.parse({
+          ...parsedCandidate(candidate(article.articleKey)),
+          ...article,
+          contentOrigin: 'synthetic_fixture',
+          reviewStatus: 'unverified',
+          reviewedBy: null,
+          reviewedAt: null,
+        }),
+      );
+      const selected = policy.select(testCase.query, candidates, 1_000);
+      // The natural-language miss retained by v2 is now an expected hit in v3.
+      if (testCase.expectedArticle === null) {
+        expect(selected).toEqual([]);
+        return;
+      }
+      const match = selected.find((bundle) => bundle.articleKey === testCase.expectedArticle);
+      expect(match?.blocks.map((block) => block.ordinal)).toEqual(testCase.requiredOrdinals);
+      expect(
+        selected.reduce((total, bundle) => total + bundle.estimatedTokens, 0),
+      ).toBeLessThanOrEqual(1_000);
+    },
+  );
+
   it('normalizes NFKC/ASCII case and produces bounded Chinese bi- and trigrams', () => {
     const terms = extractKnowledgeLexicalTerms('ＳＴＲＥＳＳ stress 工作压力');
     expect(terms.filter((term) => term === 'stress')).toHaveLength(1);
@@ -108,18 +136,19 @@ describe('KnowledgeRetrievalPolicy', () => {
     expect(selected.map((bundle) => bundle.referenceId)).toEqual(['K1', 'K2']);
   });
 
-  it('skips an oversized whole block, preserves original order, and rejects title-only hits', () => {
+  it('skips oversized sections intact and never falls back to a heading-only hit', () => {
     const record = candidate('bounded-blocks');
     record.contentBlocks.splice(
       0,
       record.contentBlocks.length,
+      { type: 'heading', level: 2, text: '工作压力完整长章节' },
       { type: 'paragraph', text: `工作压力${'很大'.repeat(700)}` },
+      { type: 'heading', level: 2, text: '日常自我照顾' },
       { type: 'paragraph', text: '工作压力可以通过一些日常自我照顾来缓解。' },
-      { type: 'heading', level: 3, text: '日常自我照顾' },
     );
     const selected = policy.select('工作压力 日常自我照顾', [parsedCandidate(record)], 800);
     expect(selected).toHaveLength(1);
-    expect(selected[0]!.blocks.map((block) => block.ordinal)).toEqual([2, 3]);
+    expect(selected[0]!.blocks.map((block) => block.ordinal)).toEqual([3, 4]);
 
     const titleOnly = candidate('title-only', '工作压力');
     titleOnly.contentBlocks.splice(0, titleOnly.contentBlocks.length, {
@@ -127,6 +156,50 @@ describe('KnowledgeRetrievalPolicy', () => {
       text: '这段内容与查询没有共同词项。',
     });
     expect(policy.select('工作压力', [parsedCandidate(titleOnly)], 800)).toEqual([]);
+    titleOnly.contentBlocks.splice(0, 1, { type: 'heading', level: 2, text: '工作压力' });
+    expect(policy.select('工作压力', [parsedCandidate(titleOnly)], 800)).toEqual([]);
+  });
+
+  it('retains same-version section conditions, subheadings and article callouts without duplication', () => {
+    const record = candidate('complete-context');
+    record.contentBlocks.splice(
+      0,
+      record.contentBlocks.length,
+      { type: 'paragraph', text: '合成演示，不能视为效果证明。' },
+      { type: 'heading', level: 2, text: '工作压力' },
+      { type: 'paragraph', text: '工作压力示例步骤。' },
+      { type: 'heading', level: 3, text: '适用边界' },
+      { type: 'paragraph', text: '仅在本人愿意且条件允许时尝试，并非必须完成。' },
+      { type: 'heading', level: 2, text: '其他说明' },
+      { type: 'callout', tone: 'important', text: '不能替代专业帮助。' },
+    );
+    const parsed = parsedCandidate(record);
+    const selected = policy.select('工作压力', [parsed], 800);
+    expect(selected).toHaveLength(1);
+    expect(selected[0]!.versionId).toBe(parsed.versionId);
+    expect(selected[0]!.sources).toEqual(parsed.sources);
+    expect(selected[0]!.blocks.map((block) => block.ordinal)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(selected[0]!.estimatedTokens).toBeLessThanOrEqual(800);
+    for (const selectedBlock of selected[0]!.blocks) {
+      expect(selectedBlock.block).toEqual(parsed.contentBlocks[selectedBlock.ordinal - 1]);
+    }
+  });
+
+  it('treats an unsectioned article as a whole and cannot drop a large caveat to fit', () => {
+    const record = candidate('unsectioned');
+    record.contentBlocks.splice(
+      0,
+      record.contentBlocks.length,
+      { type: 'paragraph', text: '工作压力示例。' },
+      { type: 'paragraph', text: '仅在条件允许时尝试。' },
+    );
+    expect(
+      policy
+        .select('工作压力', [parsedCandidate(record)], 800)[0]!
+        .blocks.map((block) => block.ordinal),
+    ).toEqual([1, 2]);
+    record.contentBlocks.push({ type: 'callout', tone: 'important', text: '边界'.repeat(450) });
+    expect(policy.select('工作压力', [parsedCandidate(record)], 800)).toEqual([]);
   });
 
   it('admits synthetic content only behind the explicit Development/Test fixture flag', () => {
@@ -159,6 +232,28 @@ describe('KnowledgeRetrievalPolicy', () => {
 });
 
 describe('KnowledgeRetrievalService', () => {
+  it('rechecks the total deadline after synchronous indexing instead of delivering a late hit', async () => {
+    const repository = repositoryMock();
+    repository.readCandidateSnapshot.mockResolvedValue({
+      candidateLimitExceeded: false,
+      candidates: [],
+    });
+    const policy = new KnowledgeRetrievalPolicy();
+    const deadlineAt = new Date(Date.now() + 5_000);
+    jest.spyOn(policy, 'select').mockImplementation(() => {
+      jest.spyOn(Date, 'now').mockReturnValue(deadlineAt.getTime() + 1);
+      return [];
+    });
+    const service = new KnowledgeRetrievalService(repository, policy, runtimeConfig());
+    try {
+      await expect(
+        service.retrieve({ query: '工作压力', signal: new AbortController().signal, deadlineAt }),
+      ).rejects.toBeInstanceOf(KnowledgeRetrievalDeadlineExceededError);
+    } finally {
+      jest.restoreAllMocks();
+    }
+  });
+
   it('detects the 51-row sentinel instead of ranking a truncated corpus', async () => {
     const repository = repositoryMock();
     repository.readCandidateSnapshot.mockResolvedValue({
@@ -177,7 +272,10 @@ describe('KnowledgeRetrievalService', () => {
         signal: new AbortController().signal,
         deadlineAt: new Date(Date.now() + 5_000),
       }),
-    ).resolves.toMatchObject({ kind: 'corpus_limit_exceeded', policyVersion: 'lexical-v1' });
+    ).resolves.toMatchObject({
+      kind: 'corpus_limit_exceeded',
+      policyVersion: 'lexical-children-v3',
+    });
   });
 
   it('fails soft without leaking a malformed credential-bearing source into a bundle', async () => {

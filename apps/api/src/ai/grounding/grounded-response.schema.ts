@@ -4,6 +4,9 @@ const MAX_GROUNDED_ANSWER_CODE_POINTS = 16_000;
 const PRIVATE_REFERENCE_ID = /^K[12]$/u;
 const SOURCE_LIKE_TEXT = /(?:https?:\/\/|www\.|\[[^\]]+\]\([^)]+\)|\[(?:\d+|K[12])\]|【K[12]】)/iu;
 
+export const INSUFFICIENT_KNOWLEDGE_MESSAGE =
+  '目前提供的知识资料不足以支持对这个问题的可靠回答，我不想用猜测来回答你。你可以换一个更具体的问题，我们也可以继续梳理你的感受和需要。';
+
 const groundedAnswerSchema = z
   .string()
   .transform((value) => value.trim())
@@ -14,8 +17,9 @@ const groundedAnswerSchema = z
   )
   .refine((value) => !SOURCE_LIKE_TEXT.test(value), 'Grounded answer contains citation-like text');
 
-const groundedProviderEnvelopeSchema = z
+const supportedEnvelopeSchema = z
   .object({
+    status: z.literal('supported'),
     answer: groundedAnswerSchema,
     usedReferenceIds: z
       .array(z.string().regex(PRIVATE_REFERENCE_ID))
@@ -24,6 +28,17 @@ const groundedProviderEnvelopeSchema = z
       .refine((identifiers) => new Set(identifiers).size === identifiers.length),
   })
   .strict();
+
+const groundedProviderEnvelopeSchema = z.discriminatedUnion('status', [
+  supportedEnvelopeSchema,
+  z
+    .object({
+      status: z.literal('insufficient_evidence'),
+      answer: z.literal(''),
+      usedReferenceIds: z.array(z.never()).length(0),
+    })
+    .strict(),
+]);
 
 export type GroundedProviderEnvelope = z.infer<typeof groundedProviderEnvelopeSchema>;
 
