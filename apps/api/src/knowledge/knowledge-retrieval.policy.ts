@@ -6,7 +6,7 @@ import type {
   KnowledgeRetrievalSource,
 } from './knowledge-retrieval.schemas';
 
-export const KNOWLEDGE_RETRIEVAL_POLICY_VERSION = 'lexical-v1';
+export const KNOWLEDGE_RETRIEVAL_POLICY_VERSION = 'lexical-sections-v2';
 export const KNOWLEDGE_RETRIEVAL_CANDIDATE_LIMIT = 50;
 export const KNOWLEDGE_RETRIEVAL_SCAN_LIMIT = KNOWLEDGE_RETRIEVAL_CANDIDATE_LIMIT + 1;
 export const KNOWLEDGE_RETRIEVAL_MAX_SELECTIONS = 2;
@@ -137,6 +137,30 @@ function estimateTokens(value: string): number {
 
 function estimateBlockTokens(block: KnowledgeContentBlockRecord): number {
   return estimateTokens(blockText(block)) + 8;
+}
+
+function sectionContext(blocks: readonly KnowledgeContentBlockRecord[]): {
+  sections: readonly (readonly number[])[];
+  sharedOrdinals: readonly number[];
+} {
+  const sections: number[][] = [];
+  const preamble: number[] = [];
+  const callouts: number[] = [];
+  let current = preamble;
+  for (const [index, block] of blocks.entries()) {
+    const ordinal = index + 1;
+    if (block.type === 'heading' && block.level === 2) {
+      current = [];
+      sections.push(current);
+    }
+    current.push(ordinal);
+    if (block.type === 'callout') callouts.push(ordinal);
+  }
+  return {
+    sections: sections.length === 0 ? [preamble] : [preamble, ...sections],
+    // Without scope metadata, conservatively retain all callouts for every hit.
+    sharedOrdinals: [...new Set([...preamble, ...callouts])],
+  };
 }
 
 function stableCandidateOrder(left: RankedCandidate, right: RankedCandidate): number {
@@ -281,26 +305,40 @@ export class KnowledgeRetrievalPolicy {
       if (fixedTokens >= remainingTokens) continue;
 
       let articleRemaining = remainingTokens - fixedTokens;
-      const selectedOrdinals: number[] = [];
-      const blocksByScore = rankedCandidate.blockScores
-        .filter((block) => block.score > 0)
-        .slice()
-        .sort((left, right) => right.score - left.score || left.ordinal - right.ordinal);
-      for (const scored of blocksByScore) {
-        const block = candidate.contentBlocks[scored.ordinal - 1];
-        if (!block) continue;
-        const estimate = estimateBlockTokens(block);
+      const selectedOrdinals = new Set<number>();
+      const { sections, sharedOrdinals } = sectionContext(candidate.contentBlocks);
+      const rankedSections = sections
+        .filter((ordinals) =>
+          ordinals.some((ordinal) => candidate.contentBlocks[ordinal - 1]!.type !== 'heading'),
+        )
+        .map((ordinals) => ({
+          ordinals,
+          score: Math.max(
+            ...ordinals.map((ordinal) => rankedCandidate.blockScores[ordinal - 1]!.score),
+          ),
+        }))
+        .filter((section) => section.score > 0)
+        .sort((left, right) => right.score - left.score || left.ordinals[0]! - right.ordinals[0]!);
+      for (const section of rankedSections) {
+        const added = [...new Set([...section.ordinals, ...sharedOrdinals])].filter(
+          (ordinal) => !selectedOrdinals.has(ordinal),
+        );
+        const estimate = added.reduce(
+          (total, ordinal) => total + estimateBlockTokens(candidate.contentBlocks[ordinal - 1]!),
+          0,
+        );
         if (estimate > articleRemaining) continue;
-        selectedOrdinals.push(scored.ordinal);
+        for (const ordinal of added) selectedOrdinals.add(ordinal);
         articleRemaining -= estimate;
       }
-      if (selectedOrdinals.length === 0) continue;
+      if (selectedOrdinals.size === 0) continue;
 
-      selectedOrdinals.sort((left, right) => left - right);
-      const blocks = selectedOrdinals.flatMap((ordinal) => {
-        const block = candidate.contentBlocks[ordinal - 1];
-        return block ? [{ ordinal, block }] : [];
-      });
+      const blocks = [...selectedOrdinals]
+        .sort((left, right) => left - right)
+        .flatMap((ordinal) => {
+          const block = candidate.contentBlocks[ordinal - 1];
+          return block ? [{ ordinal, block }] : [];
+        });
       const estimatedTokens = remainingTokens - articleRemaining;
       const referenceId = selected.length === 0 ? 'K1' : 'K2';
       selected.push({

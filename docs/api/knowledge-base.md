@@ -104,3 +104,16 @@ results are not a real-model safety or quality evaluation. Citation presentation
 in the chat Web application remains the separate Knowledge AI-B delivery; see
 `docs/api/ai-chat-streaming.md` for the negotiated v2 transport and history
 contract.
+
+ADR-027 refines retrieval to whole level-2 sections (including level-3 subsections)
+plus shared preamble/callouts. Groups are deduplicated, kept in original order and
+admitted only when the complete group fits the existing estimated budget. No new
+reader API, persisted chunk model, or frontend change is required.
+
+The internal grounded Provider envelope now requires `status=supported` with a
+nonempty answer/reference subset, or `status=insufficient_evidence` with empty
+answer/references. The latter produces only a fixed server-owned explanation via
+existing `immediate` events with no references; it does not regenerate an answer.
+The existing output safety gate still checks the explanation. This status is a
+model abstention signal, not automatic fact verification. See
+[ADR-027](../architecture/adr/ADR-027-knowledge-context-and-insufficient-evidence.md).

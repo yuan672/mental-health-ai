@@ -80,6 +80,7 @@ import {
 import type { GroundingContextReference } from './context/conversation-context.service';
 import {
   GroundedResponseContractError,
+  INSUFFICIENT_KNOWLEDGE_MESSAGE,
   parseGroundedProviderEnvelope,
 } from './grounding/grounded-response.schema';
 import { knowledgeReferenceSchema } from './ai-public.schemas';
@@ -993,19 +994,22 @@ export class AiOrchestrationService {
         const completed = await this.consentExecutions.runWhileUsable(
           prepared.execution,
           async () => {
-            const result = await this.aiTurns.completeGrounded(
-              turn,
-              approved,
-              grounded.bundles.map((bundle) => bundle.versionId),
-              new Date(),
-              Math.max(
-                1,
-                Math.min(
-                  MAX_GROUNDED_RECONCILIATION_MS,
-                  prepared.execution.deadlineAt.getTime() - Date.now(),
-                ),
-              ),
-            );
+            const result =
+              grounded.delivery.deliveryMode === 'immediate'
+                ? await this.aiTurns.complete(turn, approved, new Date())
+                : await this.aiTurns.completeGrounded(
+                    turn,
+                    approved,
+                    grounded.bundles.map((bundle) => bundle.versionId),
+                    new Date(),
+                    Math.max(
+                      1,
+                      Math.min(
+                        MAX_GROUNDED_RECONCILIATION_MS,
+                        prepared.execution.deadlineAt.getTime() - Date.now(),
+                      ),
+                    ),
+                  );
             prepared.deliveryState.groundedCommitSucceeded = true;
             lifecycleSettled = true;
             return result;
@@ -1029,7 +1033,7 @@ export class AiOrchestrationService {
             turnId: turn.id,
             sequence: segmentSequence,
             text: approved,
-            deliveryMode: 'commit_with_references',
+            deliveryMode: grounded.delivery.deliveryMode,
           },
         } satisfies PersistentAiStreamEventV2;
         deliveredSegments = 1;
@@ -1040,8 +1044,7 @@ export class AiOrchestrationService {
             turnId: turn.id,
             assistantMessageId: completed.assistantMessageId,
             finishReason: groundedFinishReason,
-            deliveryMode: 'commit_with_references',
-            knowledgeReferences: grounded.references,
+            ...grounded.delivery,
           },
         } satisfies PersistentAiStreamEventV2;
         return;
@@ -1647,7 +1650,7 @@ export class AiOrchestrationService {
             generationId: generation.id,
             sequence: segmentSequence,
             text: approved,
-            deliveryMode: 'commit_with_references',
+            deliveryMode: grounded.delivery.deliveryMode,
           },
         } satisfies IncognitoAiStreamEventV2;
         deliveredSegments = 1;
@@ -1657,8 +1660,7 @@ export class AiOrchestrationService {
             mode: 'incognito',
             generationId: generation.id,
             finishReason: groundedFinishReason,
-            deliveryMode: 'commit_with_references',
-            knowledgeReferences: grounded.references,
+            ...grounded.delivery,
           },
         } satisfies IncognitoAiStreamEventV2;
         return;
@@ -2236,13 +2238,25 @@ export class AiOrchestrationService {
   ): Readonly<{
     answer: string;
     bundles: readonly KnowledgePromptBundle[];
-    references: [KnowledgeReference, ...KnowledgeReference[]];
+    delivery:
+      | { deliveryMode: 'immediate'; knowledgeReferences: [] }
+      | {
+          deliveryMode: 'commit_with_references';
+          knowledgeReferences: [KnowledgeReference, ...KnowledgeReference[]];
+        };
   }> {
     try {
       const envelope = parseGroundedProviderEnvelope(
         rawResponse,
         offeredBundles.map((bundle) => bundle.referenceId),
       );
+      if (envelope.status === 'insufficient_evidence') {
+        return {
+          answer: INSUFFICIENT_KNOWLEDGE_MESSAGE,
+          bundles: [],
+          delivery: { deliveryMode: 'immediate', knowledgeReferences: [] },
+        };
+      }
       const used = new Set(envelope.usedReferenceIds);
       const bundles = offeredBundles.filter((bundle) => used.has(bundle.referenceId));
       if (bundles.length !== used.size) {
@@ -2279,7 +2293,10 @@ export class AiOrchestrationService {
       return {
         answer: envelope.answer,
         bundles,
-        references: [firstReference, ...references.slice(1)],
+        delivery: {
+          deliveryMode: 'commit_with_references',
+          knowledgeReferences: [firstReference, ...references.slice(1)],
+        },
       };
     } catch (error) {
       const reason =

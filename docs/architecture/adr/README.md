@@ -24,6 +24,9 @@ Accepted decisions:
 20. ADR-020 Admin Identity and Least-Privilege Backend Boundaries
 21. ADR-021 Minimum HTTP Rate Limiting and Abuse Protection
 22. ADR-022 Account Deletion and Data Lifecycle Boundaries
+23. [ADR-027 Knowledge Context and Insufficient Evidence](./ADR-027-knowledge-context-and-insufficient-evidence.md)
+
+Numbers 023–026 are allocated to ongoing diary/profile work in the primary workspace.
 
 Proposed decisions:
 
