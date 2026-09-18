@@ -117,3 +117,17 @@ existing `immediate` events with no references; it does not regenerate an answer
 The existing output safety gate still checks the explanation. This status is a
 model abstention signal, not automatic fact verification. See
 [ADR-027](../architecture/adr/ADR-027-knowledge-context-and-insufficient-evidence.md).
+
+## Retrieval optimization (ADR-028)
+
+The internal policy is now `lexical-children-v3`. Search uses Chinese word
+segmentation alongside bi-/trigrams and structured ephemeral children (400 Unicode
+code points, overlap 60; not exact tokenizer tokens). Lists retain item boundaries,
+headings retain ancestry, and callouts stay atomic. Prompt context contains original
+whole blocks, expanding to the whole short article when it fits, otherwise complete
+sections plus shared context. Stored versions, public reader contracts and exact
+article/source citation identities do not change.
+
+This optimization does not change content eligibility or certify factual accuracy.
+See [ADR-028](../architecture/adr/ADR-028-structured-chinese-knowledge-retrieval.md)
+and the [bounded comparison](../reviews/knowledge-retrieval-optimization.md).

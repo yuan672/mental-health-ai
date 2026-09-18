@@ -1,0 +1,102 @@
+[
+  {
+    "query": "压力很大时身体会有什么反应？能据此判断得病了吗？",
+    "article": "stress-small-steps",
+    "required": [3, 4, 9]
+  },
+  {
+    "query": "事情太多，今天可以做哪些小事照顾自己？",
+    "article": "stress-small-steps",
+    "required": [5, 6, 9]
+  },
+  {
+    "query": "睡前喝酒会不会让睡眠更好？",
+    "article": "sleep-gentle-evening",
+    "required": [3, 4, 8, 9]
+  },
+  {
+    "query": "我是轮班的，睡前安排必须全部按顺序做吗？",
+    "article": "sleep-gentle-evening",
+    "required": [5, 6, 7, 8, 9]
+  },
+  {
+    "query": "睡眠困难影响白天，调整习惯没改善，怎么办？",
+    "article": "sleep-gentle-evening",
+    "required": [8, 9]
+  },
+  {
+    "query": "脑子一直担忧，写在纸上以后可以怎么安排？",
+    "article": "worry-put-on-paper",
+    "required": [3, 4, 5, 6, 7, 8, 9, 10]
+  },
+  {
+    "query": "每天留多少时间想担忧？越想越难受也要坚持吗？",
+    "article": "worry-put-on-paper",
+    "required": [8, 9, 10]
+  },
+  {
+    "query": "去寻求专业帮助之前，要准备哪些问题和信息？",
+    "article": "asking-for-help",
+    "required": [3, 4, 5, 6, 9]
+  },
+  {
+    "query": "不知道怎么向医生开口，可以从哪句话说起？",
+    "article": "asking-for-help",
+    "required": [7, 8, 9]
+  },
+  {
+    "query": "已经忙不过来了，怎么拒绝新的任务？",
+    "article": "boundaries-and-rest",
+    "required": [3, 4, 5, 6, 7, 10]
+  },
+  {
+    "query": "遇到威胁控制时，还应该当面练习拒绝吗？",
+    "article": "boundaries-and-rest",
+    "required": [10]
+  },
+  {
+    "query": "身边有人但还是孤单，这是怎么回事？",
+    "article": "loneliness-small-connection",
+    "required": [3, 4, 9]
+  },
+  {
+    "query": "觉得孤单想联系别人，但是不想勉强自己社交。",
+    "article": "loneliness-small-connection",
+    "required": [5, 6, 7, 8, 9]
+  },
+  {
+    "query": "留意当下是不是必须清空所有念头、闭眼屏住呼吸？",
+    "article": "present-one-minute",
+    "required": [3, 4, 5, 6, 7, 8, 9]
+  },
+  {
+    "query": "观察身体反而不舒服，还要继续这次练习吗？",
+    "article": "present-one-minute",
+    "required": [5, 6, 7, 8, 9]
+  },
+  {
+    "query": "我总觉得自己什么都做不好，如何把评价和事实分开？",
+    "article": "self-talk-kindness",
+    "required": [3, 4, 5, 6, 7, 10]
+  },
+  {
+    "query": "每天必须写出一件认可自己的事实吗？",
+    "article": "self-talk-kindness",
+    "required": [8, 9, 10]
+  },
+  {
+    "query": "睡前放松能保证三天治好失眠吗？",
+    "article": "sleep-gentle-evening",
+    "required": [3, 4, 8, 9],
+    "answer": "insufficient_evidence"
+  },
+  {
+    "query": "小猫故事证明养猫可以治好抑郁症吗？",
+    "article": null,
+    "required": [],
+    "answer": "no_factual_story_evidence"
+  },
+  { "query": "怎么修复 PostgreSQL 索引？", "article": null, "required": [] },
+  { "query": "今天比特币价格是多少？", "article": null, "required": [] },
+  { "query": "地球到月球的距离有多少公里？", "article": null, "required": [] }
+]

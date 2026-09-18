@@ -107,9 +107,8 @@ describe('KnowledgeRetrievalPolicy', () => {
         }),
       );
       const selected = policy.select(testCase.query, candidates, 1_000);
-      // Retain the observed baseline miss explicitly; this change expands hits,
-      // and does not tune lexical thresholds to make the evaluation look better.
-      if (testCase.expectedArticle === null || testCase.knownLexicalMiss) {
+      // The natural-language miss retained by v2 is now an expected hit in v3.
+      if (testCase.expectedArticle === null) {
         expect(selected).toEqual([]);
         return;
       }
@@ -179,7 +178,7 @@ describe('KnowledgeRetrievalPolicy', () => {
     expect(selected).toHaveLength(1);
     expect(selected[0]!.versionId).toBe(parsed.versionId);
     expect(selected[0]!.sources).toEqual(parsed.sources);
-    expect(selected[0]!.blocks.map((block) => block.ordinal)).toEqual([1, 2, 3, 4, 5, 7]);
+    expect(selected[0]!.blocks.map((block) => block.ordinal)).toEqual([1, 2, 3, 4, 5, 6, 7]);
     expect(selected[0]!.estimatedTokens).toBeLessThanOrEqual(800);
     for (const selectedBlock of selected[0]!.blocks) {
       expect(selectedBlock.block).toEqual(parsed.contentBlocks[selectedBlock.ordinal - 1]);
@@ -233,6 +232,28 @@ describe('KnowledgeRetrievalPolicy', () => {
 });
 
 describe('KnowledgeRetrievalService', () => {
+  it('rechecks the total deadline after synchronous indexing instead of delivering a late hit', async () => {
+    const repository = repositoryMock();
+    repository.readCandidateSnapshot.mockResolvedValue({
+      candidateLimitExceeded: false,
+      candidates: [],
+    });
+    const policy = new KnowledgeRetrievalPolicy();
+    const deadlineAt = new Date(Date.now() + 5_000);
+    jest.spyOn(policy, 'select').mockImplementation(() => {
+      jest.spyOn(Date, 'now').mockReturnValue(deadlineAt.getTime() + 1);
+      return [];
+    });
+    const service = new KnowledgeRetrievalService(repository, policy, runtimeConfig());
+    try {
+      await expect(
+        service.retrieve({ query: '工作压力', signal: new AbortController().signal, deadlineAt }),
+      ).rejects.toBeInstanceOf(KnowledgeRetrievalDeadlineExceededError);
+    } finally {
+      jest.restoreAllMocks();
+    }
+  });
+
   it('detects the 51-row sentinel instead of ranking a truncated corpus', async () => {
     const repository = repositoryMock();
     repository.readCandidateSnapshot.mockResolvedValue({
@@ -253,7 +274,7 @@ describe('KnowledgeRetrievalService', () => {
       }),
     ).resolves.toMatchObject({
       kind: 'corpus_limit_exceeded',
-      policyVersion: 'lexical-sections-v2',
+      policyVersion: 'lexical-children-v3',
     });
   });
 

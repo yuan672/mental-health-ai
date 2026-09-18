@@ -224,7 +224,7 @@ describe('Knowledge retrieval PostgreSQL boundary', () => {
       }),
     ).resolves.toEqual({
       kind: 'unavailable',
-      policyVersion: 'lexical-sections-v2',
+      policyVersion: 'lexical-children-v3',
       reason: 'storage_timeout',
     });
   });

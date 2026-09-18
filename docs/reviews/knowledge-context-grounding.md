@@ -1,5 +1,10 @@
 # Knowledge context and abstention delivery
 
+Historical record of the initial `78fa96f` implementation. The subsequent
+[three-diagram optimization](knowledge-retrieval-optimization.md) adds Chinese
+retrieval children, actual-corpus comparison and bounded real-model evidence.
+The old miss and no-real-model statements below describe that first revision only.
+
 Scope: whole-section retrieval and an explicit insufficient-evidence exit. The
 implementation follows [ADR-027](../architecture/adr/ADR-027-knowledge-context-and-insufficient-evidence.md).
 No frontend, database migration, content publication, or production enablement.
