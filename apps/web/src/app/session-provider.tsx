@@ -12,6 +12,7 @@ import {
 import { getSession, login as loginRequest, logout as logoutRequest } from '../api/auth';
 import { ApiClientError } from '../api/client';
 import { subscribeSessionInvalidated } from '../api/session-events';
+import { isDevAuthBypassEnabled, resolveDevSession } from './dev-session';
 
 export type SessionState =
   | Readonly<{ status: 'bootstrapping' }>
@@ -46,10 +47,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const controller = new AbortController();
     bootstrapAbortRef.current = controller;
     setState({ status: 'bootstrapping' });
-    void getSession(controller.signal)
-      .then((response) => {
+    const sessionPromise = isDevAuthBypassEnabled()
+      ? resolveDevSession(controller.signal)
+      : getSession(controller.signal).then((response) => response.data);
+    void sessionPromise
+      .then((session) => {
         if (operation === operationRef.current && !controller.signal.aborted) {
-          setState({ status: 'authenticated', value: response.data });
+          setState({ status: 'authenticated', value: session });
         }
       })
       .catch((error: unknown) => {

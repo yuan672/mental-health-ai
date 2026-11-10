@@ -121,7 +121,7 @@ describe('Phase 5B product flows', () => {
       );
     vi.stubGlobal('fetch', guestFetch);
     const guestView = renderProduct('/app/chat');
-    expect(await screen.findByRole('heading', { name: '登录' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '欢迎回来' })).toBeInTheDocument();
     expect(screen.getByTestId('location')).toHaveTextContent('/login?returnTo=%2Fapp%2Fchat');
     guestView.unmount();
 
@@ -502,7 +502,7 @@ describe('Phase 5B product flows', () => {
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
     await waitFor(() => expect(streamState.signal).toBeDefined());
     await userEvent.click(screen.getByRole('button', { name: '退出' }));
-    expect(await screen.findByRole('heading', { name: '登录' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '欢迎回来' })).toBeInTheDocument();
     expect(streamState.signal?.aborted).toBe(true);
 
     await userEvent.type(screen.getByLabelText('邮箱'), 'user-b@example.test');
@@ -604,7 +604,7 @@ describe('Phase 5B product flows', () => {
     expect(await screen.findByText('合成流式敏感正文')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '保留对话' }));
 
-    expect(await screen.findByRole('heading', { name: '登录' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '欢迎回来' })).toBeInTheDocument();
     expect(streamState.signal?.aborted).toBe(true);
     expect(screen.queryByText(initialSensitiveText)).not.toBeInTheDocument();
     expect(screen.queryByText('合成流式敏感正文')).not.toBeInTheDocument();
@@ -755,7 +755,7 @@ describe('Phase 5B product flows', () => {
 
   it('uses a new clientRequestId for an explicit retry after a definite failure', async () => {
     document.cookie = 'mh_csrf=synthetic-csrf; Path=/';
-    const requestBodies: Array<{ clientRequestId: string }> = [];
+    const requestBodies: Array<{ clientRequestId: string; diaryAccess?: string }> = [];
     let streamNumber = 0;
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
       const url = new URL(String(input));
@@ -777,15 +777,18 @@ describe('Phase 5B product flows', () => {
     const composer = await screen.findByLabelText('输入消息');
     await waitFor(() => expect(composer).toBeEnabled());
     await userEvent.type(composer, '合成明确失败重试');
+    await userEvent.click(screen.getByRole('checkbox', { name: '这次不参考日记' }));
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
     await userEvent.click(await screen.findByRole('button', { name: '重新发送' }));
     await waitFor(() => expect(requestBodies).toHaveLength(2));
     expect(requestBodies[1]?.clientRequestId).not.toBe(requestBodies[0]?.clientRequestId);
+    expect(requestBodies.map((body) => body.diaryAccess)).toEqual(['skip', 'skip']);
+    expect(screen.getByRole('checkbox', { name: '这次不参考日记' })).not.toBeChecked();
   });
 
   it('reuses clientRequestId only when reconciling a network-uncertain result', async () => {
     document.cookie = 'mh_csrf=synthetic-csrf; Path=/';
-    const requestBodies: Array<{ clientRequestId: string }> = [];
+    const requestBodies: Array<{ clientRequestId: string; diaryAccess?: string }> = [];
     let attempt = 0;
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
       const url = new URL(String(input));
@@ -840,10 +843,12 @@ describe('Phase 5B product flows', () => {
     const composer = await screen.findByLabelText('输入消息');
     await waitFor(() => expect(composer).toBeEnabled());
     await userEvent.type(composer, '合成不确定结果核对');
+    await userEvent.click(screen.getByRole('checkbox', { name: '这次不参考日记' }));
     await userEvent.click(screen.getByRole('button', { name: '发送' }));
     await userEvent.click(await screen.findByRole('button', { name: '核对本轮结果' }));
     await waitFor(() => expect(requestBodies).toHaveLength(2));
     expect(requestBodies[1]?.clientRequestId).toBe(requestBodies[0]?.clientRequestId);
+    expect(requestBodies.map((body) => body.diaryAccess)).toEqual(['skip', 'skip']);
     expect(screen.getByRole('button', { name: '核对本轮结果' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '重新发送' })).not.toBeInTheDocument();
     expect(composer).toBeDisabled();

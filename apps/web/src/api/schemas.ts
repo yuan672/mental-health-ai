@@ -1,5 +1,16 @@
 import { z } from 'zod';
 
+const moodCatSchema = z.enum([
+  'happy',
+  'sad',
+  'angry',
+  'surprised',
+  'shy',
+  'sleepy',
+  'hopeful',
+  'relaxed',
+]);
+
 function isSafeDocumentHref(value: string): boolean {
   if (/^\/consent-documents\/[a-z0-9.-]+\/[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+[.]html$/u.test(value)) {
     return !value.split('/').some((segment) => segment === '..' || segment === '.');
@@ -305,14 +316,16 @@ const moodNoteResponseSchema = z
 export const moodEntrySchema = z
   .object({
     id: z.string().uuid(),
-    moodScore: z.number().int().min(1).max(5),
+    moodScore: z.number().int().min(1).max(5).nullable(),
+    catMood: moodCatSchema.nullable().optional(),
     emotion: moodEmotionSchema.nullable(),
     note: moodNoteResponseSchema.nullable(),
     stateRevision: z.number().int().positive(),
     createdAt: z.string().datetime({ offset: true }),
     updatedAt: z.string().datetime({ offset: true }),
   })
-  .strict();
+  .strict()
+  .refine((value) => value.catMood != null || value.moodScore != null, 'Missing mood selection');
 
 export const createMoodEntryResponseSchema = z
   .object({
@@ -356,7 +369,15 @@ export const moodHistoryResponseSchema = z
             .object({
               localDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u),
               entryCount: z.number().int().positive(),
-              averageMoodScore: z.number().min(1).max(5),
+              averageMoodScore: z.number().min(1).max(5).nullable(),
+              latestEntry: z
+                .object({
+                  catMood: moodCatSchema.nullable().optional(),
+                  moodScore: z.number().int().min(1).max(5).nullable(),
+                  emotion: moodEmotionSchema.nullable(),
+                })
+                .strict()
+                .optional(),
             })
             .strict(),
         ),

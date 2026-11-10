@@ -112,7 +112,7 @@ describe('Knowledge product integration', () => {
     expect(await screen.findByText('仅属于当前会话的合成知识内容')).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: '加载更多' }));
 
-    expect(await screen.findByRole('heading', { name: '登录' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: '欢迎回来' })).toBeVisible();
     expect(screen.queryByText('仅属于当前会话的合成知识内容')).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/login'));
   });
@@ -142,7 +142,7 @@ describe('Knowledge product integration', () => {
     await waitFor(() => expect(detailSignal).toBeDefined());
 
     await userEvent.click(screen.getByRole('button', { name: '退出' }));
-    expect(await screen.findByRole('heading', { name: '登录' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: '欢迎回来' })).toBeVisible();
     expect(detailSignal?.aborted).toBe(true);
     resolveDetail(
       success({

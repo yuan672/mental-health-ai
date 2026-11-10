@@ -166,7 +166,7 @@ describe('Mood/Profile product integration', () => {
       within(screen.getByRole('dialog')).getByRole('button', { name: '删除记录' }),
     );
 
-    expect(await screen.findByRole('heading', { name: '登录' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '欢迎回来' })).toBeInTheDocument();
     expect(screen.queryByText('仅属于当前会话用户的合成心情正文')).not.toBeInTheDocument();
     expect(lateSignal?.aborted).toBe(true);
 

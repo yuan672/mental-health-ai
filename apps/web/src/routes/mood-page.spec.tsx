@@ -93,7 +93,91 @@ function deferred<T>() {
 describe('Mood page', () => {
   afterEach(() => {
     vi.restoreAllMocks();
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+  });
+
+  it.each([
+    ['happy', '开心'],
+    ['sad', '委屈'],
+    ['angry', '生气'],
+    ['surprised', '惊讶'],
+    ['shy', '害羞'],
+    ['sleepy', '困倦'],
+    ['hopeful', '期待'],
+    ['relaxed', '放松'],
+  ] as const)(
+    'keeps the %s cat selected through create, reload, history and editing',
+    async (catMood, label) => {
+      const saved = moodEntry({ catMood, moodScore: null, emotion: null });
+      mocks.list.mockResolvedValueOnce(history()).mockResolvedValueOnce(
+        history([saved], {
+          dailyTrend: [
+            { localDate: '2026-09-11', entryCount: 1, averageMoodScore: null, latestEntry: saved },
+          ],
+        }),
+      );
+      mocks.create.mockResolvedValue({
+        success: true,
+        data: { entry: saved, disposition: 'created' },
+      });
+      renderMood();
+      await screen.findByText('这段时间还没有心情记录。');
+      const form = screen.getByRole('region', { name: '记录此刻的心情' });
+      expect(within(form).getAllByRole('radio')).toHaveLength(8);
+      expect(within(form).queryByRole('combobox')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '记下这份心情' })).toBeDisabled();
+      await userEvent.click(within(form).getByLabelText(label));
+      await userEvent.click(screen.getByRole('button', { name: '记下这份心情' }));
+      expect(await screen.findByText('心情记录已保存。')).toBeInTheDocument();
+      expect(mocks.create.mock.calls[0]?.[0]).toMatchObject({
+        catMood,
+        moodScore: null,
+        emotion: null,
+        note: null,
+      });
+      const trajectory = screen.getByRole('list', { name: '7 天每日趋势' });
+      expect(
+        within(trajectory).getByText(label).closest('li')?.querySelector(`.cat-${catMood}`),
+      ).not.toBeNull();
+      expect(screen.queryByText(/平均.*分/u)).not.toBeInTheDocument();
+      const historyRegion = screen.getByRole('region', { name: '历史明细' });
+      expect(within(historyRegion).getByText(label)).toBeInTheDocument();
+      await userEvent.click(within(historyRegion).getByRole('button', { name: '编辑' }));
+      expect(within(historyRegion).getByLabelText(label)).toBeChecked();
+    },
+  );
+
+  it('uses the server daily last cat rather than an average or an incomplete history page', async () => {
+    mocks.list.mockResolvedValue(
+      history([moodEntry({ catMood: 'happy', moodScore: null })], {
+        dailyTrend: [
+          {
+            localDate: '2026-09-10',
+            entryCount: 26,
+            averageMoodScore: 3,
+            latestEntry: { catMood: 'surprised', moodScore: null, emotion: null },
+          },
+        ],
+        nextCursor: 'more-history',
+      }),
+    );
+    const view = renderMood();
+    await screen.findByText('合成心情正文');
+    const trajectory = screen.getByRole('list', { name: '7 天每日趋势' });
+    expect(within(trajectory).getByText('惊讶')).toBeInTheDocument();
+    expect([...trajectory.querySelectorAll('time')].map((time) => time.dateTime)).toEqual([
+      '2026-09-05',
+      '2026-09-06',
+      '2026-09-07',
+      '2026-09-08',
+      '2026-09-09',
+      '2026-09-10',
+      '2026-09-11',
+    ]);
+    for (const image of view.container.querySelectorAll('svg image')) {
+      const clipId = image.getAttribute('clip-path')?.slice(5, -1);
+      expect(clipId && document.getElementById(clipId)?.querySelector('rect')).toBeTruthy();
+    }
   });
 
   it('shows server trend values, missing dates, opaque pagination, and plain-text notes', async () => {
@@ -107,7 +191,10 @@ describe('Mood page', () => {
       );
     const view = renderMood();
 
-    expect(await screen.findByText('平均 3.5 分 · 1 条')).toBeInTheDocument();
+    expect(
+      within(await screen.findByRole('list', { name: '7 天每日趋势' })).getByText('还好'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/平均.*分/u)).not.toBeInTheDocument();
     expect(screen.getAllByText('未记录')).toHaveLength(6);
     expect(screen.getByText(unsafeText)).toBeInTheDocument();
     expect(view.container.querySelector('img')).toBeNull();
@@ -116,7 +203,9 @@ describe('Mood page', () => {
     await userEvent.click(screen.getByRole('button', { name: '加载更多' }));
     await waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(2));
     expect(mocks.list).toHaveBeenNthCalledWith(2, 7, 'opaque+/=cursor', expect.any(AbortSignal));
-    expect(screen.getByText('4 分')).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('region', { name: '历史明细' })).getByText('不错'),
+    ).toBeInTheDocument();
   });
 
   it('preserves an already selected range and loads only genuine 7/30-day switches', async () => {
@@ -162,26 +251,27 @@ describe('Mood page', () => {
     renderMood();
 
     await screen.findByText('这段时间还没有心情记录。');
-    const note = screen.getByLabelText('备注（可选）');
+    await userEvent.click(screen.getByLabelText('开心'));
+    const note = screen.getByLabelText('想说的话选填');
     fireEvent.change(note, { target: { value: ` ${'🙂'.repeat(500)} ` } });
     expect(screen.getByText(/500\/500/u)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '保存心情记录' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '记下这份心情' })).toBeEnabled();
     fireEvent.change(note, { target: { value: '🙂'.repeat(501) } });
     expect(screen.getByText(/501\/500/u)).toHaveClass('inline-error');
-    expect(screen.getByRole('button', { name: '保存心情记录' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '记下这份心情' })).toBeDisabled();
 
     fireEvent.change(note, { target: { value: '  🙂  ' } });
-    await userEvent.click(screen.getByLabelText('5'));
-    await userEvent.selectOptions(screen.getByLabelText('日常情绪（可选）'), 'joyful');
-    const submit = screen.getByRole('button', { name: '保存心情记录' });
+    await userEvent.click(screen.getByLabelText('开心'));
+    const submit = screen.getByRole('button', { name: '记下这份心情' });
     fireEvent.click(submit);
     fireEvent.click(submit);
 
     await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(1));
     expect(mocks.create.mock.calls[0]?.[0]).toMatchObject({
       clientRequestId: expect.any(String),
-      moodScore: 5,
-      emotion: 'joyful',
+      moodScore: null,
+      catMood: 'happy',
+      emotion: null,
       note: '🙂',
     });
     expect(localStorageWrite).not.toHaveBeenCalled();
@@ -201,10 +291,11 @@ describe('Mood page', () => {
     renderMood();
 
     await screen.findByText('这段时间还没有心情记录。');
-    fireEvent.change(screen.getByLabelText('备注（可选）'), {
+    await userEvent.click(screen.getByLabelText('开心'));
+    fireEvent.change(screen.getByLabelText('想说的话选填'), {
       target: { value: '结果未知的合成记录' },
     });
-    await userEvent.click(screen.getByRole('button', { name: '保存心情记录' }));
+    await userEvent.click(screen.getByRole('button', { name: '记下这份心情' }));
     expect(await screen.findByText(/不会自动重新提交原创建请求/u)).toBeInTheDocument();
     const firstId = mocks.create.mock.calls[0]?.[0].clientRequestId;
 
@@ -214,7 +305,7 @@ describe('Mood page', () => {
     expect(mocks.creationStatus).toHaveBeenCalledWith(firstId, expect.any(AbortSignal));
 
     await userEvent.click(screen.getByRole('button', { name: '放弃核对并开始新的记录' }));
-    await userEvent.click(screen.getByRole('button', { name: '保存心情记录' }));
+    await userEvent.click(screen.getByRole('button', { name: '记下这份心情' }));
     await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(2));
     expect(mocks.create.mock.calls[1]?.[0].clientRequestId).not.toBe(firstId);
   });
@@ -241,10 +332,11 @@ describe('Mood page', () => {
     renderMood();
 
     await screen.findByText('这段时间还没有心情记录。');
-    fireEvent.change(screen.getByLabelText('备注（可选）'), {
+    await userEvent.click(screen.getByLabelText('开心'));
+    fireEvent.change(screen.getByLabelText('想说的话选填'), {
       target: { value: '等待核对的合成创建' },
     });
-    await userEvent.click(screen.getByRole('button', { name: '保存心情记录' }));
+    await userEvent.click(screen.getByRole('button', { name: '记下这份心情' }));
     const requestId = mocks.create.mock.calls[0]?.[0].clientRequestId;
     expect(await screen.findByRole('button', { name: '核对创建结果' })).toBeVisible();
 
@@ -271,8 +363,9 @@ describe('Mood page', () => {
     renderMood();
 
     await screen.findByText('这段时间还没有心情记录。');
-    fireEvent.change(screen.getByLabelText('备注（可选）'), { target: { value: '原创建正文' } });
-    await userEvent.click(screen.getByRole('button', { name: '保存心情记录' }));
+    await userEvent.click(screen.getByLabelText('开心'));
+    fireEvent.change(screen.getByLabelText('想说的话选填'), { target: { value: '原创建正文' } });
+    await userEvent.click(screen.getByRole('button', { name: '记下这份心情' }));
 
     expect(await screen.findByText(/显示服务器上的最新内容/u)).toBeInTheDocument();
     expect(screen.getByText('后来编辑后的服务器内容')).toBeInTheDocument();
@@ -290,7 +383,8 @@ describe('Mood page', () => {
     renderMood();
 
     await screen.findByText('这段时间还没有心情记录。');
-    await userEvent.click(screen.getByRole('button', { name: '保存心情记录' }));
+    await userEvent.click(screen.getByLabelText('开心'));
+    await userEvent.click(screen.getByRole('button', { name: '记下这份心情' }));
     await userEvent.click(await screen.findByRole('button', { name: '核对创建结果' }));
 
     expect(await screen.findByText('只读核对时当前存在的记录')).toBeInTheDocument();
@@ -322,14 +416,20 @@ describe('Mood page', () => {
     const entry = await screen.findByText('合成心情正文');
     await userEvent.click(within(entry.closest('li')!).getByRole('button', { name: '编辑' }));
     const editForm = screen.getByRole('heading', { name: '编辑记录' }).closest('form')!;
-    await userEvent.click(within(editForm).getByLabelText('5'));
+    await userEvent.click(within(editForm).getByLabelText('开心'));
     await userEvent.click(within(editForm).getByRole('button', { name: '保存修改' }));
 
     expect(await screen.findByText(/已读取服务器当前内容/u)).toBeInTheDocument();
     expect(screen.getByText('另一标签页的内容')).toBeInTheDocument();
-    expect(screen.getByText('平均 5.0 分 · 1 条')).toBeVisible();
+    expect(
+      within(screen.getByRole('list', { name: '7 天每日趋势' })).getByText('很好'),
+    ).toBeVisible();
     expect(mocks.update).toHaveBeenCalledTimes(1);
-    expect(mocks.update.mock.calls[0]?.[1]).toMatchObject({ expectedRevision: 1, moodScore: 5 });
+    expect(mocks.update.mock.calls[0]?.[1]).toMatchObject({
+      expectedRevision: 1,
+      moodScore: null,
+      catMood: 'happy',
+    });
     expect(mocks.get).toHaveBeenCalledWith(ENTRY_ID, expect.any(AbortSignal));
     expect(mocks.list).toHaveBeenCalledTimes(2);
   });
@@ -364,7 +464,9 @@ describe('Mood page', () => {
     await userEvent.click(screen.getByRole('button', { name: '保存修改' }));
 
     expect(await screen.findByText('权威恢复内容')).toBeVisible();
-    expect(screen.getByText('平均 5.0 分 · 1 条')).toBeVisible();
+    expect(
+      within(screen.getByRole('list', { name: '7 天每日趋势' })).getByText('很好'),
+    ).toBeVisible();
     expect(appendSignal?.aborted).toBe(true);
     latePage.resolve(history([lateEntry]));
     await waitFor(() => expect(screen.queryByText('迟到分页内容')).not.toBeInTheDocument());
@@ -391,7 +493,9 @@ describe('Mood page', () => {
     await userEvent.click(screen.getByRole('button', { name: '保存修改' }));
 
     expect(await screen.findByText(/无法同步完整列表与趋势/u)).toBeVisible();
-    expect(screen.getByText('平均 2.0 分 · 1 条')).toBeVisible();
+    expect(
+      within(screen.getByRole('list', { name: '7 天每日趋势' })).getByText('有些低落'),
+    ).toBeVisible();
     expect(screen.getByRole('button', { name: '保存修改' })).toBeDisabled();
     expect(mocks.update).toHaveBeenCalledTimes(1);
   });
@@ -424,7 +528,7 @@ describe('Mood page', () => {
     const currentEntry = screen.getByText('服务器 revision 2').closest('li')!;
     await userEvent.click(within(currentEntry).getByRole('button', { name: '编辑' }));
     const freshForm = screen.getByRole('heading', { name: '编辑记录' }).closest('form')!;
-    await userEvent.click(within(freshForm).getByLabelText('4'));
+    await userEvent.click(within(freshForm).getByLabelText('放松'));
     await userEvent.click(within(freshForm).getByRole('button', { name: '保存修改' }));
 
     await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(2));
@@ -458,7 +562,8 @@ describe('Mood page', () => {
     renderMood();
 
     await screen.findByText('这段时间还没有心情记录。');
-    await userEvent.click(screen.getByRole('button', { name: '删除全部心情记录' }));
+    await userEvent.click(screen.getByLabelText('开心'));
+    await userEvent.click(screen.getByRole('button', { name: '清空记录' }));
     const dialog = screen.getByRole('dialog', { name: '删除全部心情记录？' });
     expect(dialog).toHaveTextContent('包括当前 7 天或 30 天窗口之外');
     expect(dialog).toHaveTextContent('独立 Audit 和备份');
@@ -477,7 +582,7 @@ describe('Mood page', () => {
     renderMood();
 
     await screen.findByText('合成心情正文');
-    await userEvent.click(screen.getByRole('button', { name: '删除全部心情记录' }));
+    await userEvent.click(screen.getByRole('button', { name: '清空记录' }));
     await userEvent.click(
       within(screen.getByRole('dialog')).getByRole('button', { name: '删除全部' }),
     );

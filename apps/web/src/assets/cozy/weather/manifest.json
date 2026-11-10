@@ -1,0 +1,172 @@
+{
+  "library": "Meteocons",
+  "version": "3.0.0-next.10",
+  "style": "fill",
+  "source": "https://github.com/basmilius/meteocons",
+  "license": "MIT",
+  "licenseUrl": "https://raw.githubusercontent.com/basmilius/meteocons/70dfb1d6e30dc9e791cfb0e4c5b5e5e60e972aa0/LICENSE",
+  "files": [
+    {
+      "name": "overcast",
+      "format": "svg-static",
+      "url": "https://cdn.meteocons.com/3.0.0-next.10/svg-static/fill/overcast.svg",
+      "filename": "overcast--static.svg",
+      "bytes": 1739,
+      "sha256": "cea2ada6a8cee4b13e20b23df85f60729d9ac25e4f20cd883bc327b9aec3af30",
+      "animated": false
+    },
+    {
+      "name": "clear-day",
+      "format": "svg",
+      "url": "https://cdn.meteocons.com/3.0.0-next.10/svg/fill/clear-day.svg",
+      "filename": "clear-day--animated.svg",
+      "bytes": 1096,
+      "sha256": "4b1f6766e201163dfabfc8e1e73387c9e5bba09f1c468b35c7be68b6bce54169",
+      "animated": true
+    },
+    {
+      "name": "clear-day",
+      "format": "svg-static",
+      "url": "https://cdn.meteocons.com/3.0.0-next.10/svg-static/fill/clear-day.svg",
+      "filename": "clear-day--static.svg",
+      "bytes": 957,
+      "sha256": "2fea6c6287ddbd72f059ce6639cf0b2e43e76d0c657e9f7646dbdf5d1ce7417d",
+      "animated": false
+    },
+    {
+      "name": "overcast",
+      "format": "svg",
+      "url": "https://cdn.meteocons.com/3.0.0-next.10/svg/fill/overcast.svg",
+      "filename": "overcast--animated.svg",
+      "bytes": 2110,
+      "sha256": "71f0b2dbae1df4278ca304f9b07938efe34eff8ae1be2cfd0a6f0a9c46097525",
+      "animated": true
+    },
+    {
+      "name": "partly-cloudy-day",
+      "format": "svg-static",
+      "url": "https://cdn.meteocons.com/3.0.0-next.10/svg-static/fill/partly-cloudy-day.svg",
+      "filename": "partly-cloudy-day--static.svg",
+      "bytes": 2213,
+      "sha256": "6fdaea20667eee93deadd3665329ba57ec848881786d4bd055662581b80d706f",
+      "animated": false
+    },
+    {
+      "name": "partly-cloudy-day",
+      "format": "svg",
+      "url": "https://cdn.meteocons.com/3.0.0-next.10/svg/fill/partly-cloudy-day.svg",
+      "filename": "partly-cloudy-day--animated.svg",
+      "bytes": 2537,
+      "sha256": "1ed1e019e205dfc88b884177c570c16ef4d8a8c36bbe2d6a120969e49de9454e",
+      "animated": true
+    },
+    {
+      "name": "rain",
+      "format": "svg",
+      "url": "https://cdn.meteocons.com/3.0.0-next.10/svg/fill/rain.svg",
+      "filename": "rain--animated.svg",
+      "bytes": 2467,
+      "sha256": "72cd15dc8042804e0c7842eb0af960645662ef6d17ea55e5ccf47ef90d542098",
+      "animated": true
+    },
+    {
+      "name": "thunderstorms-rain",
+      "format": "svg",
+      "url": "https://cdn.meteocons.com/3.0.0-next.10/svg/fill/thunderstorms-rain.svg",
+      "filename": "thunderstorms-rain--animated.svg",
+      "bytes": 3353,
+      "sha256": "b76273594ebd71bc1d306f15c8a45f348cbbb9995141496f3d4add334012fb7e",
+      "animated": true
+    },
+    {
+      "name": "rain",
+      "format": "svg-static",
+      "url": "https://cdn.meteocons.com/3.0.0-next.10/svg-static/fill/rain.svg",
+      "filename": "rain--static.svg",
+      "bytes": 1413,
+      "sha256": "6a0205d939e05b70766fa483a17d194e101f72b9ce07c80314f675de1bd807d5",
+      "animated": false
+    },
+    {
+      "name": "drizzle",
+      "format": "svg-static",
+      "url": "https://cdn.meteocons.com/3.0.0-next.10/svg-static/fill/drizzle.svg",
+      "filename": "drizzle--static.svg",
+      "bytes": 1455,
+      "sha256": "725ddef941c8a1d9bb41004a76bff83797a8593ae5ec26bf1bcd28f2add2acc0",
+      "animated": false
+    },
+    {
+      "name": "thunderstorms-rain",
+      "format": "svg-static",
+      "url": "https://cdn.meteocons.com/3.0.0-next.10/svg-static/fill/thunderstorms-rain.svg",
+      "filename": "thunderstorms-rain--static.svg",
+      "bytes": 2138,
+      "sha256": "dcd5441de91df5ac711bff4f42f013c2eeb9fc394fbe122ce7efaf79212d381c",
+      "animated": false
+    },
+    {
+      "name": "drizzle",
+      "format": "svg",
+      "url": "https://cdn.meteocons.com/3.0.0-next.10/svg/fill/drizzle.svg",
+      "filename": "drizzle--animated.svg",
+      "bytes": 2509,
+      "sha256": "69d81786287016e706258e988cd19857f299f1b62d93b97b9628a6455a8e6b76",
+      "animated": true
+    },
+    {
+      "name": "snow",
+      "format": "svg",
+      "url": "https://cdn.meteocons.com/3.0.0-next.10/svg/fill/snow.svg",
+      "filename": "snow--animated.svg",
+      "bytes": 4451,
+      "sha256": "f5c401d4793a6c5701d91aa0433d8c684a102f1df12f790bdd9932c90f8b2791",
+      "animated": true
+    },
+    {
+      "name": "snow",
+      "format": "svg-static",
+      "url": "https://cdn.meteocons.com/3.0.0-next.10/svg-static/fill/snow.svg",
+      "filename": "snow--static.svg",
+      "bytes": 3391,
+      "sha256": "e9c4415d4110ce8a4cdc16a4af1d47adff8913cbf616784a56b84e18eedc6dec",
+      "animated": false
+    },
+    {
+      "name": "fog",
+      "format": "svg-static",
+      "url": "https://cdn.meteocons.com/3.0.0-next.10/svg-static/fill/fog.svg",
+      "filename": "fog--static.svg",
+      "bytes": 1257,
+      "sha256": "c8af7b92e73424a9de1f4caabd0cd87f7801ff8452d1f4821be34a8812369e6e",
+      "animated": false
+    },
+    {
+      "name": "fog",
+      "format": "svg",
+      "url": "https://cdn.meteocons.com/3.0.0-next.10/svg/fill/fog.svg",
+      "filename": "fog--animated.svg",
+      "bytes": 1825,
+      "sha256": "f9a16a17791978cee8a26e568c737248b208dc0b278ac568a9c643536e930a7d",
+      "animated": true
+    },
+    {
+      "name": "wind",
+      "format": "svg-static",
+      "url": "https://cdn.meteocons.com/3.0.0-next.10/svg-static/fill/wind.svg",
+      "filename": "wind--static.svg",
+      "bytes": 516,
+      "sha256": "8f2baf08b7becb672434ae509c1792b801024545109bff4f88bedcfb265c9f81",
+      "animated": false
+    },
+    {
+      "name": "wind",
+      "format": "svg",
+      "url": "https://cdn.meteocons.com/3.0.0-next.10/svg/fill/wind.svg",
+      "filename": "wind--animated.svg",
+      "bytes": 785,
+      "sha256": "ad5ed1c9bc25ec8ad3d102821e73d77f2d02ce569f1f0751e72f1cd89a26db9a",
+      "animated": true
+    }
+  ]
+}

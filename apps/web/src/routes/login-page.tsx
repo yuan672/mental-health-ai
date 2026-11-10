@@ -3,6 +3,9 @@ import { Link, Navigate, useNavigate, useSearchParams } from 'react-router';
 import { useSession } from '../app/session-provider';
 import { safeReturnTo } from '../app/return-to';
 import { copy } from '../locales';
+import { LoginCatScene } from '../features/login-cat/login-cat-scene';
+import { brandCat } from '../shared/cat-art';
+import { CozyIcon } from '../shared/cozy-icon';
 
 export function LoginPage() {
   const session = useSession();
@@ -10,6 +13,7 @@ export function LoginPage() {
   const [searchParams] = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [visible, setVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,13 +36,23 @@ export function LoginPage() {
   };
 
   return (
-    <main className="auth-page">
-      <Link className="brand-link" to="/">
-        {copy.app.name}
-      </Link>
+    <main className="auth-page cozy-login">
+      <LoginCatScene />
+      <header className="login-header">
+        <Link className="brand-link" to="/">
+          <img className="brand-cat" src={brandCat} alt="" />
+          {copy.app.name}
+        </Link>
+        <Link className="login-home" to="/">
+          ← 返回首页
+        </Link>
+      </header>
       <section className="auth-card" aria-labelledby="login-title">
-        <p className="eyebrow">欢迎回来</p>
-        <h1 id="login-title">登录</h1>
+        <div className="login-welcome">
+          <span aria-hidden="true">✦</span>
+          <h1 id="login-title">欢迎回来</h1>
+          <p>今天的故事，也想听你慢慢说。</p>
+        </div>
         {session.state.status === 'guest' && session.state.reason === 'expired' ? (
           <p className="success-note" role="status">
             登录状态已失效，请重新登录。如刚才有正在提交的操作，请登录后核对状态。
@@ -60,18 +74,31 @@ export function LoginPage() {
             type="email"
             autoComplete="email"
             required
+            placeholder="请输入邮箱"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
           />
           <label htmlFor="login-password">密码</label>
-          <input
-            id="login-password"
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
+          <div className="login-password-wrap">
+            <input
+              id="login-password"
+              type={visible ? 'text' : 'password'}
+              autoComplete="current-password"
+              required
+              placeholder="请输入密码"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+            <button
+              type="button"
+              className="login-eye"
+              aria-label={visible ? '隐藏密码' : '显示密码'}
+              aria-pressed={visible}
+              onClick={() => setVisible((v) => !v)}
+            >
+              <CozyIcon name="eye" />
+            </button>
+          </div>
           {error ? (
             <p id="login-error" className="inline-error" role="alert">
               {error}
@@ -83,11 +110,11 @@ export function LoginPage() {
             disabled={submitting}
             aria-describedby={error ? 'login-error' : undefined}
           >
-            {submitting ? '正在登录…' : '登录'}
+            {submitting ? '正在登录…' : '登录'} {!submitting ? <CozyIcon name="arrow" /> : null}
           </button>
         </form>
         <p className="auth-switch">
-          还没有账号？ <Link to="/register">查看注册</Link>
+          还没有账号？ <Link to="/register">注册一个 →</Link>
         </p>
       </section>
     </main>

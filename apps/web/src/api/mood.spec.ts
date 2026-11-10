@@ -21,6 +21,55 @@ describe('Mood/Profile API client', () => {
     document.cookie = 'mh_csrf=; Max-Age=0; Path=/';
   });
 
+  it('sends and parses a named cat with no invented score, including daily last selections', async () => {
+    document.cookie = 'mh_csrf=synthetic-csrf; Path=/';
+    const catEntry = { ...entry, catMood: 'shy', moodScore: null, emotion: null };
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({ success: true, data: { disposition: 'created', entry: catEntry } }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          success: true,
+          data: {
+            days: 7,
+            timeZone: 'Asia/Shanghai',
+            period: { startDate: '2026-09-05', endDate: '2026-09-11' },
+            entries: [catEntry],
+            dailyTrend: [
+              {
+                localDate: '2026-09-11',
+                entryCount: 1,
+                averageMoodScore: null,
+                latestEntry: { catMood: 'shy', moodScore: null, emotion: null },
+              },
+            ],
+            nextCursor: null,
+          },
+        }),
+      );
+    vi.stubGlobal('fetch', fetcher);
+    expect(
+      (
+        await createMoodEntry({
+          clientRequestId: CLIENT_REQUEST_ID,
+          catMood: 'shy',
+          moodScore: null,
+        })
+      ).data.entry,
+    ).toEqual(catEntry);
+    const init = fetcher.mock.calls[0]?.[1];
+    expect(init?.credentials).toBe('include');
+    expect(new Headers(init?.headers).get('x-csrf-token')).toBe('synthetic-csrf');
+    expect(JSON.parse(String(init?.body))).toEqual({
+      clientRequestId: CLIENT_REQUEST_ID,
+      catMood: 'shy',
+      moodScore: null,
+    });
+    expect((await listMoodEntries(7)).data.dailyTrend[0]?.latestEntry?.catMood).toBe('shy');
+  });
+
   it('passes the opaque cursor unchanged and strictly parses the server trend contract', async () => {
     const cursor = 'opaque+/=cursor';
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(

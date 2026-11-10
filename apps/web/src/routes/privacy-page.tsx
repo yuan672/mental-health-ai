@@ -529,7 +529,14 @@ export function PrivacyPage() {
             className="privacy-card privacy-disclosure"
             aria-labelledby="data-boundary-title"
           >
-            <h2 id="data-boundary-title">聊天与保留说明</h2>
+            <h2 id="data-boundary-title">记录与保留说明</h2>
+            <p>
+              日记本、草稿、照片和个人设置保存到当前账号。日记与心情记录不会自动发送给
+              AI；关闭日记本后，可在书架重新打开。
+            </p>
+            <p>
+              可以在日记本中删除单页记录或整本日记。已被日记或草稿引用的照片，需要先从页面移除并保存，再删除照片文件。
+            </p>
             <p>
               普通聊天进入你的聊天历史，默认按当前 90 天策略处理；主动保留的聊天没有该默认到期时间。
             </p>

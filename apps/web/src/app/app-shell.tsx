@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { NavLink, Outlet } from 'react-router';
+import { NavLink, Outlet, useLocation } from 'react-router';
+import { PersonalSettingsProvider, usePersonalSettings } from './personal-settings';
+import { ProfileAvatar } from '../shared/profile-avatar';
+import { brandCat, CatArt } from '../shared/cat-art';
+import { CozyIcon, type IconName } from '../shared/cozy-icon';
+import { RouteCat } from '../shared/route-cat';
 import { ChatWorkspaceProvider, useChatWorkspace } from '../features/chat/chat-workspace';
 import {
   ConversationHistory,
@@ -10,8 +15,41 @@ import { ConfirmDialog } from '../shared/confirm-dialog';
 import { ProductDataProvider, useProductData } from './product-data-provider';
 import { useSession } from './session-provider';
 
+function ProductNavigation({ onSelect }: { onSelect?: () => void }) {
+  const items: { to: string; icon: IconName; label: string; sub: string }[] = [
+    { to: '/app', icon: 'home', label: '首页', sub: '给自己一点时间' },
+    { to: '/app/chat', icon: 'chat', label: '聊一聊', sub: '按你的节奏，慢慢说' },
+    { to: '/app/mood', icon: 'pen', label: '心情记录', sub: '记录此刻的感受' },
+    { to: '/app/diary', icon: 'book', label: '日记本', sub: '一页今天，一页回忆' },
+    { to: '/app/knowledge', icon: 'read', label: '心理知识', sub: '多了解一点自己' },
+    { to: '/app/profile', icon: 'person', label: '个人资料', sub: '你的专属小角落' },
+    { to: '/app/privacy', icon: 'shield', label: '隐私与数据', sub: '安心，由自己掌握' },
+  ];
+  return (
+    <nav className="product-navigation" aria-label="产品功能">
+      {items.map((item) => (
+        <NavLink
+          key={item.to}
+          aria-label={item.label}
+          to={item.to}
+          end={item.to === '/app'}
+          onClick={onSelect}
+        >
+          <CozyIcon name={item.icon} />
+          <span>
+            {item.label}
+            <small>{item.sub}</small>
+          </span>
+        </NavLink>
+      ))}
+    </nav>
+  );
+}
 function AppShellContent() {
+  const location = useLocation();
+  const onChat = location.pathname.startsWith('/app/chat');
   const session = useSession();
+  const preferences = usePersonalSettings();
   const product = useProductData();
   const workspace = useChatWorkspace();
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -91,12 +129,16 @@ function AppShellContent() {
           ☰
         </button>
         <div className="app-brand">
-          <span className="brand-mark" aria-hidden="true">
-            安
-          </span>
+          <img className="brand-cat" src={brandCat} alt="" />
           <span>{copy.app.shortName}</span>
         </div>
         <div className="app-header-actions">
+          {preferences?.data ? (
+            <NavLink className="header-profile" to="/app/profile" aria-label="我的个人资料">
+              <ProfileAvatar cat={preferences.data.cat} avatarId={preferences.data.avatarId} />
+              <span>{preferences.data.displayName || '我的小角落'}</span>
+            </NavLink>
+          ) : null}
           {product.quota ? (
             <span className="quota-summary" aria-label={`今日剩余 ${product.quota.remaining} 次`}>
               今日剩余 {product.quota.remaining}/{product.quota.dailyLimit}
@@ -128,27 +170,40 @@ function AppShellContent() {
       ) : null}
       <div className="app-layout">
         <aside className="history-sidebar desktop-only">
-          <nav className="product-navigation" aria-label="产品功能">
-            <NavLink to="/app/chat/incognito">无痕聊天</NavLink>
-            <NavLink to="/app/mood">心情记录</NavLink>
-            <NavLink to="/app/knowledge">知识中心</NavLink>
-            <NavLink to="/app/profile">个人资料</NavLink>
-            <NavLink to="/app/privacy">隐私与数据</NavLink>
-          </nav>
-          <ConversationHistory
-            navigationDisabled={workspace.reconciliationPending}
-            onNewChat={() => void workspace.startNewChat()}
-          />
-          <button
-            type="button"
-            className="button button-quiet delete-all-button"
-            disabled={workspace.reconciliationPending}
-            onClick={() => setDeleteAllOpen(true)}
-          >
-            删除全部聊天
-          </button>
+          <ProductNavigation />
+          {onChat ? (
+            <div className="sidebar-chat-tools">
+              <NavLink className="text-button" to="/app/chat/incognito">
+                无痕聊天
+              </NavLink>
+              <ConversationHistory
+                navigationDisabled={workspace.reconciliationPending}
+                onNewChat={() => void workspace.startNewChat()}
+              />
+              <button
+                type="button"
+                className="button button-quiet delete-all-button"
+                disabled={workspace.reconciliationPending}
+                onClick={() => setDeleteAllOpen(true)}
+              >
+                删除全部聊天
+              </button>
+            </div>
+          ) : (
+            <div className="sidebar-cat-note">
+              <CatArt mood="sleepy" />
+              <p>
+                不用赶路，
+                <br />
+                照顾好自己就好。
+              </p>
+            </div>
+          )}
         </aside>
-        <Outlet />
+        <div className="app-content">
+          <RouteCat />
+          <Outlet />
+        </div>
       </div>
       {drawerOpen ? (
         <div
@@ -178,23 +233,14 @@ function AppShellContent() {
               }}
               onSelect={() => setDrawerOpen(false)}
             />
-            <nav className="product-navigation" aria-label="产品功能">
-              <NavLink to="/app/chat/incognito" onClick={() => setDrawerOpen(false)}>
-                无痕聊天
-              </NavLink>
-              <NavLink to="/app/mood" onClick={() => setDrawerOpen(false)}>
-                心情记录
-              </NavLink>
-              <NavLink to="/app/knowledge" onClick={() => setDrawerOpen(false)}>
-                知识中心
-              </NavLink>
-              <NavLink to="/app/profile" onClick={() => setDrawerOpen(false)}>
-                个人资料
-              </NavLink>
-              <NavLink to="/app/privacy" onClick={() => setDrawerOpen(false)}>
-                隐私与数据
-              </NavLink>
-            </nav>
+            <ProductNavigation onSelect={() => setDrawerOpen(false)} />
+            <NavLink
+              className="text-button"
+              to="/app/chat/incognito"
+              onClick={() => setDrawerOpen(false)}
+            >
+              无痕聊天
+            </NavLink>
             <button
               type="button"
               className="button button-quiet delete-all-button"
@@ -235,7 +281,9 @@ export function AppShell() {
     <ProductDataProvider>
       <ConversationHistoryProvider>
         <ChatWorkspaceProvider>
-          <AppShellContent />
+          <PersonalSettingsProvider>
+            <AppShellContent />
+          </PersonalSettingsProvider>
         </ChatWorkspaceProvider>
       </ConversationHistoryProvider>
     </ProductDataProvider>

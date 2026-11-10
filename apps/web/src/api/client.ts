@@ -53,7 +53,8 @@ export async function apiRequest<T>(
 ): Promise<T> {
   const method = options.method ?? 'GET';
   const headers = new Headers({ Accept: 'application/json' });
-  if (options.body !== undefined) headers.set('Content-Type', 'application/json');
+  const multipart = options.body instanceof FormData;
+  if (options.body !== undefined && !multipart) headers.set('Content-Type', 'application/json');
   if (options.csrf) {
     const token = readCsrfToken();
     if (!token)
@@ -65,7 +66,9 @@ export async function apiRequest<T>(
     method,
     credentials: 'include',
     headers,
-    ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+    ...(options.body === undefined
+      ? {}
+      : { body: multipart ? (options.body as FormData) : JSON.stringify(options.body) }),
     ...(options.signal ? { signal: options.signal } : {}),
   });
 

@@ -2,6 +2,7 @@ import type { ProfileResponse } from '@mental-health/types';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { getProfile } from '../api/mood';
+import { PersonalPreferences } from './personal-preferences';
 
 const dateFormatter = new Intl.DateTimeFormat('zh-CN', {
   year: 'numeric',
@@ -60,7 +61,7 @@ export function ProfilePage() {
       <header className="profile-header">
         <p className="eyebrow">账号</p>
         <h1 id="profile-title">个人资料</h1>
-        <p>这里只展示已有账号事实，不收集额外个人资料。</p>
+        <p>一个舒服的称呼，一只喜欢的小猫。把这里布置成自己的样子。</p>
       </header>
       {loading ? <p aria-busy="true">正在加载账号资料…</p> : null}
       {error ? (
@@ -95,6 +96,7 @@ export function ProfilePage() {
           </div>
         </section>
       ) : null}
+      <PersonalPreferences />
     </main>
   );
 }

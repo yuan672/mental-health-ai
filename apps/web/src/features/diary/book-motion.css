@@ -1,0 +1,279 @@
+/* One opaque book in one 3D world. The real spread stays mounted, but hidden,
+   until the moving paper lands; it never shows through a second book. */
+.diary-motion-active .diary-book {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  isolation: auto;
+  perspective: none;
+  transform: none;
+}
+.diary-motion-active .diary-book > :not(.diary-entry-model),
+.diary-motion-active .diary-book::before,
+.diary-motion-active .diary-book::after,
+.diary-motion-active .book-tabs,
+.diary-motion-active .book-caption {
+  visibility: hidden;
+}
+.diary-entry-model {
+  position: absolute;
+  z-index: 8;
+  pointer-events: none;
+  user-select: none;
+  perspective-origin: 50% 50%;
+}
+.diary-entry-world {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+}
+/* Opacity, clipping, filters and isolation would flatten these 3D ancestors. */
+.diary-entry-cover,
+.diary-entry-paper-strip {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  transform-origin: left center;
+  transform-style: preserve-3d;
+}
+.diary-entry-cover {
+  left: 50%;
+  top: -6px;
+  width: calc(50% + 9px);
+  height: calc(100% + 15px);
+}
+.diary-entry-cover-front,
+.diary-entry-cover-back {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  overflow: hidden;
+  border: 1px solid #69795c;
+  border-radius: 2px 10px 13px 2px;
+}
+.diary-entry-cover-front {
+  transform: translateZ(1px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  padding: 30px 20px;
+  background: #819071;
+  color: #fffcf3;
+  box-shadow:
+    inset 5px 0 8px #38574a24,
+    inset 0 0 0 5px #a0ac8b55;
+}
+.diary-entry-cover-back {
+  transform: rotateY(180deg) translateZ(1px);
+  background: #e7e8da;
+  border-radius: 10px 2px 2px 13px;
+  box-shadow: inset 0 0 0 6px #819071;
+}
+.diary-entry-cover-edge {
+  position: absolute;
+  right: -1px;
+  top: 1px;
+  bottom: 1px;
+  width: 2px;
+  background: #657758;
+  transform: rotateY(90deg);
+  transform-origin: center;
+}
+.diary-entry-cover-caption {
+  font-size: 12px;
+  letter-spacing: 0.18em;
+}
+.diary-entry-cover-front strong {
+  font:
+    600 clamp(26px, 3.2vw, 47px)/1.5 'Songti SC',
+    SimSun,
+    serif;
+  letter-spacing: 0.1em;
+  text-align: center;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+.diary-entry-cover-front > .cat-art {
+  width: 140px;
+  height: 140px;
+  flex: none;
+  padding: 10px;
+  border-radius: 45%;
+  background: #f9f7ee;
+  border: 1px solid #d6deca;
+  mix-blend-mode: normal;
+}
+.diary-entry-cover-front p {
+  color: #f1f3e7;
+  font-size: 13px;
+  line-height: 2;
+  text-align: center;
+}
+.diary-entry-back-cover {
+  position: absolute;
+  left: 50%;
+  right: -12px;
+  top: -6px;
+  bottom: -15px;
+  border: 1px solid #69795c;
+  border-radius: 2px 10px 14px 2px;
+  background: #819071;
+  transform: translateZ(-10px);
+}
+.diary-entry-right-stack {
+  position: absolute;
+  top: 3px;
+  bottom: -9px;
+  left: 50%;
+  right: -7px;
+  border: 1px solid #d1cbba;
+  border-radius: 2px 8px 12px 2px;
+  background: #eeeadd;
+  box-shadow:
+    1px 2px 0 #fefcf2,
+    2px 4px 0 #d1cbba,
+    3px 6px 0 #f1eddf;
+  transform: translateZ(-3px);
+}
+.diary-entry-right-page {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 50%;
+  border-radius: 1px 9px 12px 3px;
+  overflow: hidden;
+  background: #fffdf6;
+  transform: translateZ(-0.4px);
+}
+.diary-entry-paper-front,
+.diary-entry-paper-back {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  overflow: hidden;
+  background: #fffcf3;
+}
+.diary-entry-paper-front {
+  transform: translateZ(0.08px);
+}
+.diary-entry-paper-back {
+  transform: rotateY(180deg) translateZ(0.08px);
+}
+.diary-entry-paper-front::after,
+.diary-entry-paper-back::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: rgba(104, 88, 58, var(--entry-shade, 0));
+}
+.diary-entry-page-copy.paper-page {
+  position: absolute !important;
+  top: 0 !important;
+  margin: 0 !important;
+  min-height: 0 !important;
+  max-width: none !important;
+  box-sizing: border-box !important;
+  border-radius: 0 !important;
+  animation: none !important;
+  transition: none !important;
+  transform: none !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  backface-visibility: visible !important;
+}
+.diary-entry-model *,
+.diary-entry-model *::before,
+.diary-entry-model *::after {
+  animation: none !important;
+  transition: none !important;
+  caret-color: transparent !important;
+}
+.diary-entry-ground {
+  position: absolute;
+  top: 12px;
+  bottom: -16px;
+  left: 50%;
+  width: 50%;
+  border-radius: 12px;
+  box-shadow:
+    0 18px 25px -12px #39443235,
+    0 4px 9px #4d563d20;
+}
+.diary-entry-compact-note {
+  padding: 20px 12px;
+  color: #6c795f;
+  font:
+    14px/2 SimSun,
+    serif;
+}
+.notebook-return-flight,
+.notebook-return-old {
+  position: fixed;
+  z-index: 40;
+  pointer-events: none;
+  user-select: none;
+}
+.notebook-return-flight {
+  transform-origin: top left;
+}
+.notebook-return-old {
+  overflow: hidden;
+}
+.notebook-return-source {
+  transform-origin: top left;
+}
+.notebook-return-destination.notebook-cover {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  margin: 0;
+  transform: none;
+  transition: none;
+  opacity: 0;
+}
+.notebook-returning {
+  opacity: var(--shelf-arrival, 0);
+}
+.notebook-returning .bookshelf {
+  animation: none;
+}
+.notebook-cover-in-flight {
+  visibility: hidden;
+}
+.notebook-return-flight *,
+.notebook-return-old * {
+  animation: none !important;
+  transition: none !important;
+}
+@media (max-width: 640px) {
+  .diary-entry-cover-front {
+    gap: 10px;
+    padding: 12px 5px;
+  }
+  .diary-entry-cover-caption {
+    font-size: 8px;
+    letter-spacing: 0.05em;
+  }
+  .diary-entry-cover-front strong {
+    font-size: 18px;
+  }
+  .diary-entry-cover-front p {
+    display: none;
+  }
+  .diary-entry-cover-front > .cat-art {
+    width: 64px;
+    height: 62px;
+    padding: 3px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .notebook-returning {
+    opacity: 1;
+  }
+}

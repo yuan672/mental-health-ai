@@ -1,0 +1,113 @@
+.book-curl-surface {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  overflow: visible;
+  pointer-events: none;
+  user-select: none;
+  isolation: isolate;
+}
+.book-curl-strip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+  will-change: transform;
+}
+.book-curl-face {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #fffcf3;
+  contain: strict;
+  will-change: opacity;
+}
+.book-curl-back {
+  transform: scaleX(-1);
+}
+.book-curl-copy.paper-page {
+  position: absolute !important;
+  top: 0 !important;
+  margin: 0 !important;
+  min-height: 0 !important;
+  max-width: none !important;
+  border-radius: 0 !important;
+  box-sizing: border-box !important;
+  animation: none !important;
+  transform: none !important;
+  filter: none !important;
+  box-shadow: none !important;
+  backface-visibility: visible !important;
+}
+.book-curl-preview {
+  position: absolute;
+  z-index: 100;
+  overflow: hidden;
+  contain: strict;
+}
+.book-curl-preview[hidden] {
+  display: none;
+}
+.book-curl-copy *,
+.book-curl-copy *::before,
+.book-curl-copy *::after {
+  animation: none !important;
+  transition: none !important;
+  caret-color: transparent !important;
+}
+.book-curl-light {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  will-change: opacity;
+}
+.book-curl-light-left {
+  background: linear-gradient(90deg, rgb(104, 88, 58), rgba(104, 88, 58, 0));
+}
+.book-curl-light-right {
+  background: linear-gradient(90deg, rgba(104, 88, 58, 0), rgb(104, 88, 58));
+}
+.book-curl-shadow {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(66, 52, 29, 0.6) 45%,
+    rgba(66, 52, 29, 0.3) 75%,
+    transparent
+  );
+  filter: blur(28px);
+  transform-origin: center;
+  will-change: transform, opacity;
+}
+.diary-book.is-curling > .paper-page {
+  animation: none;
+}
+.diary-book.is-curling .page-edge {
+  pointer-events: none;
+}
+.diary-book.is-curl-compact .paper-right {
+  animation: book-soft-reveal 0.24s ease-out both;
+}
+@keyframes book-soft-reveal {
+  from {
+    opacity: 0.45;
+    transform: translateX(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .book-curl-surface {
+    display: none !important;
+  }
+  .diary-book.is-curl-compact .paper-right {
+    animation: none !important;
+  }
+}

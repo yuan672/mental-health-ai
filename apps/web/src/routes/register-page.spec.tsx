@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -69,6 +69,37 @@ it('does not attribute a server failure to a valid password or display sensitive
   expect(screen.getByLabelText('密码')).not.toHaveAttribute('aria-invalid');
   expect(screen.getByLabelText('邮箱')).toHaveValue('synthetic@example.test');
   expect(screen.queryByText(/internal detail/u)).not.toBeInTheDocument();
+});
+
+it('checks explicit consent and age evidence at submission, including non-button form submission', async () => {
+  await fillForm('Synthetic-Test-9!');
+  const form = screen.getByLabelText('邮箱').closest('form')!;
+  await userEvent.click(screen.getByRole('checkbox'));
+  fireEvent.submit(form);
+  expect(mocks.register).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('checkbox'));
+  await userEvent.clear(screen.getByLabelText('年龄验证凭证'));
+  fireEvent.submit(form);
+  expect(mocks.register).not.toHaveBeenCalled();
+});
+
+it('sends only one registration while a submission is still pending', async () => {
+  await fillForm('Synthetic-Test-9!');
+  let finish!: () => void;
+  mocks.register.mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const form = screen.getByLabelText('邮箱').closest('form')!;
+  fireEvent.submit(form);
+  fireEvent.submit(form);
+  expect(mocks.register).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    finish();
+  });
+  expect(await screen.findByText('登录入口')).toBeInTheDocument();
 });
 
 it.each([

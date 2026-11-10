@@ -62,7 +62,7 @@ test('landing, login, protected app shell, and logout', async ({ page }) => {
   await expect(page.getByRole('heading', { name: '新对话' })).toBeVisible();
   await page.getByRole('button', { name: '退出' }).click();
   await expect(page).toHaveURL(/\/login\?returnTo=/u);
-  await expect(page.getByRole('heading', { name: '登录' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '欢迎回来' })).toBeVisible();
   await expect(page.getByText('你已退出登录。')).toBeVisible();
   await expect(page.getByText(/登录状态已失效/u)).toHaveCount(0);
   await expect(page.getByText('今天想从哪里说起？')).toHaveCount(0);
