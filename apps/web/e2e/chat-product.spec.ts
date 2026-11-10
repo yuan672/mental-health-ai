@@ -1,4 +1,4 @@
-import { fileURLToPath } from 'node:url';
+﻿import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 
 const EMAIL = 'phase5b-e2e@example.test';
@@ -374,12 +374,12 @@ test('Mood/Profile supports the complete synthetic P0 lifecycle', async ({ page 
   await expect(page.getByRole('heading', { name: '心情记录' })).toBeVisible();
   await expect(page.getByText(/不是医疗诊断、持续监测或紧急响应渠道/u)).toBeVisible();
 
-  await page.getByRole('radio', { name: '委屈' }).click();
+  await page.locator('.cat-mood-option[data-cat="sad"]').click();
   await page.getByLabel('想说的话').fill('第一条合成心情记录。');
   await page.getByRole('button', { name: '记下这份心情' }).click();
   await expect(page.getByText('第一条合成心情记录。')).toBeVisible();
 
-  await page.getByRole('radio', { name: '期待' }).click();
+  await page.locator('.cat-mood-option[data-cat="hopeful"]').click();
   await page.getByLabel('想说的话').fill('第二条合成心情记录。');
   await page.getByRole('button', { name: '记下这份心情' }).click();
   await expect(page.getByText('第二条合成心情记录。')).toBeVisible();
@@ -405,7 +405,7 @@ test('Mood/Profile supports the complete synthetic P0 lifecycle', async ({ page 
   const firstEntry = page.getByText('第一条合成心情记录。').locator('..');
   await firstEntry.getByRole('button', { name: '编辑' }).click();
   const editForm = page.getByRole('heading', { name: '编辑记录' }).locator('..');
-  await editForm.getByRole('radio', { name: '开心' }).click();
+  await editForm.locator('.cat-mood-option[data-cat="happy"]').click();
   await editForm.getByLabel('想说的话').fill('第一条已编辑的合成记录。');
   await editForm.getByRole('button', { name: '保存修改' }).click();
   await expect(page.getByText('第一条已编辑的合成记录。')).toBeVisible();
@@ -472,7 +472,7 @@ test('Mood preserves read-only unknown-create recovery across a range change', a
     await route.continue();
   });
 
-  await page.getByRole('radio', { name: '放松' }).click();
+  await page.locator('.cat-mood-option[data-cat="relaxed"]').click();
   await page.getByLabel('想说的话').fill('结果未知的合成浏览器记录。');
   await page.getByRole('button', { name: '记下这份心情' }).click();
   await expect(page.getByText(/不会自动重新提交原创建请求/u)).toBeVisible();
