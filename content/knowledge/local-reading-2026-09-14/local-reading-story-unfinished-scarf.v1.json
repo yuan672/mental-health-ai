@@ -1,0 +1,52 @@
+{
+  "articleKey": "local-reading-story-unfinished-scarf",
+  "version": 1,
+  "title": "温馨故事 · 那条没有织完的围巾",
+  "summary": "原创虚构 · 围巾短了一截，却刚好够一只小猫过冬。",
+  "contentOrigin": "synthetic_fixture",
+  "reviewStatus": "unverified",
+  "reviewedBy": null,
+  "reviewedAt": null,
+  "contentBlocks": [
+    {
+      "type": "paragraph",
+      "text": "许小满从柜子最下面翻出那团毛线时，天已经凉了。围巾织到一半，针脚忽松忽紧，边上还有一个小洞。她本来想拆掉，拆了两针，又停下来。"
+    },
+    {
+      "type": "paragraph",
+      "text": "去年开始织它，是想在冬天前送给自己。后来加班、搬家，一件事接着一件事。没织完的围巾被塞进袋子，连同一句没说出口的责备：“你看，又是一件没做好的事。”"
+    },
+    {
+      "type": "paragraph",
+      "text": "邻居家的孩子来借剪刀，看见那团毛线，眼睛亮起来：“可以给楼下的小猫做个垫子吗？”小满拿起来比了比，说：“可是这里有个洞。”孩子把手指从洞里探出来，笑着说：“它可以看我。”"
+    },
+    {
+      "type": "paragraph",
+      "text": "最后，她找了一块旧布，把织片缝在上面，补好松线和容易勾住爪子的地方，做成一个小垫子。照顾小猫的邻居把它放进干燥的猫窝。小猫绕着闻了一圈，踩了踩，就趴了下去。"
+    },
+    {
+      "type": "paragraph",
+      "text": "小满坐在楼梯上看了一会儿。它没在意针脚是否整齐，也不知道这曾是一件“没完成”的礼物。猫窝里只多了一小块柔软的地方。"
+    },
+    {
+      "type": "paragraph",
+      "text": "回家后，她把剩下的毛线放回抽屉。这次没有把袋子塞到最里面。哪天想继续，就再拿出来；还没想好，也可以先留着。"
+    },
+    {
+      "type": "callout",
+      "tone": "information",
+      "text": "这是本站原创虚构故事。参考资料仅供自我评价主题的延伸阅读，不是人物或情节的来源，也不是对“养猫有治疗效果”的主张。"
+    }
+  ],
+  "sources": [
+    {
+      "publisherName": "英国国民保健署（NHS）",
+      "sourceTitle": "Raising low self-esteem",
+      "sourceUrl": "https://www.nhs.uk/mental-health/self-help/tips-and-support/raise-low-self-esteem/",
+      "sourcePublishedAt": null,
+      "sourceVersionLabel": "页面标示最近复核：2023-04-11；建议复核日期已过",
+      "sourceLocator": "主题延伸阅读，非故事出处；How to have healthy self-esteem / Be kind to yourself",
+      "retrievedAt": "2026-09-14T06:47:43.000Z"
+    }
+  ]
+}

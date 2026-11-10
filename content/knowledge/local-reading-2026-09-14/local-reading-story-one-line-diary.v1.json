@@ -1,0 +1,52 @@
+{
+  "articleKey": "local-reading-story-one-line-diary",
+  "version": 1,
+  "title": "温馨故事 · 今天的日记，只有一行",
+  "summary": "原创虚构 · 一页空白没有催促她，等到夜里，终于等来一句关于晚风的话。",
+  "contentOrigin": "synthetic_fixture",
+  "reviewStatus": "unverified",
+  "reviewedBy": null,
+  "reviewedAt": null,
+  "contentBlocks": [
+    {
+      "type": "paragraph",
+      "text": "新日记本的第一页很漂亮。纸是浅浅的米色，翻开时有一点柔软的沙沙声。小雨拿着笔，写了日期，又把笔放下。她总觉得，第一页应该写点值得记住的事。"
+    },
+    {
+      "type": "paragraph",
+      "text": "可是那天只有普通的公交、普通的会议，午饭还打翻了一点汤。她试着写“今天也要努力”，看了几秒，又觉得不像自己，把那行字轻轻划掉。"
+    },
+    {
+      "type": "paragraph",
+      "text": "晚上倒垃圾时，楼下的橘猫跟了她半层台阶。它停在风吹得到的地方，坐得很端正。小雨也停了一会儿，看见树影在墙上慢慢移动，像有人把一封没写字的信展开。"
+    },
+    {
+      "type": "paragraph",
+      "text": "回屋以后，她重新翻开日记本。这次写的是：“今天回家时，楼下的风有一点凉，猫坐在风里。”写完没有补第二句。"
+    },
+    {
+      "type": "paragraph",
+      "text": "第二天的日记有三行。再下一天忙，她没写。周末翻回来，她仍然能想起那个台阶、橘猫耳朵上的光，以及手里垃圾袋轻轻碰到裤脚的声音。"
+    },
+    {
+      "type": "paragraph",
+      "text": "后来，她在第一页的角落画了一小片叶子。那页没有变成她起初设想的漂亮开篇，却确实留住了她自己的一个晚上。"
+    },
+    {
+      "type": "callout",
+      "tone": "information",
+      "text": "这是本站原创虚构故事。下方是觉察当下的主题延伸阅读，日记写法由本站创作，不是经过验证的治疗练习。"
+    }
+  ],
+  "sources": [
+    {
+      "publisherName": "美国国立卫生研究院（NIH）",
+      "sourceTitle": "Emotional Wellness Toolkit",
+      "sourceUrl": "https://www.nih.gov/health-information/your-healthiest-self-wellness-toolkits/emotional-wellness-toolkit",
+      "sourcePublishedAt": null,
+      "sourceVersionLabel": null,
+      "sourceLocator": "主题延伸阅读，非故事出处；Be mindful",
+      "retrievedAt": "2026-09-14T06:47:43.000Z"
+    }
+  ]
+}

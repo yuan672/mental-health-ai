@@ -1,0 +1,73 @@
+{
+  "articleKey": "local-reading-self-talk-kindness",
+  "version": 1,
+  "title": "对自己说话，可以少一点苛刻",
+  "summary": "心理科普 · 从“我就是不行”回到具体事实，练习给自己一个更公平的评价。",
+  "contentOrigin": "synthetic_fixture",
+  "reviewStatus": "unverified",
+  "reviewedBy": null,
+  "reviewedAt": null,
+  "contentBlocks": [
+    {
+      "type": "callout",
+      "tone": "information",
+      "text": "本地待核验科普稿：由 AI 参考公开健康资料整理，尚未完成人工来源核验，供本地内容审阅。文中的生活示例由本站编写。"
+    },
+    {
+      "type": "paragraph",
+      "text": "朋友做错一件事时，你可能会说：“这次确实不顺，我们看看怎么办。”轮到自己，却容易只剩下一句“我太差了”。这一次，可以试着把那份耐心也分给自己一点。"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "把评价和事实分开"
+    },
+    {
+      "type": "paragraph",
+      "text": "自尊与我们如何看待自己有关。NHS 的资料建议留意对自己的负面信念，并寻找能补充或挑战它们的事实；也可以想想，遇到类似情况时会怎样对待朋友。"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "本站的一个改写示例"
+    },
+    {
+      "type": "list",
+      "style": "unordered",
+      "items": [
+        "原本的评价：我每件事都做不好。",
+        "具体的事实：今天的汇报漏讲了一个重点。",
+        "更完整的表达：这次有遗漏，我可以补发说明，也可以下次提前做一份提纲。"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "更公平的表达不需要夸大自己的优点，也不需要否认失误。它只是把“所有事情、整个自己”的判断，缩小到这一次发生的事情。"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "留下一条自己认可的事实"
+    },
+    {
+      "type": "paragraph",
+      "text": "比如“今天我把需要确认的事情问清楚了”。如果暂时想不到，也可以先空着。这不是一张每天必须交满的表格。"
+    },
+    {
+      "type": "callout",
+      "tone": "information",
+      "text": "参考页面标示的最近复核时间为 2023 年 4 月，建议复核日期已过；本文仍待人工核验，不能视为专家审核资料。"
+    }
+  ],
+  "sources": [
+    {
+      "publisherName": "英国国民保健署（NHS）",
+      "sourceTitle": "Raising low self-esteem",
+      "sourceUrl": "https://www.nhs.uk/mental-health/self-help/tips-and-support/raise-low-self-esteem/",
+      "sourcePublishedAt": null,
+      "sourceVersionLabel": "页面标示最近复核：2023-04-11；建议复核日期已过",
+      "sourceLocator": "How to have healthy self-esteem / Be kind to yourself",
+      "retrievedAt": "2026-09-14T06:47:43.000Z"
+    }
+  ]
+}

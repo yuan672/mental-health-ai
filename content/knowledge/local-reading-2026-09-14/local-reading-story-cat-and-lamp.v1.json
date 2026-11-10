@@ -1,0 +1,48 @@
+{
+  "articleKey": "local-reading-story-cat-and-lamp",
+  "version": 1,
+  "title": "温馨故事 · 小猫替她占住了休息的位置",
+  "summary": "原创虚构 · 清单还没有划完，橘猫已经在椅子上睡熟了。",
+  "contentOrigin": "synthetic_fixture",
+  "reviewStatus": "unverified",
+  "reviewedBy": null,
+  "reviewedAt": null,
+  "contentBlocks": [
+    {
+      "type": "paragraph",
+      "text": "林禾回家时，走廊里的声控灯一盏一盏亮起来。她抱着电脑，进门第一件事就是把便签摊在桌上：回邮件、改表格、收拾厨房。最后一行写着“休息”，字挤得很小。"
+    },
+    {
+      "type": "paragraph",
+      "text": "橘猫团团趁她洗手，跳上了椅子。它先踩了两下坐垫，再把尾巴绕到鼻尖前，严严实实地占住正中间。林禾托着它的肚子想挪开，团团只抬了一下眼皮，又把脑袋放回去。"
+    },
+    {
+      "type": "paragraph",
+      "text": "她站了一会儿，忽然不知道该拿这位房客怎么办。厨房的水壶响了，她便给自己倒一杯温水，坐在旁边的小凳子上。那张凳子矮得让膝盖有点无处安放，像临时来串门的人。"
+    },
+    {
+      "type": "paragraph",
+      "text": "窗外有一辆自行车经过，车铃轻轻响了两声。团团梦里动了动爪子。林禾捧着杯子，看杯口的一点热气慢慢散掉。她已经好久没有注意到，晚上的房间原来有这么多细小的声音。"
+    },
+    {
+      "type": "paragraph",
+      "text": "十几分钟以后，团团醒了，伸个懒腰去了阳台。椅子终于空出来。林禾走过去，把便签最下面那一行描大了一点，然后先去热了晚饭。邮件还在，表格也还在。桌边多出了一只放空的杯子，今晚并没有因此塌下来。"
+    },
+    {
+      "type": "callout",
+      "tone": "information",
+      "text": "这是本站原创虚构故事，不是真实个案或治疗建议。下方资料只是“给休息留空间”的主题延伸阅读，故事情节和人物不来自该资料。"
+    }
+  ],
+  "sources": [
+    {
+      "publisherName": "美国国家心理健康研究所（NIMH）",
+      "sourceTitle": "Caring for Your Mental Health",
+      "sourceUrl": "https://www.nimh.nih.gov/health/topics/caring-for-your-mental-health",
+      "sourcePublishedAt": null,
+      "sourceVersionLabel": "页面标示最近复核：2026-04",
+      "sourceLocator": "主题延伸阅读，非故事出处；How can I take care of my mental health? / Set goals and priorities",
+      "retrievedAt": "2026-09-14T06:47:43.000Z"
+    }
+  ]
+}

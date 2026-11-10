@@ -1,0 +1,73 @@
+{
+  "articleKey": "local-reading-boundaries-and-rest",
+  "version": 1,
+  "title": "事情太多时，练习说“这次先不了”",
+  "summary": "心理科普 · 给任务排顺序，也给自己的休息留位置，附几句可以借用的表达。",
+  "contentOrigin": "synthetic_fixture",
+  "reviewStatus": "unverified",
+  "reviewedBy": null,
+  "reviewedAt": null,
+  "contentBlocks": [
+    {
+      "type": "callout",
+      "tone": "information",
+      "text": "本地待核验科普稿：由 AI 参考公开健康资料整理，尚未完成人工来源核验，供本地内容审阅。文中的生活示例由本站编写。"
+    },
+    {
+      "type": "paragraph",
+      "text": "答应的时候只是“顺手帮个忙”，回过头却发现今天已经没有自己的时间。面对这种情况，可以先看看手上的安排，再决定要不要接下新的事情。"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "给现在的精力排个顺序"
+    },
+    {
+      "type": "paragraph",
+      "text": "NIMH 的自我照顾建议包括区分必须立即完成和可以等待的事情；承担过多时，可以拒绝新的任务。每个人需要的自我照顾方式不同，可以慢慢尝试。"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "几句可以按场景修改的话"
+    },
+    {
+      "type": "list",
+      "style": "unordered",
+      "items": [
+        "我今天已经安排满了，这件事暂时接不了。",
+        "我能帮你看这一小部分，剩下的可能需要另找时间。",
+        "我需要先确认自己的安排，晚一点再给你答复。"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "这些是本站编写的沟通例子，没有要求你照搬。面对工作分工时，也可以请对方一起确认：如果新任务更紧急，原来的哪一项可以往后排。"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "休息也能写进安排里"
+    },
+    {
+      "type": "paragraph",
+      "text": "例如在任务之间留出吃饭或下楼走走的时间。留白不需要被填成另一张必须完成的清单；先照顾眼前一顿饭，也是一种安排。"
+    },
+    {
+      "type": "callout",
+      "tone": "information",
+      "text": "如果对方存在威胁、控制或暴力，不必为了练习表达而当面争论。优先考虑安全，并寻求可靠的现实支持。"
+    }
+  ],
+  "sources": [
+    {
+      "publisherName": "美国国家心理健康研究所（NIMH）",
+      "sourceTitle": "Caring for Your Mental Health",
+      "sourceUrl": "https://www.nimh.nih.gov/health/topics/caring-for-your-mental-health",
+      "sourcePublishedAt": null,
+      "sourceVersionLabel": "页面标示最近复核：2026-04",
+      "sourceLocator": "How can I take care of my mental health? / Set goals and priorities",
+      "retrievedAt": "2026-09-14T06:47:43.000Z"
+    }
+  ]
+}

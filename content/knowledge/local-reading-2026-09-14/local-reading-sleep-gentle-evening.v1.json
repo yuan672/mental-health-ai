@@ -1,0 +1,68 @@
+{
+  "articleKey": "local-reading-sleep-gentle-evening",
+  "version": 1,
+  "title": "今晚，给睡前留一段缓冲",
+  "summary": "心理科普 · 从作息、环境和睡前习惯入手，让休息少一点赶时间的感觉。",
+  "contentOrigin": "synthetic_fixture",
+  "reviewStatus": "unverified",
+  "reviewedBy": null,
+  "reviewedAt": null,
+  "contentBlocks": [
+    {
+      "type": "callout",
+      "tone": "information",
+      "text": "本地待核验科普稿：由 AI 参考公开健康资料整理，尚未完成人工来源核验，供本地内容审阅。文中的生活示例由本站编写。"
+    },
+    {
+      "type": "paragraph",
+      "text": "终于躺下了，白天的事情却还在脑海里排队。这个时候，再给自己安排一场“必须立刻睡着”的考试，常常很累。今晚不妨只调整一个容易做到的环节。"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "先照顾睡前的条件"
+    },
+    {
+      "type": "paragraph",
+      "text": "规律的作息、睡前放松、舒适安静的卧室，以及减少晚间咖啡因和睡前手机使用，都是可以尝试的睡眠习惯调整。酒精可能让人先感到困倦，却影响后半夜的睡眠。"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "一份可自由修改的睡前安排"
+    },
+    {
+      "type": "list",
+      "style": "unordered",
+      "items": [
+        "把明天要用的东西放好，留张便条，免得临睡前反复确认。",
+        "挑一种安静的活动收尾，例如翻几页熟悉的书。",
+        "按自己的生活条件，调整灯光、噪声和被褥舒适度。"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "这份安排是本站的生活示例，没有必须完成的顺序。今晚只能做其中一步，也可以。轮班、照护家人或居住条件受限时，不必拿别人的作息要求自己。"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "什么时候值得问问医生"
+    },
+    {
+      "type": "paragraph",
+      "text": "如果睡眠困难经常出现、影响白天生活，或调整习惯仍没有改善，可以向医生咨询原因。不要仅凭本文给自己诊断失眠，也不要自行停用正在服用的药物。"
+    }
+  ],
+  "sources": [
+    {
+      "publisherName": "英国国民保健署（NHS）",
+      "sourceTitle": "Sleep problems — Every Mind Matters",
+      "sourceUrl": "https://www.nhs.uk/every-mind-matters/mental-health-issues/sleep/",
+      "sourcePublishedAt": null,
+      "sourceVersionLabel": null,
+      "sourceLocator": "How to get better sleep / When is poor sleep a problem?",
+      "retrievedAt": "2026-09-14T06:47:43.000Z"
+    }
+  ]
+}

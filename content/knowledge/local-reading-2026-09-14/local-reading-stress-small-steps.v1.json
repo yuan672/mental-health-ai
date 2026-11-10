@@ -1,0 +1,69 @@
+{
+  "articleKey": "local-reading-stress-small-steps",
+  "version": 1,
+  "title": "压力有点满，先给自己留一点空隙",
+  "summary": "心理科普 · 认识压力的常见信号，从一件能照顾自己的小事开始。",
+  "contentOrigin": "synthetic_fixture",
+  "reviewStatus": "unverified",
+  "reviewedBy": null,
+  "reviewedAt": null,
+  "contentBlocks": [
+    {
+      "type": "callout",
+      "tone": "information",
+      "text": "本地待核验科普稿：由 AI 参考公开健康资料整理，尚未完成人工来源核验，供本地内容审阅。文中的生活示例由本站编写。"
+    },
+    {
+      "type": "paragraph",
+      "text": "截止日期越来越近，消息一条接着一条，连吃饭都像在赶进度。遇到这样的日子，可以先停一下，看看自己正承受什么，不必马上要求自己恢复状态。"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "压力也会出现在身体里"
+    },
+    {
+      "type": "paragraph",
+      "text": "压力是面对困难时可能出现的紧张和担忧。它可能伴随注意力不集中、烦躁、睡眠或食欲变化，每个人的表现并不一样。单凭其中一种感受，不能判断自己患了某种疾病。"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "今天可以选一件小事"
+    },
+    {
+      "type": "list",
+      "style": "unordered",
+      "items": [
+        "给吃饭和休息留出一个时间，不把整天排满。",
+        "如果身体条件允许，散一小段步，或做一种适合自己的日常活动。",
+        "找信任的人说说近况，例如：我这周有些忙乱，你方便听我说几分钟吗？"
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "留一句给现在的自己"
+    },
+    {
+      "type": "paragraph",
+      "text": "试着把“我怎么什么都做不好”，换成一句更具体的描述：“我今天同时在处理三件事，有点吃不消。”这只是本站写作示例，你也可以换成自己的说法。"
+    },
+    {
+      "type": "callout",
+      "tone": "information",
+      "text": "如果已经难以应对，或困扰持续影响日常生活，可以向可信任的医疗卫生专业人员寻求帮助。"
+    }
+  ],
+  "sources": [
+    {
+      "publisherName": "世界卫生组织（WHO）",
+      "sourceTitle": "Stress",
+      "sourceUrl": "https://www.who.int/news-room/questions-and-answers/item/stress",
+      "sourcePublishedAt": "2026-03-30T00:00:00.000Z",
+      "sourceVersionLabel": "2026-03-30 页面版本",
+      "sourceLocator": "What is stress? / What are the signs of stress? / How can I manage stress?",
+      "retrievedAt": "2026-09-14T06:47:43.000Z"
+    }
+  ]
+}
