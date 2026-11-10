@@ -13,7 +13,7 @@ const knowledgeScreenshotDirectory = fileURLToPath(
 async function login(page: Page): Promise<void> {
   await page.goto('/login');
   await page.getByLabel('邮箱').fill(EMAIL);
-  await page.getByLabel('密码').fill(PASSWORD);
+  await page.getByLabel('密码', { exact: true }).fill(PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
   await expect(page).toHaveURL(/\/app\/chat$/u);
 }
@@ -56,7 +56,7 @@ test('landing, login, protected app shell, and logout', async ({ page }) => {
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('在这里，慢慢说也可以。');
   await page.getByRole('link', { name: '登录' }).click();
   await page.getByLabel('邮箱').fill(EMAIL);
-  await page.getByLabel('密码').fill(PASSWORD);
+  await page.getByLabel('密码', { exact: true }).fill(PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
   await expect(page).toHaveURL(/\/app\/chat$/u);
   await expect(page.getByRole('heading', { name: '新对话' })).toBeVisible();
@@ -271,7 +271,7 @@ test('logout clears Incognito browser memory before another session', async ({ p
   await expect(page).toHaveURL(/\/login\?returnTo=/u);
   await expect(page.getByText('退出后不能保留的合成正文。')).toHaveCount(0);
   await page.getByLabel('邮箱').fill(EMAIL);
-  await page.getByLabel('密码').fill(PASSWORD);
+  await page.getByLabel('密码', { exact: true }).fill(PASSWORD);
   await page.getByRole('button', { name: '登录' }).click();
   await expect(page.getByText('退出后不能保留的合成正文。')).toHaveCount(0);
 });
