@@ -13,6 +13,15 @@ const baseEnvironment: NodeJS.ProcessEnv = {
 };
 
 describe('identity environment validation', () => {
+  it('supports loopback-only API deployment without changing the existing default', () => {
+    expect(parseEnvironment(baseEnvironment).APP_HOST).toBe('0.0.0.0');
+    expect(parseEnvironment({ ...baseEnvironment, APP_HOST: '127.0.0.1' }).APP_HOST).toBe(
+      '127.0.0.1',
+    );
+    expect(() =>
+      parseEnvironment({ ...baseEnvironment, APP_HOST: 'https://example.com' }),
+    ).toThrow();
+  });
   it('fails the destructive E2E seed closed outside test and for non-test databases', () => {
     expect(() =>
       assertE2eSeedEnvironment(

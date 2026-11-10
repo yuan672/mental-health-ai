@@ -1,0 +1,64 @@
+# Include in nginx's http context only after replacing domain/certificate paths.
+# Intentionally loopback-only during preparation. Public listen/redirect and
+# forwarding trust are unresolved deployment decisions; do not publish as-is.
+log_format mental_health_minimal 'time=$time_iso8601 status=$status bytes=$body_bytes_sent';
+
+server {
+    listen 127.0.0.1:443 ssl;
+    server_name REPLACE_DOMAIN.invalid;
+    ssl_certificate /etc/mental-health-ai/tls/REPLACE_fullchain.pem;
+    ssl_certificate_key /etc/mental-health-ai/tls/REPLACE_privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    server_tokens off;
+
+    root /srv/mental-health-ai/current/apps/web/dist;
+    index index.html;
+    client_max_body_size 12m;
+    client_body_timeout 30s;
+    send_timeout 180s;
+
+    # No URI, query, IP, headers, cookie or body in access logs.
+    access_log /var/log/nginx/mental-health-access.log mental_health_minimal;
+    # Native nginx errors can contain full sensitive request paths. Suppress them
+    # in this template. Use sanitized application errors and aggregate metrics;
+    # decide a protected, reviewed network-security log policy before public launch.
+    error_log /dev/null;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy no-referrer always;
+    add_header X-Frame-Options DENY always;
+
+    # Admin remains unavailable, regardless of SPA fallback.
+    location ~* ^/admin(?:/|$) { return 404; }
+    location ~ /\. { return 404; }
+
+    # Preserve existing root API paths; no /api prefix rewriting.
+    location ~ ^/(?:auth|ai|conversations|consents|mood-entries|profile|diary|quota|capabilities|incognito-contexts|account|health)(?:/|$)|^/knowledge/articles(?:/|$) {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Connection "";
+        # Browser Origin/Referer pass through unchanged. Never forge them.
+        # Current admission uses the direct socket address, not forwarded headers.
+        proxy_set_header Forwarded "";
+        proxy_set_header X-Forwarded-For "";
+        proxy_set_header X-Real-IP "";
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_cache off;
+        proxy_next_upstream off;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 180s;
+        proxy_read_timeout 180s;
+        gzip off;
+    }
+
+    location /assets/ {
+        try_files $uri =404;
+        expires 1y;
+    }
+    location / {
+        try_files $uri $uri/ /index.html;
+        expires -1;
+    }
+}
