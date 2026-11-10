@@ -1,8 +1,9 @@
-# Phase 5D-1 Mood and Profile Backend
+# Mood and Profile API
 
-Phase 5D-1 provides an authenticated, self-recorded Mood API and a minimal read-only
-Profile API. It does not provide Mood/Profile Web pages, clinical interpretation,
-third-party AI analysis, Risk Detection, or a mutable profile.
+The authenticated Mood API supports the approved eight-cat Web check-in and legacy
+scored records. `/profile` still returns minimal identity facts; display settings
+are documented separately in `diary-and-settings.md`. No clinical interpretation,
+third-party AI analysis, or Risk Detection is performed.
 
 ## Routes and access
 
@@ -28,11 +29,22 @@ classifier, Risk Detection, Crisis Flow, or Risk Event service.
 
 ## Mood value contract
 
-`moodScore` is an integer from 1 through 5. It is a user's self-report, not a
-clinical scale or diagnosis. `emotion` is optional and, when present, is one of:
+Under ADR-024, new check-ins send `catMood`: `happy`（开心）, `sad`（委屈）,
+`angry`（生气）, `surprised`（惊讶）, `shy`（害羞）, `sleepy`（困倦）,
+`hopeful`（期待）, or `relaxed`（放松）. They send no inferred numerical score.
+Create and update require at least a valid cat or a legacy `moodScore` (integer
+1–5). Responses return nullable `moodScore` and `catMood`; existing records retain
+their original score. `emotion` is optional and, when present, is one of:
 
 `joyful`, `calm`, `hopeful`, `neutral`, `tired`, `stressed`, `sad`, `angry`, or
 `overwhelmed`.
+
+Each `dailyTrend` item also includes `latestEntry: { catMood, moodScore, emotion }`
+from the last record of that Shanghai calendar day, ordered by creation time then
+ID. This is computed over the full requested range regardless of the history page
+limit, within the same repeatable-read transaction. The Web shows this last cat,
+not a score average. The compatibility field `averageMoodScore` averages only
+scored records and is null when no scored record exists that day.
 
 `note` is optional, trimmed by the API, and limited to 500 Unicode code points.
 The API counts with Unicode code-point iteration and PostgreSQL enforces the same
