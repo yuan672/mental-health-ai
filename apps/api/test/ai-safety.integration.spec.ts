@@ -974,6 +974,27 @@ describe('Phase 4 AI safety integration', () => {
     expect(audit?.action).toBe('safety_output_blocked');
   });
 
+  it('withholds an unverified hotline from SSE and history even when the classifier allows it', async () => {
+    const userId = await createUser();
+    outputClassifier.reset('ALLOW');
+    provider.reset('心理援助热线：', '400-000-0000。');
+    const prepared = await prepare(userId);
+    if (prepared.kind !== 'ready') throw new Error('Expected generation');
+
+    const events = await collect(prepared);
+    const text = events
+      .filter((event) => event.type === 'message.segment')
+      .map((event) => event.data.text)
+      .join('');
+    expect(text).not.toContain('400-000-0000');
+    expect(text).toContain('不能继续');
+    expect(events.at(-1)?.type).toBe('turn.completed');
+    expect(provider.readersReleased).toBe(1);
+    expect((await quota.getUsage(userId, NOW)).usedCount).toBe(0);
+    const persisted = await messagesService.readMessages(userId, prepared.turn.conversationId, NOW);
+    expect(persisted.at(-1)?.content).toBe(text);
+  });
+
   it('retains quota after a safe prefix then replaces a blocked later segment', async () => {
     const userId = await createUser();
     outputClassifier.reset('ALLOW', 'BLOCK');

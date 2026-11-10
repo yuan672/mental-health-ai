@@ -1,5 +1,16 @@
 import { z } from 'zod';
 
+const moodCatSchema = z.enum([
+  'happy',
+  'sad',
+  'angry',
+  'surprised',
+  'shy',
+  'sleepy',
+  'hopeful',
+  'relaxed',
+]);
+
 export const MOOD_DEFAULT_PAGE_LIMIT = 20;
 export const MOOD_MAX_PAGE_LIMIT = 100;
 export const MOOD_EMOTION_VALUES = [
@@ -26,20 +37,28 @@ const normalizedMoodNoteSchema = z
 export const createMoodEntryRequestSchema = z
   .object({
     clientRequestId: z.string().uuid(),
-    moodScore: z.number().int().min(1).max(5),
+    moodScore: z.number().int().min(1).max(5).nullable().optional(),
+    catMood: moodCatSchema.nullable().optional(),
     emotion: moodEmotionSchema.nullable().optional(),
     note: normalizedMoodNoteSchema.nullable().optional(),
   })
-  .strict();
+  .strict()
+  .refine((value) => value.catMood != null || value.moodScore != null, {
+    message: '请选择此刻的心情',
+  });
 
 export const updateMoodEntryRequestSchema = z
   .object({
     expectedRevision: z.number().int().positive(),
-    moodScore: z.number().int().min(1).max(5),
+    moodScore: z.number().int().min(1).max(5).nullable().optional(),
+    catMood: moodCatSchema.nullable().optional(),
     emotion: moodEmotionSchema.nullable(),
     note: normalizedMoodNoteSchema.nullable(),
   })
-  .strict();
+  .strict()
+  .refine((value) => value.catMood != null || value.moodScore != null, {
+    message: '请选择此刻的心情',
+  });
 
 export const deleteMoodEntryRequestSchema = z
   .object({ expectedRevision: z.number().int().positive() })
@@ -77,14 +96,16 @@ export const moodHistoryCursorSchema = z
 export const moodEntryResponseValueSchema = z
   .object({
     id: z.string().uuid(),
-    moodScore: z.number().int().min(1).max(5),
+    moodScore: z.number().int().min(1).max(5).nullable(),
+    catMood: moodCatSchema.nullable().optional(),
     emotion: moodEmotionSchema.nullable(),
     note: z.string().nullable(),
     stateRevision: z.number().int().positive(),
     createdAt: z.string().datetime({ offset: true }),
     updatedAt: z.string().datetime({ offset: true }),
   })
-  .strict();
+  .strict()
+  .refine((value) => value.catMood != null || value.moodScore != null, 'Missing mood selection');
 
 export const createMoodEntryResponseSchema = z
   .object({
@@ -127,7 +148,15 @@ export const moodHistoryResponseSchema = z
             .object({
               localDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u),
               entryCount: z.number().int().positive(),
-              averageMoodScore: z.number().min(1).max(5),
+              averageMoodScore: z.number().min(1).max(5).nullable(),
+              latestEntry: z
+                .object({
+                  catMood: moodCatSchema.nullable().optional(),
+                  moodScore: z.number().int().min(1).max(5).nullable(),
+                  emotion: moodEmotionSchema.nullable(),
+                })
+                .strict()
+                .optional(),
             })
             .strict(),
         ),

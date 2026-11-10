@@ -114,6 +114,7 @@ export type CapabilitiesResponse = ApiSuccessResponse<{ aiChatEnabled: boolean }
 export type AiPublicFinishReason = 'stop' | 'length' | 'content_filter' | 'tool_call' | 'unknown';
 
 export type PersistentAiChatRequest = {
+  diaryAccess?: 'skip' | undefined;
   mode: 'persistent';
   clientRequestId: string;
   conversationId?: string | undefined;
@@ -255,3 +256,4 @@ export type CreateIncognitoContextResponse = ApiSuccessResponse<{
 }>;
 
 export type EndIncognitoContextResponse = ApiSuccessResponse<{ ended: true }>;
+export * from './diary.js';

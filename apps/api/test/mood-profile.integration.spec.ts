@@ -10,6 +10,7 @@ import {
   passwordCredentials,
   riskEvents,
   sessions,
+  sql,
   users,
 } from '@mental-health/database';
 import { Injectable, type INestApplication } from '@nestjs/common';
@@ -222,6 +223,93 @@ describe('Phase 5D-1 Mood and Profile backend integration', () => {
     }
     throw new Error(`${label}: no blocked Mood query was observed`);
   }
+
+  it.each(['happy', 'sad', 'angry', 'surprised', 'shy', 'sleepy', 'hopeful', 'relaxed'])(
+    'persists the exact %s cat without inventing a score and preserves mutation protections',
+    async (catMood) => {
+      const auth = await createAuthContext();
+      const other = await createAuthContext();
+      const clientRequestId = randomUUID();
+      const created = await post(auth, '/mood-entries')
+        .send({ clientRequestId, catMood, note: '  合成小猫记录  ' })
+        .expect(201);
+      const entry = createMoodEntryResponseSchema.parse(created.body).data.entry;
+      expect(entry).toMatchObject({
+        catMood,
+        moodScore: null,
+        emotion: null,
+        note: '合成小猫记录',
+        stateRevision: 1,
+      });
+      const fetched = await get(auth, `/mood-entries/${entry.id}`).expect(200);
+      expect(fetched.body.data.entry).toEqual(entry);
+      await get(other, `/mood-entries/${entry.id}`).expect(404);
+      const replay = await post(auth, '/mood-entries')
+        .send({ clientRequestId, catMood: 'surprised' })
+        .expect(201);
+      expect(replay.body.data).toEqual({ disposition: 'existing', entry });
+      const updated = await patchRequest(auth, `/mood-entries/${entry.id}`)
+        .send({ expectedRevision: 1, catMood, moodScore: null, emotion: null, note: '合成修改' })
+        .expect(200);
+      expect(updated.body.data.entry).toMatchObject({ catMood, moodScore: null, stateRevision: 2 });
+      await patchRequest(auth, `/mood-entries/${entry.id}`)
+        .send({ expectedRevision: 1, catMood, emotion: null, note: '旧修订' })
+        .expect(409);
+    },
+  );
+
+  it('returns the actual last cat on each Shanghai day even beyond the first history page', async () => {
+    const auth = await createAuthContext();
+    for (const [at, catMood] of [
+      ['2026-09-09T16:00:00.000Z', 'shy'],
+      ['2026-09-10T15:59:59.000Z', 'surprised'],
+      ['2026-09-10T16:00:00.000Z', 'sleepy'],
+    ] as const) {
+      await moodService.create(
+        auth.userId,
+        { clientRequestId: randomUUID(), catMood },
+        new Date(at),
+      );
+    }
+    const result = await moodService.list(
+      auth.userId,
+      { days: 7, limit: 1 },
+      new Date('2026-09-11T10:00:00.000Z'),
+    );
+    expect(result.data.entries).toHaveLength(1);
+    expect(result.data.entries[0]?.catMood).toBe('sleepy');
+    expect(result.data.dailyTrend).toEqual([
+      {
+        localDate: '2026-09-10',
+        entryCount: 2,
+        averageMoodScore: null,
+        latestEntry: { catMood: 'surprised', moodScore: null, emotion: null },
+      },
+      {
+        localDate: '2026-09-11',
+        entryCount: 1,
+        averageMoodScore: null,
+        latestEntry: { catMood: 'sleepy', moodScore: null, emotion: null },
+      },
+    ]);
+  });
+
+  it('rejects missing/unknown cat selections at both HTTP and database boundaries', async () => {
+    const auth = await createAuthContext();
+    for (const selection of [{}, { catMood: null, moodScore: null }, { catMood: 'unknown' }]) {
+      await post(auth, '/mood-entries')
+        .send({ clientRequestId: randomUUID(), ...selection })
+        .expect(400);
+    }
+    for (const cat of [null, 'unknown']) {
+      await expect(
+        database.database.execute(
+          // Parameterized invalid fixtures prove the SQL checks, bypassing HTTP validation only in this test DB.
+          sql`INSERT INTO mood_entries (id, user_id, client_request_id, cat_mood, mood_score, state_revision, created_at, updated_at) VALUES (${randomUUID()}, ${auth.userId}, ${randomUUID()}, ${cat}, NULL, 1, now(), now())`,
+        ),
+      ).rejects.toBeDefined();
+    }
+  });
 
   it('requires Session and CSRF while remaining independent of AI Consent and quota', async () => {
     await request(app.getHttpServer()).get('/profile').expect(401);
@@ -485,9 +573,24 @@ describe('Phase 5D-1 Mood and Profile backend integration', () => {
     expect(first.data.period).toEqual({ startDate: '2026-09-05', endDate: '2026-09-11' });
     expect(first.data.entries.map((entry) => entry.moodScore)).toEqual([4, 5]);
     expect(first.data.dailyTrend).toEqual([
-      { localDate: '2026-09-05', entryCount: 1, averageMoodScore: 1 },
-      { localDate: '2026-09-10', entryCount: 2, averageMoodScore: 4 },
-      { localDate: '2026-09-11', entryCount: 1, averageMoodScore: 4 },
+      {
+        localDate: '2026-09-05',
+        entryCount: 1,
+        averageMoodScore: 1,
+        latestEntry: { catMood: null, moodScore: 1, emotion: null },
+      },
+      {
+        localDate: '2026-09-10',
+        entryCount: 2,
+        averageMoodScore: 4,
+        latestEntry: { catMood: null, moodScore: 5, emotion: null },
+      },
+      {
+        localDate: '2026-09-11',
+        entryCount: 1,
+        averageMoodScore: 4,
+        latestEntry: { catMood: null, moodScore: 4, emotion: null },
+      },
     ]);
     expect(first.data.nextCursor).toEqual(expect.any(String));
 
@@ -967,7 +1070,12 @@ describe('Phase 5D-1 Mood and Profile backend integration', () => {
       const first = moodHistoryResponseSchema.parse(await history);
       expect(first.data.entries[0]).toEqual(expect.objectContaining({ moodScore: 2 }));
       expect(first.data.dailyTrend).toEqual([
-        { localDate: '2026-09-11', entryCount: 1, averageMoodScore: 2 },
+        {
+          localDate: '2026-09-11',
+          entryCount: 1,
+          averageMoodScore: 2,
+          latestEntry: { catMood: null, moodScore: 2, emotion: null },
+        },
       ]);
     } finally {
       allowTrendRead.resolve();
@@ -981,7 +1089,12 @@ describe('Phase 5D-1 Mood and Profile backend integration', () => {
       expect.objectContaining({ moodScore: 5, stateRevision: 2 }),
     );
     expect(refreshed.data.dailyTrend).toEqual([
-      { localDate: '2026-09-11', entryCount: 1, averageMoodScore: 5 },
+      {
+        localDate: '2026-09-11',
+        entryCount: 1,
+        averageMoodScore: 5,
+        latestEntry: { catMood: null, moodScore: 5, emotion: null },
+      },
     ]);
   });
 

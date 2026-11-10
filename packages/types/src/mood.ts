@@ -1,5 +1,8 @@
 import type { ApiSuccessResponse } from './index.js';
 
+export type MoodCat =
+  'happy' | 'sad' | 'angry' | 'surprised' | 'shy' | 'sleepy' | 'hopeful' | 'relaxed';
+
 export const MOOD_EMOTION_VALUES = [
   'joyful',
   'calm',
@@ -16,7 +19,8 @@ export type MoodEmotion = (typeof MOOD_EMOTION_VALUES)[number];
 
 export type MoodEntry = {
   id: string;
-  moodScore: number;
+  moodScore: number | null;
+  catMood?: MoodCat | null | undefined;
   emotion: MoodEmotion | null;
   note: string | null;
   stateRevision: number;
@@ -26,7 +30,8 @@ export type MoodEntry = {
 
 export type CreateMoodEntryRequest = {
   clientRequestId: string;
-  moodScore: number;
+  moodScore?: number | null;
+  catMood?: MoodCat | null | undefined;
   emotion?: MoodEmotion | null;
   note?: string | null;
 };
@@ -35,7 +40,8 @@ export type NormalizedCreateMoodEntryRequest = CreateMoodEntryRequest;
 
 export type UpdateMoodEntryRequest = {
   expectedRevision: number;
-  moodScore: number;
+  moodScore?: number | null;
+  catMood?: MoodCat | null | undefined;
   emotion: MoodEmotion | null;
   note: string | null;
 };
@@ -54,7 +60,8 @@ export type MoodCreationStatusResponse = ApiSuccessResponse<
 export type MoodDailyTrend = {
   localDate: string;
   entryCount: number;
-  averageMoodScore: number;
+  averageMoodScore: number | null;
+  latestEntry?: Pick<MoodEntry, 'catMood' | 'moodScore' | 'emotion'> | undefined;
 };
 export type MoodHistoryResponse = ApiSuccessResponse<{
   days: 7 | 30;

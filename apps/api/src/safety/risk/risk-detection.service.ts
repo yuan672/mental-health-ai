@@ -8,6 +8,7 @@ import {
   type RiskClassifier,
 } from './risk-classifier';
 import { RiskDecisionPolicy } from './risk-decision.policy';
+import { RISK_CLASSIFICATION_PROMPT_VERSION } from '../../ai/prompts/prompt-registry';
 import type { ConsentBoundExecution } from '../../ai/runtime/active-ai-execution.registry';
 
 @Injectable()
@@ -63,7 +64,7 @@ export class RiskDetectionService {
           { turnId },
           {
             classifierKey: 'risk-classification',
-            classifierVersion: '2026-09-10',
+            classifierVersion: RISK_CLASSIFICATION_PROMPT_VERSION,
             riskDetectionDurationMs: Date.now() - startedAt,
             riskClassifierDurationMs: classifierDuration,
             failureCategory: unavailable.category,

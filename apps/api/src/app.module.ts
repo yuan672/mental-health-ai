@@ -13,6 +13,7 @@ import { HealthModule } from './health/health.module';
 import { MessageModule } from './messages/message.module';
 import { KnowledgeModule } from './knowledge/knowledge.module';
 import { MoodModule } from './mood/mood.module';
+import { DiaryModule } from './diary/diary.module';
 import { ProfileModule } from './profile/profile.module';
 import { QuotaModule } from './quota/quota.module';
 import { SecurityModule } from './security/security.module';
@@ -60,9 +61,16 @@ export const LOG_REDACT_PATHS = [
   '*.conversationContent',
   'moodScore',
   '*.moodScore',
+  'catMood',
+  '*.catMood',
   'emotion',
   '*.emotion',
   'note',
+  'data',
+  'displayName',
+  'req.file',
+  'req.params',
+  '*.displayName',
   '*.note',
   'dailyTrend',
   '*.dailyTrend',
@@ -144,6 +152,7 @@ export function applicationLogProperties(request: IncomingMessage) {
     MessageModule,
     KnowledgeModule,
     MoodModule,
+    DiaryModule,
     ProfileModule,
     QuotaModule,
   ],

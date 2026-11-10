@@ -1,4 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { DiaryMemoryService } from '../diary/diary-memory.service';
+import { addDiaryContext, type DiaryMemoryBundle } from '../diary/diary-memory.policy';
 import type {
   IncognitoAiChatRequest,
   IncognitoAiStreamEvent,
@@ -117,6 +119,7 @@ export type PreparedAiTurn =
       kind: 'ready';
       turn: AiTurnRecord;
       context: ConversationContext;
+      diaryMemory?: DiaryMemoryBundle | null;
       riskDecision: RiskDecision;
       execution: AiTurnExecutionDeadline;
       knowledgeRepresentation: KnowledgeReferenceRepresentation;
@@ -295,6 +298,7 @@ export class AiOrchestrationService {
     private readonly quota: QuotaService,
     private readonly safetyLogging: SafetyOperationalLoggingService,
     private readonly templates: TrustedSafetyTemplateRegistry,
+    private readonly diaryMemory: DiaryMemoryService,
   ) {}
 
   async prepareIncognitoTurn(
@@ -642,13 +646,38 @@ export class AiOrchestrationService {
         );
         throwIfAborted(execution.signal);
         await this.consentExecutions.assertStillUsable(execution);
+        let diaryMemory: DiaryMemoryBundle | null = null;
+        let generationContext = preparedContext.context;
+        if (
+          input.diaryAccess !== 'skip' &&
+          riskDecision.status === 'assessed' &&
+          (riskDecision.level === 'LOW' || riskDecision.level === 'MEDIUM')
+        ) {
+          try {
+            const bundle = await this.diaryMemory.retrieve(
+              principal.userId,
+              input.message,
+              execution.signal,
+              now,
+            );
+            if (bundle) {
+              const augmented = addDiaryContext(generationContext, bundle);
+              generationContext = augmented.context;
+              diaryMemory = augmented.bundle;
+            }
+          } catch (error) {
+            // Private context is optional; termination still stops the whole turn.
+            this.throwIfKnowledgePreparationTerminated(error, execution);
+          }
+        }
+        await this.consentExecutions.assertStillUsable(execution);
         const started = await this.consentExecutions.runWhileUsable(execution, () =>
           this.aiTurns.start(
             claimed.turn,
             input.message,
             {
-              key: preparedContext.context.promptKey,
-              version: preparedContext.context.promptVersion,
+              key: generationContext.promptKey,
+              version: generationContext.promptVersion,
             },
             riskDecision,
             now,
@@ -659,7 +688,8 @@ export class AiOrchestrationService {
         return {
           kind: 'ready',
           turn: started,
-          context: preparedContext.context,
+          context: generationContext,
+          diaryMemory,
           riskDecision,
           execution,
           knowledgeRepresentation,
@@ -905,6 +935,7 @@ export class AiOrchestrationService {
     const buffer = new SentenceSegmentBuffer(
       env.AI_SEGMENT_MAX_CHARACTERS,
       env.AI_SEGMENT_MAX_WAIT_MS,
+      { firstMinimum: 1, nextMinimum: 96 },
     );
     const useFullBuffer = riskDecision.bufferingMode === 'full';
     let fullBufferedText = '';
@@ -945,6 +976,7 @@ export class AiOrchestrationService {
             {
               requestId: turn.id,
               context,
+              diaryMemory: prepared.diaryMemory ?? null,
               execution: prepared.execution,
               signal: generationController.signal,
               generationStartedAt,
@@ -1055,15 +1087,17 @@ export class AiOrchestrationService {
         },
         {
           signal: generationController.signal,
-          startTransport: async (startTransport) =>
-            this.consentExecutions.starter(
+          startTransport: async (startTransport) => {
+            await this.diaryMemory.recheck(prepared.diaryMemory, generationController.signal);
+            return this.consentExecutions.starter(
               prepared.execution,
               'generation',
               generationController.signal,
             )((signal) => {
               providerInvoked = true;
               return startTransport(signal);
-            }),
+            });
+          },
         },
       );
       const iterator = stream[Symbol.asyncIterator]();
@@ -1124,6 +1158,7 @@ export class AiOrchestrationService {
           : generationStartedAt + env.LLM_FIRST_TOKEN_TIMEOUT_MS;
 
         if (event.type === 'started') {
+          await this.diaryMemory.recordProvided(turn.id, prepared.diaryMemory);
           providerMetadata = event.metadata;
           this.logging.turnStarted(metadata, event.metadata.provider, event.metadata.model);
           if (!hasTextDelta) {
@@ -1523,6 +1558,7 @@ export class AiOrchestrationService {
     const buffer = new SentenceSegmentBuffer(
       env.AI_SEGMENT_MAX_CHARACTERS,
       env.AI_SEGMENT_MAX_WAIT_MS,
+      { firstMinimum: 1, nextMinimum: 96 },
     );
     const useFullBuffer = riskDecision.bufferingMode === 'full';
     let fullBufferedText = '';
@@ -2293,6 +2329,7 @@ export class AiOrchestrationService {
     input: Readonly<{
       requestId: string;
       context: ConversationContext;
+      diaryMemory?: DiaryMemoryBundle | null;
       execution: ConsentBoundExecution;
       signal: AbortSignal;
       generationStartedAt: number;
@@ -2310,15 +2347,17 @@ export class AiOrchestrationService {
       },
       {
         signal: input.signal,
-        startTransport: async (startTransport) =>
-          this.consentExecutions.starter(
+        startTransport: async (startTransport) => {
+          await this.diaryMemory.recheck(input.diaryMemory, input.signal);
+          return this.consentExecutions.starter(
             input.execution,
             'generation',
             input.signal,
           )((signal) => {
             state.providerInvoked = true;
             return startTransport(signal);
-          }),
+          });
+        },
       },
     );
     const iterator = stream[Symbol.asyncIterator]();
@@ -2342,6 +2381,7 @@ export class AiOrchestrationService {
       }
       const event = outcome.item.value;
       if (event.type === 'started') {
+        await this.diaryMemory.recordProvided(input.requestId, input.diaryMemory);
         state.providerMetadata = event.metadata;
         this.logging.turnStarted(input.logMetadata, event.metadata.provider, event.metadata.model);
         pending = iterator.next();

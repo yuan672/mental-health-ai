@@ -50,6 +50,7 @@ export const outputSafetyReasonCodeSchema = z.enum([
   'DANGEROUS_BEHAVIOR_INSTRUCTION',
   'PROFESSIONAL_IMPERSONATION',
   'TREATMENT_GUARANTEE',
+  'UNVERIFIED_CRISIS_RESOURCE',
   'INAPPROPRIATE_HIGH_RISK_RESPONSE',
 ]);
 export type OutputSafetyReasonCode = z.infer<typeof outputSafetyReasonCodeSchema>;

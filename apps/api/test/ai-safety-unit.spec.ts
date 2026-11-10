@@ -9,6 +9,7 @@ import {
 import { env } from '../src/config/env';
 import { parseAuditMetadata } from '../src/safety/audit/audit.types';
 import { DeterministicOutputSignalDetector } from '../src/safety/output/deterministic-output-signal-detector';
+import { OutputSafetyCheck } from '../src/safety/output/output-safety-check.service';
 import { LlmOutputSafetyClassifier } from '../src/safety/output/output-safety-classifier';
 import { DeterministicSignalDetector } from '../src/safety/risk/deterministic-signal-detector';
 import { RiskDecisionPolicy } from '../src/safety/risk/risk-decision.policy';
@@ -189,6 +190,47 @@ describe('Phase 4 Simplified Chinese safety corpus', () => {
     expect(outputDetector.detect(text, highRisk)).toContain(code);
   });
 
+  it('blocks generated hotline contacts at both ordinary and high risk', () => {
+    for (const highRisk of [false, true]) {
+      for (const text of [
+        '心理援助热线：400-000-0000（仅合成测试号码）。',
+        '心理援助热线：４００－０００－００００（仅合成测试号码）。',
+        '心理援助热线：https://support.example.invalid。',
+      ]) {
+        expect(outputDetector.detect(text, highRisk)).toContain('UNVERIFIED_CRISIS_RESOURCE');
+      }
+    }
+  });
+
+  it('preserves general help-seeking advice and ordinary numbers', () => {
+    expect(
+      outputDetector.detect(
+        '可以联系当地紧急服务或可信任的人，也可查询当地心理援助热线。记下3件小事，休息10分钟。',
+        false,
+      ),
+    ).toEqual([]);
+    expect(outputDetector.detect('可以查找当地心理援助热线，先做300秒放松练习。', false)).toEqual(
+      [],
+    );
+  });
+
+  it('blocks a split hotline contact before trusting an ALLOW classifier', async () => {
+    const classify = jest.fn().mockResolvedValue({ decision: 'ALLOW', reasonCodes: [] });
+    const check = new OutputSafetyCheck(outputDetector, { classify });
+    await expect(
+      check.evaluate(
+        {
+          candidate: '400-000-0000。',
+          previouslyApprovedText: '心理援助热线：',
+          inputRiskLevel: 'LOW',
+        },
+        TEST_EXECUTION.signal,
+        TEST_EXECUTION,
+      ),
+    ).resolves.toEqual({ status: 'blocked', reasonCodes: ['UNVERIFIED_CRISIS_RESOURCE'] });
+    expect(classify).not.toHaveBeenCalled();
+  });
+
   it('treats provider classification as evidence rather than a direct verdict', () => {
     const signals = detector.detect(context('我今天只是有点累。'));
     const candidate: RiskClassifierResult = {
@@ -239,6 +281,34 @@ describe('Phase 4 Simplified Chinese safety corpus', () => {
     expect(policy.decide(signals, null, 'provider')).toMatchObject({
       status: 'unavailable',
       route: 'SAFE_DEGRADED_RESPONSE',
+    });
+  });
+
+  it.each([0, 0.2, 0.64])('keeps an uncertain LOW result closed at confidence %s', (confidence) => {
+    const candidate: RiskClassifierResult = {
+      candidateLevel: 'LOW',
+      harmSubject: 'SELF',
+      categories: [],
+      temporality: 'CURRENT',
+      ideation: 'NONE',
+      intent: 'ABSENT',
+      plan: 'ABSENT',
+      means: 'ABSENT',
+      immediacy: 'NONE',
+      confidence,
+      reasonCodes: [],
+      classifierKey: 'risk-classification',
+      classifierVersion: 'test',
+    };
+    const signals = detector.detect(context('今天整理好了书桌，很开心。'));
+    expect(policy.decide(signals, candidate)).toMatchObject({
+      status: 'unavailable',
+      route: 'SAFE_DEGRADED_RESPONSE',
+    });
+    expect(policy.decide(signals, { ...candidate, confidence: 0.95 })).toMatchObject({
+      status: 'assessed',
+      level: 'LOW',
+      route: 'ALLOW_NORMAL_GENERATION',
     });
   });
 

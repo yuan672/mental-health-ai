@@ -78,6 +78,34 @@
       "when": 1789189681848,
       "tag": "0010_moaning_harrier",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789346596473,
+      "tag": "0011_cozy_diaries",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789355770033,
+      "tag": "0012_cat_mood_check_ins",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1789364352091,
+      "tag": "0013_profile_avatar_biography",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1789443854514,
+      "tag": "0014_private_diary_memory",
+      "breakpoints": true
     }
   ]
 }

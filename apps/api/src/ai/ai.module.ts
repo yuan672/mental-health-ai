@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { DiaryModule } from '../diary/diary.module';
 import { AuthModule } from '../auth/auth.module';
 import { ConsentsModule } from '../consents/consents.module';
 import { ConversationModule } from '../conversations/conversation.module';
@@ -28,6 +29,7 @@ import { AiTurnService } from './turns/ai-turn.service';
 
 @Module({
   imports: [
+    DiaryModule,
     AuthModule,
     ConsentsModule,
     ConversationModule,

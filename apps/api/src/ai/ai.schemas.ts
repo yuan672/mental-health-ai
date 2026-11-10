@@ -16,6 +16,7 @@ export const persistentAiChatRequestSchema = z
     mode: z.literal('persistent'),
     ...baseChatFields,
     conversationId: z.string().uuid().optional(),
+    diaryAccess: z.literal('skip').optional(),
   })
   .strict() satisfies z.ZodType<PersistentAiChatRequest>;
 
