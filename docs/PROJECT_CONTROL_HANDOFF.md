@@ -5,6 +5,67 @@ and engineering baseline in `docs/HANDOFF.md`, or any Accepted ADR.
 
 ## Current State
 
+- 2026-09-15 opt-in private diary context implemented under ADR-026. Bookshelf and
+  persistent chat expose none / selected / all notebook access (default none),
+  with a next-send skip option and latest-turn diary reference links. Fresh
+  owner-scoped recent saved text is checked again before provider dispatch;
+  drafts/photos/incognito/high-risk routes are excluded. Migration 0014 passed
+  on a new empty test database before local application. 213 Web tests, 113
+  related API tests, strict checks/builds and ESLint passed. Final real-model HTTP
+  verification passed 23 checks with synthetic diaries only; an earlier safety
+  replacement and successful repeat are documented, without safety-gate changes.
+  See [private diary AI review](reviews/cozy-frontend/PRIVATE-DIARY-AI-2026-09-15.md)
+  and [API contract](api/private-diary-memory.md). UI acceptance remains manual.
+
+- 2026-09-14 local knowledge reader populated with 8 psychoeducation drafts and
+  4 original fictional stories, stored through the existing guarded fixture
+  publisher. Public references were inspected, but human review has not occurred:
+  all 12 retain `synthetic_fixture` / `unverified` with null review evidence and
+  remain hidden outside Development/Test. No curated production publication or
+  AI grounding enablement. Manifests and readable copies are in
+  `content/knowledge/local-reading-2026-09-14/`; exact re-import is idempotent.
+  6 contract tests and 29 localhost HTTP checks passed, including every article,
+  sources, pagination, bookmarks and unchanged AI quota. UI acceptance is manual.
+
+- 2026-09-14 14:31 local AI fallback traced to a 5017 ms risk-classifier timeout.
+  Local `.env` now allows 15000 ms per safety classification; source defaults,
+  confidence threshold and fail-closed policy are unchanged. After API restart,
+  82 focused tests and 14 new synthetic real-API HTTP checks passed, including
+  persistent/incognito streams, history and quota. No user messages were replayed.
+  Timing and verification limits are recorded in the real-AI review below.
+
+- 2026-09-14 profile settings extension (ADR-025): name, eight cat avatars or one
+  uploaded avatar, and a 200-code-point biography save atomically with the existing
+  revision. Uploads are decoded and normalized by the backend; private owner-only
+  image access, replacement and account deletion are covered. Additive migration
+  0013 was reviewed, applied in a new isolated test database, then applied locally
+  without resetting records. Saved name/avatar also appear in the site header.
+  UI acceptance remains manual; no Computer Use was used.
+
+- 2026-09-14 local real AI enabled after the user funded the SiliconFlow account:
+  `AI_CHAT_ENABLED=true`, using `Qwen/Qwen3-30B-A3B-Instruct-2507`. Real persistent
+  and incognito SSE generations, committed history and quota accounting passed
+  14 localhost HTTP checks. Clarified classification confidence (certainty, not
+  danger probability) in prompt version 2026-09-14; the threshold and fail-closed
+  policy are unchanged. 82 focused tests, API typecheck and changed-file ESLint
+  passed. All messages/accounts used for verification were synthetic; test chats
+  and contexts were cleaned up. This is local integration evidence, not production
+  safety evaluation. See [`REAL-AI-2026-09-14.md`](reviews/cozy-frontend/REAL-AI-2026-09-14.md).
+
+- 2026-09-14 user-frontend functional audit: 189 Web tests, 278 related API tests in a new isolated database, and 92 localhost HTTP checks passed. Fixed reading-settings error recovery and registration submission guards. At that audit, real AI was disabled; the later local enablement is recorded above. The local knowledge list is empty, and account deletion is disabled. UI acceptance stays manual; see [`FUNCTIONAL-TEST-2026-09-14.md`](reviews/cozy-frontend/FUNCTIONAL-TEST-2026-09-14.md).
+
+- 2026-09-14 Mood correction: ADR-024 supersedes the mandatory five-point UI retained in ADR-017/023. Eight named cats and each day's latest check-in now persist through the real Mood API; migration 0012 is validated in a separate test database and applied locally. Existing records are preserved. See `docs/reviews/cozy-frontend/HANDOFF.md`; UI acceptance remains exclusively manual.
+
+- 2026-09-14 replacement Web implementation: active branch
+  `feature/cozy-frontend-implementation` migrates the approved watercolor-cat UI into
+  the actual React application. ADR-023 authorizes account-owned notebooks, diary
+  drafts/photos, nicknames and reading preferences. Migration 0011 is applied to
+  the isolated test database and local development database without a development
+  reset. See [`reviews/cozy-frontend/HANDOFF.md`](reviews/cozy-frontend/HANDOFF.md).
+  **UI acceptance belongs to the user; Computer Use / automated browser visual
+  acceptance is prohibited by the latest user instruction.** Engineering checks
+  do not constitute visual or production acceptance. No merge has been performed.
+
 - Engineering Bootstrap / Phase 1: Complete
 - Phase 2 — Core Backend Foundation: Complete
 - Phase 3 — AI Foundation: Complete

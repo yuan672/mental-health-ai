@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router';
 import { getRegistrationRequirements, register } from '../api/auth';
 import { copy } from '../locales';
 import { registrationPasswordError } from './registration-password';
+import { CatArt, brandCat } from '../shared/cat-art';
 
 export function RegisterPage() {
   const navigate = useNavigate();
@@ -19,6 +20,11 @@ export function RegisterPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
+  const submittingRef = useRef(false);
+  const allAccepted =
+    requirements?.requiredConsents.every((consent) =>
+      accepted.has(`${consent.type}:${consent.version}`),
+    ) ?? false;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -33,7 +39,13 @@ export function RegisterPage() {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!requirements?.registrationEnabled) return;
+    if (
+      !requirements?.registrationEnabled ||
+      !allAccepted ||
+      !evidenceToken.trim() ||
+      submittingRef.current
+    )
+      return;
     const validationError = registrationPasswordError(password);
     setPasswordError(validationError);
     setSubmitError(null);
@@ -41,6 +53,7 @@ export function RegisterPage() {
       passwordRef.current?.focus();
       return;
     }
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       await register({
@@ -59,22 +72,20 @@ export function RegisterPage() {
     } catch {
       setSubmitError('暂时无法完成注册，请核对填写信息或稍后重试。');
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
 
-  const allAccepted =
-    requirements?.requiredConsents.every((consent) =>
-      accepted.has(`${consent.type}:${consent.version}`),
-    ) ?? false;
-
   return (
-    <main className="auth-page">
+    <main className="auth-page cozy-register">
       <Link className="brand-link" to="/">
+        <img className="brand-cat" src={brandCat} alt="" />
         {copy.app.name}
       </Link>
       <section className="auth-card" aria-labelledby="register-title">
-        <p className="eyebrow">仅面向成年人</p>
+        <CatArt mood="happy" />
+        <p className="eyebrow">为自己，留一个温暖的角落</p>
         <h1 id="register-title">注册</h1>
         {!requirements && !loadError ? <p aria-busy="true">正在加载注册信息…</p> : null}
         {loadError ? (

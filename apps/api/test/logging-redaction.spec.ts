@@ -54,6 +54,7 @@ describe('sensitive logging redaction', () => {
       'knowledge-admin-publisher-secret',
       'knowledge-admin-source-title-secret',
       'knowledge-admin-source-locator-secret',
+      'cat-mood-secret',
     ];
     logger.info({
       req: {
@@ -80,6 +81,7 @@ describe('sensitive logging redaction', () => {
       rawProviderRequest: sensitiveValues[12],
       rawProviderResponse: sensitiveValues[13],
       moodScore: 5,
+      catMood: sensitiveValues[29],
       emotion: sensitiveValues[15],
       note: sensitiveValues[14],
       dailyTrend: sensitiveValues[16],

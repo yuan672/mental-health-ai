@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, gte, lt, lte, moodEntries, or, sql } from '@mental-health/database';
-import type { MoodEmotion } from '@mental-health/types';
+import type { MoodCat, MoodEmotion } from '@mental-health/types';
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { AuditLogRepository } from '../safety/audit/audit-log.repository';
@@ -10,7 +10,8 @@ export type MoodEntryRecord = Readonly<{
   id: string;
   userId: string;
   clientRequestId: string;
-  moodScore: number;
+  moodScore: number | null;
+  catMood: MoodCat | null;
   emotion: MoodEmotion | null;
   note: string | null;
   stateRevision: number;
@@ -22,7 +23,8 @@ export type MoodHistoryCursor = Readonly<{ createdAt: Date; id: string }>;
 export type MoodTrendRecord = Readonly<{
   localDate: string;
   entryCount: number;
-  averageMoodScore: number;
+  averageMoodScore: number | null;
+  latestEntry: { catMood: MoodCat | null; moodScore: number | null; emotion: MoodEmotion | null };
 }>;
 
 type MutationResult =
@@ -113,7 +115,14 @@ export class MoodRepository {
           .select({
             localDate: dateExpression,
             entryCount: sql<number>`count(*)::int`,
-            averageMoodScore: sql<string>`round(avg(${moodEntries.moodScore})::numeric, 1)::text`,
+            averageMoodScore: sql<
+              string | null
+            >`round(avg(${moodEntries.moodScore})::numeric, 1)::text`,
+            latestCat: sql<MoodCat | null>`(array_agg(${moodEntries.catMood} ORDER BY ${moodEntries.createdAt} DESC, ${moodEntries.id} DESC))[1]`,
+            latestScore: sql<
+              number | null
+            >`(array_agg(${moodEntries.moodScore} ORDER BY ${moodEntries.createdAt} DESC, ${moodEntries.id} DESC))[1]`,
+            latestEmotion: sql<MoodEmotion | null>`(array_agg(${moodEntries.emotion} ORDER BY ${moodEntries.createdAt} DESC, ${moodEntries.id} DESC))[1]`,
           })
           .from(moodEntries)
           .where(commonPredicate)
@@ -125,7 +134,12 @@ export class MoodRepository {
           dailyTrend: trend.map((row) => ({
             localDate: row.localDate,
             entryCount: Number(row.entryCount),
-            averageMoodScore: Number(row.averageMoodScore),
+            averageMoodScore: row.averageMoodScore === null ? null : Number(row.averageMoodScore),
+            latestEntry: {
+              catMood: row.latestCat,
+              moodScore: row.latestScore,
+              emotion: row.latestEmotion,
+            },
           })),
         };
       },
@@ -137,7 +151,8 @@ export class MoodRepository {
     userId: string;
     id: string;
     expectedRevision: number;
-    moodScore: number;
+    moodScore: number | null;
+    catMood: MoodCat | null;
     emotion: MoodEmotion | null;
     note: string | null;
     now: Date;
@@ -153,6 +168,7 @@ export class MoodRepository {
       if (current.stateRevision !== input.expectedRevision) return { kind: 'state_changed' };
       if (
         current.moodScore === input.moodScore &&
+        current.catMood === input.catMood &&
         current.emotion === input.emotion &&
         current.note === input.note
       ) {
@@ -163,6 +179,7 @@ export class MoodRepository {
         .update(moodEntries)
         .set({
           moodScore: input.moodScore,
+          catMood: input.catMood,
           emotion: input.emotion,
           note: input.note,
           stateRevision: current.stateRevision + 1,

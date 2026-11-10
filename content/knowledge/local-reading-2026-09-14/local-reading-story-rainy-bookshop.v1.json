@@ -1,0 +1,52 @@
+{
+  "articleKey": "local-reading-story-rainy-bookshop",
+  "version": 1,
+  "title": "温馨故事 · 雨停以前，书店还有一把椅子",
+  "summary": "原创虚构 · 一场没带伞的雨，让两个陌生人有了一个很小的共同话题。",
+  "contentOrigin": "synthetic_fixture",
+  "reviewStatus": "unverified",
+  "reviewedBy": null,
+  "reviewedAt": null,
+  "contentBlocks": [
+    {
+      "type": "paragraph",
+      "text": "周六的雨来得突然。刚搬到这座城市的阿宁躲进一家旧书店，肩膀湿了一半。门铃响过，柜台后的人递来一块干毛巾，指了指窗边：“椅子空着，坐会儿。”"
+    },
+    {
+      "type": "paragraph",
+      "text": "阿宁挑了一本书，却连续翻了几页都没看进去。玻璃上的雨线把街道切成细长的一条条，手机里没有等着见面的人。她正想把书放回去，脚边突然传来一声很小的喷嚏。"
+    },
+    {
+      "type": "paragraph",
+      "text": "是一只灰白色的猫，窝在纸箱里，鼻尖上沾了纸屑。阿宁蹲下替它拿掉，猫认真嗅了嗅她的鞋带，像在检查一件新到货的商品。"
+    },
+    {
+      "type": "paragraph",
+      "text": "另一把椅子上的阿姨笑起来：“它上次检查我的购物袋，检查了十分钟。”阿宁也笑了，问它叫什么。原来叫豆包，名字来自它小时候最爱钻的早餐袋。"
+    },
+    {
+      "type": "paragraph",
+      "text": "她们聊了一会儿豆包，又聊到附近哪家面包店开得早。没有交换什么郑重的承诺。阿姨离开时说：“下周还来还书。”阿宁点点头，把书签放进刚才一直读不进去的那一页。"
+    },
+    {
+      "type": "paragraph",
+      "text": "雨慢下来时，她向店主买了那本书。门外的街道仍然陌生，只是她知道了一个可以坐下的地方，也知道那里的猫叫豆包。下次门铃再响，她已经有一句招呼可以说。"
+    },
+    {
+      "type": "callout",
+      "tone": "information",
+      "text": "这是本站原创虚构故事，不是真实心理咨询案例。下方为人际连接主题的延伸阅读，不是故事出处，也不表示相遇能解决所有孤独。"
+    }
+  ],
+  "sources": [
+    {
+      "publisherName": "英国国民保健署（NHS）",
+      "sourceTitle": "Feeling lonely",
+      "sourceUrl": "https://www.nhs.uk/mental-health/feelings-symptoms-behaviours/feelings-and-symptoms/feeling-lonely/",
+      "sourcePublishedAt": null,
+      "sourceVersionLabel": "页面标示最近复核：2026-07-22",
+      "sourceLocator": "主题延伸阅读，非故事出处；Things you can try to help with loneliness / Causes of loneliness",
+      "retrievedAt": "2026-09-14T06:47:43.000Z"
+    }
+  ]
+}

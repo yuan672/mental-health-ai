@@ -3,6 +3,10 @@ import { Link, useParams } from 'react-router';
 import { useProductData } from '../../app/product-data-provider';
 import { ConfirmDialog } from '../../shared/confirm-dialog';
 import { useChatWorkspace } from './chat-workspace';
+import { ChatCompanion } from './chat-companion';
+import { CatArt } from '../../shared/cat-art';
+import { useSmoothChatText } from '../../ai/use-smooth-chat-text';
+import { DiaryAiAccess, DiaryTurnReferences } from '../diary/diary-ai-access';
 
 const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
   year: 'numeric',
@@ -15,6 +19,7 @@ const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
 export function ChatPage() {
   const { conversationId } = useParams();
   const workspace = useChatWorkspace();
+  const displayedReply = useSmoothChatText(workspace.stream);
   const product = useProductData();
   const [saveBusy, setSaveBusy] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -70,7 +75,7 @@ export function ChatPage() {
     <main className="chat-page" aria-labelledby="chat-title">
       <header className="chat-header">
         <div>
-          <p className="eyebrow">普通聊天</p>
+          <p className="eyebrow">聊一聊 · AI 陪伴助手</p>
           <h1 id="chat-title">
             {workspace.conversation
               ? dateTimeFormatter.format(new Date(workspace.conversation.createdAt))
@@ -100,6 +105,20 @@ export function ChatPage() {
           </div>
         ) : null}
       </header>
+      <ChatCompanion />
+      <div className="diary-chat-controls">
+        <DiaryAiAccess disabled={workspace.active || workspace.reconciliationPending} />
+        <label>
+          <input
+            type="checkbox"
+            checked={workspace.skipDiary}
+            disabled={workspace.active || workspace.reconciliationPending}
+            onChange={(e) => workspace.setSkipDiary(e.target.checked)}
+          />
+          这次不参考日记
+        </label>
+      </div>
+      <DiaryTurnReferences turnId={workspace.active ? null : workspace.stream.turnId} />
 
       {workspace.notice ? (
         <p className="status-note" role="status">
@@ -147,15 +166,39 @@ export function ChatPage() {
         !showTransientAssistant &&
         workspace.loadStatus !== 'loading' ? (
           <div className="chat-empty">
+            <CatArt mood="relaxed" />
             <h2>今天想从哪里说起？</h2>
             <p>你可以写下此刻的感受。请不要在这里填写身份证号、密码等身份或账户信息。</p>
+            <div className="chat-starters">
+              {[
+                '最近有些疲惫，想找个地方说说。',
+                '今天发生了一件让我开心的小事。',
+                '有些说不清的感受，想慢慢梳理。',
+              ].map((text) => (
+                <button
+                  type="button"
+                  key={text}
+                  disabled={!aiEnabled || workspace.active || workspace.reconciliationPending}
+                  onClick={() => {
+                    workspace.setDraft(text);
+                    document.getElementById('chat-message')?.focus();
+                  }}
+                >
+                  {text}
+                </button>
+              ))}
+            </div>
           </div>
         ) : null}
         <ol className="message-list">
           {workspace.messages.map((message) => (
             <li className={`message message-${message.role}`} key={message.id}>
               <span className="message-author">{message.role === 'user' ? '你' : '支持助手'}</span>
-              <p>{message.content}</p>
+              <p>
+                {message.id === workspace.stream.assistantMessageId
+                  ? displayedReply.text
+                  : message.content}
+              </p>
             </li>
           ))}
           {workspace.pendingUserMessage ? (
@@ -167,14 +210,18 @@ export function ChatPage() {
           {showTransientAssistant ? (
             <li className="message message-assistant message-transient">
               <span className="message-author">支持助手</span>
-              <p>{workspace.stream.text}</p>
+              <p>{displayedReply.text}</p>
             </li>
           ) : null}
         </ol>
         <div className="stream-status" aria-live="polite">
-          {workspace.stream.status === 'submitting' ? '正在建立安全连接…' : null}
+          {workspace.stream.status === 'submitting' ? '正在准备回复…' : null}
           {workspace.stream.status === 'streaming' ? '正在回复…' : null}
-          {workspace.stream.status === 'completed' ? '回复已完成。' : null}
+          {workspace.stream.status === 'completed'
+            ? displayedReply.revealing
+              ? '正在回复…'
+              : '回复已完成。'
+            : null}
           {workspace.stream.status === 'cancelled' ? '已停止本轮回复。' : null}
           {workspace.stream.persistence === 'persistence-failed' && workspace.stream.text ? (
             <span className="persistence-warning">内容已显示，但本轮未成功保存。</span>

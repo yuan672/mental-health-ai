@@ -1,0 +1,70 @@
+{
+  "articleKey": "local-reading-asking-for-help",
+  "version": 1,
+  "title": "想寻求帮助，却不知道怎么开口",
+  "summary": "心理科普 · 就诊或咨询前，可以先整理变化、困扰和想问的问题，不必准备好所有答案。",
+  "contentOrigin": "synthetic_fixture",
+  "reviewStatus": "unverified",
+  "reviewedBy": null,
+  "reviewedAt": null,
+  "contentBlocks": [
+    {
+      "type": "callout",
+      "tone": "information",
+      "text": "本地待核验科普稿：由 AI 参考公开健康资料整理，尚未完成人工来源核验，供本地内容审阅。文中的生活示例由本站编写。"
+    },
+    {
+      "type": "paragraph",
+      "text": "“我说不清楚，是不是就没必要去？”寻求帮助前，你不必先给自己的感受起一个准确的名字，也不必把故事整理得像一份报告。"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "把最想说的几件事记下来"
+    },
+    {
+      "type": "paragraph",
+      "text": "NIMH 的就诊沟通资料建议提前准备问题和用药清单，并尽量具体地描述困扰何时开始、出现频率、严重程度及近期生活变化。愿意的话，也可以请信任的人陪同、帮忙记录。"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "一张可以带走的便条"
+    },
+    {
+      "type": "list",
+      "style": "unordered",
+      "items": [
+        "最近和以前相比，有哪些变化？",
+        "这些变化对睡眠、吃饭、学习、工作或关系有什么影响？",
+        "我最想先解决的困扰是什么？",
+        "对于可能的帮助方式，我担心什么，又希望了解什么？"
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "不知道怎么说时，可以先说这一句"
+    },
+    {
+      "type": "paragraph",
+      "text": "“最近的状态影响到生活了，但我还不太会描述，能不能帮我一起梳理？”这句是本站的开场示例。交流中听不懂的地方，可以请对方解释，或询问其他可选方式。"
+    },
+    {
+      "type": "callout",
+      "tone": "information",
+      "text": "如果出现立即伤害自己或他人的危险，请及时联系当地紧急服务并寻求身边可信任者的协助，不要等待写好便条或等到下一次预约。"
+    }
+  ],
+  "sources": [
+    {
+      "publisherName": "美国国家心理健康研究所（NIMH）",
+      "sourceTitle": "Tips for Talking With a Health Care Provider About Your Mental Health",
+      "sourceUrl": "https://www.nimh.nih.gov/health/publications/tips-for-talking-with-your-health-care-provider",
+      "sourcePublishedAt": null,
+      "sourceVersionLabel": "NIH Publication No. 22-MH-8094",
+      "sourceLocator": "Prepare ahead of your visit / Be honest / Ask questions",
+      "retrievedAt": "2026-09-14T06:47:43.000Z"
+    }
+  ]
+}

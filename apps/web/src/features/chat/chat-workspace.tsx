@@ -34,6 +34,7 @@ import { createClientRequestId } from './client-request-id';
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 type LastSubmission = Readonly<{
+  skipDiary: boolean;
   message: string;
   clientRequestId: string;
   uncertain: boolean;
@@ -52,6 +53,8 @@ type ChatWorkspaceContextValue = Readonly<{
   active: boolean;
   reconciliationPending: boolean;
   setDraft: (value: string) => void;
+  skipDiary: boolean;
+  setSkipDiary: (value: boolean) => void;
   selectRoute: (conversationId?: string) => Promise<void>;
   reloadCurrent: () => Promise<void>;
   loadOlderMessages: () => Promise<void>;
@@ -91,6 +94,7 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
   const [draft, setDraft] = useState('');
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null);
   const [stream, setStream] = useState<ChatStreamState>(initialChatStreamState);
+  const [skipDiary, setSkipDiary] = useState(false);
   const [lastSubmission, setLastSubmission] = useState<LastSubmission | null>(null);
   const streamRef = useRef(stream);
   const conversationIdRef = useRef<string | null>(null);
@@ -222,7 +226,12 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
   );
 
   const executeSubmission = useCallback(
-    async (message: string, clientRequestId: string, preserveUncertain = false) => {
+    async (
+      message: string,
+      clientRequestId: string,
+      preserveUncertain = false,
+      skipDiary = false,
+    ) => {
       if (streamAbortRef.current) return;
       if (aiChatEnabled !== true) {
         updateStream(failChatStream(streamRef.current, 'AI_CHAT_DISABLED', 'AI 对话当前未开放'));
@@ -231,7 +240,7 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
       const controller = new AbortController();
       streamAbortRef.current = controller;
       setPendingUserMessage(message);
-      setLastSubmission({ message, clientRequestId, uncertain: preserveUncertain });
+      setLastSubmission({ message, clientRequestId, uncertain: preserveUncertain, skipDiary });
       updateStream(beginChatStream());
 
       try {
@@ -240,6 +249,7 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
           {
             mode: 'persistent',
             clientRequestId,
+            ...(skipDiary ? { diaryAccess: 'skip' as const } : {}),
             ...(conversationIdRef.current ? { conversationId: conversationIdRef.current } : {}),
             message,
           },
@@ -265,7 +275,7 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
             setLastSubmission(null);
             updateStream(cancelChatStream(streamRef.current));
           } else if (connection.turn.status === 'failed') {
-            setLastSubmission({ message, clientRequestId, uncertain: false });
+            setLastSubmission({ message, clientRequestId, uncertain: false, skipDiary });
             updateStream(
               failChatStream(
                 streamRef.current,
@@ -274,7 +284,7 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
               ),
             );
           } else {
-            setLastSubmission({ message, clientRequestId, uncertain: true });
+            setLastSubmission({ message, clientRequestId, uncertain: true, skipDiary });
             updateStream(
               failChatStream(
                 streamRef.current,
@@ -320,7 +330,7 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
         } else {
           const requestError = error instanceof AiChatRequestError ? error : null;
           const uncertain = requestError === null;
-          setLastSubmission({ message, clientRequestId, uncertain });
+          setLastSubmission({ message, clientRequestId, uncertain, skipDiary });
           updateStream(
             failChatStream(
               streamRef.current,
@@ -340,8 +350,13 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
   );
 
   const runSubmission = useCallback(
-    async (message: string, clientRequestId: string, preserveUncertain = false) => {
-      const promise = executeSubmission(message, clientRequestId, preserveUncertain);
+    async (
+      message: string,
+      clientRequestId: string,
+      preserveUncertain = false,
+      skipDiary = false,
+    ) => {
+      const promise = executeSubmission(message, clientRequestId, preserveUncertain, skipDiary);
       activePromiseRef.current = promise;
       try {
         await promise;
@@ -387,6 +402,8 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
       active: stream.status === 'submitting' || stream.status === 'streaming',
       reconciliationPending: lastSubmission?.uncertain === true,
       setDraft,
+      skipDiary,
+      setSkipDiary,
       selectRoute,
       reloadCurrent: async () => {
         const conversationId = conversationIdRef.current;
@@ -414,16 +431,27 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
         const message = draft.trim();
         if (!message || streamAbortRef.current || lastSubmission?.uncertain) return;
         setDraft('');
-        await runSubmission(message, createClientRequestId());
+        setSkipDiary(false);
+        await runSubmission(message, createClientRequestId(), false, skipDiary);
       },
       cancel,
       retryAsNewTurn: async () => {
         if (!lastSubmission || lastSubmission.uncertain || streamAbortRef.current) return;
-        await runSubmission(lastSubmission.message, createClientRequestId());
+        await runSubmission(
+          lastSubmission.message,
+          createClientRequestId(),
+          false,
+          lastSubmission.skipDiary,
+        );
       },
       reconcileUncertainTurn: async () => {
         if (!lastSubmission?.uncertain || streamAbortRef.current) return;
-        await runSubmission(lastSubmission.message, lastSubmission.clientRequestId, true);
+        await runSubmission(
+          lastSubmission.message,
+          lastSubmission.clientRequestId,
+          true,
+          lastSubmission.skipDiary,
+        );
       },
       startNewChat: async () => {
         if (lastSubmission?.uncertain) return;
@@ -486,6 +514,7 @@ export function ChatWorkspaceProvider({ children }: { children: ReactNode }) {
       selectRoute,
       stream,
       clearHistory,
+      skipDiary,
       removeHistory,
       updateHistory,
     ],

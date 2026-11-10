@@ -15,10 +15,18 @@ const RULES: ReadonlyArray<readonly [OutputSafetyReasonCode, RegExp]> = [
   ['TREATMENT_GUARANTEE', /(?:保证|一定).*(?:治好|康复|痊愈)/u],
 ];
 
+// Provider text has no Registry verification evidence. Trusted application resources
+// are rendered separately; ordinary numbers and general help-seeking remain allowed.
+const GENERATED_HELP_CONTACT =
+  /(?:热线(?:电话|号码)?|援助电话|求助电话|hotline|helpline|拨打|致电)[\s:：*"'“”‘’()（）-]{0,16}(?:\+?\d[\d \t()+—–-]{1,24}\d|https?:\/\/)/iu;
+
 @Injectable()
 export class DeterministicOutputSignalDetector {
   detect(candidate: string, highRisk: boolean): OutputSafetyReasonCode[] {
     const codes = RULES.filter(([, pattern]) => pattern.test(candidate)).map(([code]) => code);
+    if (GENERATED_HELP_CONTACT.test(candidate.normalize('NFKC'))) {
+      codes.push('UNVERIFIED_CRISIS_RESOURCE');
+    }
     if (highRisk && /(?:先别想这些|换个轻松话题|这没什么大不了|不要小题大做)/u.test(candidate)) {
       codes.push('INAPPROPRIATE_HIGH_RISK_RESPONSE');
     }

@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { ApiClientError } from '../api/client';
 import { getKnowledgeArticle } from '../api/knowledge';
+import { ReadingTools } from './reading-tools';
+import { usePersonalSettings } from '../app/personal-settings';
 import {
   KnowledgeBlock,
   KnowledgeEvidenceNote,
@@ -16,6 +18,7 @@ function isAbortError(error: unknown): boolean {
 }
 
 export function KnowledgeDetailPage() {
+  const personal = usePersonalSettings();
   const { articleKey = '' } = useParams();
   const [article, setArticle] = useState<KnowledgeArticleDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -99,7 +102,8 @@ export function KnowledgeDetailPage() {
             ) : null}
           </header>
           <KnowledgeEvidenceNote article={article} />
-          <div className="knowledge-body">
+          <ReadingTools articleKey={articleKey} />
+          <div className="knowledge-body" style={{ fontSize: personal?.data?.readingSize ?? 18 }}>
             {article.contentBlocks.map((block, index) => (
               <KnowledgeBlock key={index} block={block} />
             ))}

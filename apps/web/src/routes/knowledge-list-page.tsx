@@ -3,12 +3,17 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { listKnowledgeArticles } from '../api/knowledge';
 import { KnowledgeStatus, formatKnowledgeDate } from './knowledge-presentation';
+import { CatArt } from '../shared/cat-art';
+import { usePersonalSettings } from '../app/personal-settings';
 
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError';
 }
 
 export function KnowledgeListPage() {
+  const personal = usePersonalSettings();
+  const [query, setQuery] = useState(''),
+    [onlySaved, setOnlySaved] = useState(false);
   const [articles, setArticles] = useState<KnowledgeArticleSummary[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -67,16 +72,40 @@ export function KnowledgeListPage() {
     };
   }, [load]);
 
+  const visibleArticles = articles.filter(
+    (article) =>
+      (!onlySaved || personal?.data?.bookmarks.includes(article.articleKey)) &&
+      `${article.title} ${article.summary}`.includes(query.trim()),
+  );
   return (
     <main className="knowledge-page" aria-labelledby="knowledge-title">
       <header className="knowledge-header">
-        <p className="eyebrow">教育内容</p>
+        <CatArt mood="hopeful" />
+        <p className="eyebrow">多了解一点自己</p>
         <h1 id="knowledge-title">知识中心</h1>
-        <p>浏览有版本和来源记录的心理健康教育内容。</p>
+        <p>读一篇文章，给心里的疑问多一点理解。</p>
         <p className="knowledge-boundary">
           内容仅供一般教育与自我了解，不替代医疗诊断、治疗或紧急支持。
         </p>
       </header>
+      <div className="knowledge-search">
+        <label htmlFor="knowledge-search">搜索已加载文章</label>
+        <input
+          id="knowledge-search"
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="试试标题里的关键词"
+        />
+        <button
+          className="button button-secondary"
+          aria-pressed={onlySaved}
+          disabled={!personal?.data}
+          onClick={() => setOnlySaved((v) => !v)}
+        >
+          {onlySaved ? '查看全部' : '只看收藏'}
+        </button>
+      </div>
 
       {loading ? <p aria-busy="true">正在加载知识内容…</p> : null}
       {error ? (
@@ -107,7 +136,7 @@ export function KnowledgeListPage() {
       ) : null}
       {articles.length > 0 ? (
         <ul className="knowledge-list" aria-label="知识文章">
-          {articles.map((article) => (
+          {visibleArticles.map((article) => (
             <li key={article.articleKey} className="knowledge-card">
               <div className="knowledge-card-meta">
                 <KnowledgeStatus article={article} />
@@ -138,6 +167,12 @@ export function KnowledgeListPage() {
             </li>
           ))}
         </ul>
+      ) : null}
+      {!loading && articles.length > 0 && visibleArticles.length === 0 ? (
+        <p className="knowledge-empty" role="status">
+          已加载的文章中还没有匹配的内容。
+          {nextCursor ? '可以继续加载更多，或换一个关键词。' : '可以换一个关键词，或查看全部文章。'}
+        </p>
       ) : null}
       {pageError ? (
         <p className="inline-error" role="alert">

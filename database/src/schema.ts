@@ -360,7 +360,10 @@ export const moodEntries = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     clientRequestId: uuid('client_request_id').notNull(),
-    moodScore: integer('mood_score').notNull(),
+    moodScore: integer('mood_score'),
+    catMood: varchar('cat_mood', { length: 16 }).$type<
+      'happy' | 'sad' | 'angry' | 'surprised' | 'shy' | 'sleepy' | 'hopeful' | 'relaxed'
+    >(),
     emotion: varchar('emotion', { length: 32 }).$type<
       | 'joyful'
       | 'calm'
@@ -381,6 +384,14 @@ export const moodEntries = pgTable(
     uniqueIndex('mood_entries_user_client_request_unique').on(table.userId, table.clientRequestId),
     index('mood_entries_user_created_id_idx').on(table.userId, table.createdAt, table.id),
     check('mood_entries_score_check', sql`${table.moodScore} BETWEEN 1 AND 5`),
+    check(
+      'mood_entries_selection_check',
+      sql`${table.moodScore} IS NOT NULL OR ${table.catMood} IS NOT NULL`,
+    ),
+    check(
+      'mood_entries_cat_check',
+      sql`${table.catMood} IS NULL OR ${table.catMood} IN ('happy', 'sad', 'angry', 'surprised', 'shy', 'sleepy', 'hopeful', 'relaxed')`,
+    ),
     check(
       'mood_entries_emotion_check',
       sql`${table.emotion} IS NULL OR ${table.emotion} IN ('joyful', 'calm', 'hopeful', 'neutral', 'tired', 'stressed', 'sad', 'angry', 'overwhelmed')`,
@@ -736,3 +747,140 @@ export type KnowledgePublicationStatus = (typeof knowledgePublicationStatus.enum
 export type KnowledgeReviewStatus = (typeof knowledgeReviewStatus.enumValues)[number];
 export type KnowledgeContentOrigin = (typeof knowledgeContentOrigin.enumValues)[number];
 export type StaffPrincipalStatus = (typeof staffPrincipalStatus.enumValues)[number];
+
+type DiarySnapshot = {
+  title: string;
+  body: string;
+  mood: string | null;
+  weather: string | null;
+  photoIds: string[];
+};
+export const diaryAiPolicies = pgTable(
+  'diary_ai_policies',
+  {
+    userId: uuid('user_id')
+      .primaryKey()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    mode: varchar('mode', { length: 16 })
+      .$type<'none' | 'selected' | 'all'>()
+      .notNull()
+      .default('none'),
+    revision: integer('revision').notNull().default(1),
+  },
+  (table) => [
+    check('diary_ai_policy_mode', sql`${table.mode} IN ('none', 'selected', 'all')`),
+    check('diary_ai_policy_revision', sql`${table.revision} > 0`),
+  ],
+);
+export const diaryNotebooks = pgTable(
+  'diary_notebooks',
+  {
+    id: uuid('id').primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    name: varchar('name', { length: 24 }).notNull(),
+    cat: varchar('cat', { length: 16 }).notNull().default('relaxed'),
+    revision: integer('revision').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('diary_notebooks_owner_idx').on(table.userId),
+    check('diary_notebook_revision_positive', sql`${table.revision} > 0`),
+  ],
+);
+
+export const diaryPages = pgTable(
+  'diary_pages',
+  {
+    notebookId: uuid('notebook_id')
+      .notNull()
+      .references(() => diaryNotebooks.id, { onDelete: 'cascade' }),
+    day: date('day', { mode: 'string' }).notNull(),
+    saved: jsonb('saved').$type<DiarySnapshot>(),
+    draft: jsonb('draft').$type<DiarySnapshot>(),
+    revision: integer('revision').notNull().default(1),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.notebookId, table.day] }),
+    check('diary_page_revision_positive', sql`${table.revision} > 0`),
+  ],
+);
+
+export const diaryAiGrants = pgTable(
+  'diary_ai_grants',
+  {
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    notebookId: uuid('notebook_id')
+      .notNull()
+      .references(() => diaryNotebooks.id, { onDelete: 'cascade' }),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.notebookId] })],
+);
+
+export const diaryAiTurnReferences = pgTable(
+  'diary_ai_turn_references',
+  {
+    turnId: uuid('turn_id')
+      .primaryKey()
+      .references(() => aiTurns.id, { onDelete: 'cascade' }),
+    entries: jsonb('entries')
+      .$type<Array<{ notebookId: string; day: string; revision: number }>>()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      'diary_ai_references_bounds',
+      sql`jsonb_typeof(${table.entries}) = 'array' AND jsonb_array_length(${table.entries}) BETWEEN 1 AND 5`,
+    ),
+  ],
+);
+
+export const diaryPhotos = pgTable(
+  'diary_photos',
+  {
+    id: uuid('id').primaryKey(),
+    notebookId: uuid('notebook_id')
+      .notNull()
+      .references(() => diaryNotebooks.id, { onDelete: 'cascade' }),
+    day: date('day', { mode: 'string' }).notNull(),
+    name: varchar('name', { length: 180 }).notNull(),
+    mime: varchar('mime', { length: 24 }).notNull(),
+    size: integer('size').notNull(),
+    data: text('data').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('diary_photos_page_idx').on(table.notebookId, table.day),
+    check('diary_photo_size_bounds', sql`${table.size} > 0 AND ${table.size} <= 10485760`),
+  ],
+);
+
+export const personalSettings = pgTable(
+  'personal_settings',
+  {
+    userId: uuid('user_id')
+      .primaryKey()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    displayName: varchar('display_name', { length: 24 }).notNull().default(''),
+    biography: varchar('biography', { length: 200 }).notNull().default(''),
+    avatarId: uuid('avatar_id'),
+    avatarData: text('avatar_data'),
+    cat: varchar('cat', { length: 16 }).notNull().default('relaxed'),
+    readingSize: integer('reading_size').notNull().default(18),
+    bookmarks: jsonb('bookmarks').$type<string[]>().notNull().default([]),
+    revision: integer('revision').notNull().default(1),
+  },
+  (table) => [
+    check('personal_reading_size_valid', sql`${table.readingSize} IN (16, 18, 20)`),
+    check('personal_settings_revision_positive', sql`${table.revision} > 0`),
+    check(
+      'personal_avatar_consistent',
+      sql`(${table.avatarId} IS NULL) = (${table.avatarData} IS NULL)`,
+    ),
+  ],
+);

@@ -1,0 +1,517 @@
+.cozy-mood-page {
+  background: #fdfef9;
+  padding: clamp(24px, 4vw, 56px);
+}
+.cozy-mood-page > .mood-header,
+.cozy-mood-page > .mood-card,
+.cozy-mood-page > .mood-section,
+.cozy-mood-page > .mood-page-footer,
+.cozy-mood-page > .inline-success {
+  width: min(1000px, 100%);
+  margin: 0 auto 28px;
+}
+.cozy-mood-page .mood-header {
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--line);
+}
+.cozy-mood-page .mood-header h1 {
+  margin: 4px 0 8px;
+}
+.cozy-mood-page .mood-header p {
+  color: var(--muted);
+}
+.cozy-mood-page .mood-compose {
+  padding: clamp(20px, 2.6vw, 28px);
+  background: #fff;
+  border-radius: 22px;
+  box-shadow: none;
+}
+.cozy-mood-page .mood-compose h2,
+.cozy-mood-page .mood-section h2 {
+  margin: 0;
+  font:
+    600 18px/1.6 'Microsoft YaHei',
+    'PingFang SC',
+    sans-serif;
+}
+.cozy-mood-page .mood-compose form,
+.cozy-mood-page .mood-fields {
+  display: block;
+}
+.cozy-mood-page .mood-help {
+  margin: 8px 0 18px;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--muted);
+}
+.cozy-mood-page .mood-fields fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.cozy-mood-page .cat-mood-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.cozy-mood-page .cat-mood-option {
+  position: relative;
+  min-width: 0;
+  cursor: pointer;
+}
+.cozy-mood-page .cat-mood-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.cozy-mood-page .cat-mood-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 184px;
+  padding: 12px 8px 14px;
+  border: 1px solid #e5e8df;
+  border-radius: 18px;
+  background: #fffefa;
+  color: var(--ink);
+  transition:
+    border-color 0.18s,
+    background 0.18s,
+    box-shadow 0.18s;
+}
+.cozy-mood-page .cat-mood-option input:checked + .cat-mood-tile {
+  border-color: #729480;
+  background: #edf3e9;
+  box-shadow: inset 0 0 0 1px #729480;
+}
+.cozy-mood-page .cat-mood-option input:focus-visible + .cat-mood-tile {
+  outline: 3px solid #729480;
+  outline-offset: 3px;
+}
+.cozy-mood-page .cat-mood-option input:disabled + .cat-mood-tile {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+.cozy-mood-page .cat-selection {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  font-size: 11px;
+  color: var(--brand);
+  opacity: 0;
+}
+.cozy-mood-page input:checked + .cat-mood-tile .cat-selection {
+  opacity: 1;
+}
+.cozy-mood-page .cat-stage {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 132px;
+  margin-top: 5px;
+}
+.cozy-mood-page .cat-stage .cat-art {
+  width: 140px;
+  height: 124px;
+  max-width: 100%;
+  transform-origin: 50% 85%;
+}
+.cozy-mood-page .cat-name {
+  margin-top: 7px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  line-height: 1.6;
+}
+.cozy-mood-page .cat-mood-feedback {
+  min-height: 25px;
+  margin: 16px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.8;
+}
+.cozy-mood-page .cat-mood-note-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.cozy-mood-page .cat-mood-note-label span {
+  margin-left: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.cozy-mood-page .mood-fields textarea {
+  border-color: #dfe4da;
+  border-radius: 10px;
+  min-height: 84px;
+  font-size: 14px;
+  line-height: 1.8;
+}
+.cozy-mood-page .character-count {
+  text-align: right;
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+.cozy-mood-page .cat-mood-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+}
+.cozy-mood-page .cat-mood-actions p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.cozy-mood-page .cat-mood-actions .button {
+  min-height: 42px;
+}
+.cozy-mood-page .range-switch {
+  gap: 0;
+  padding: 3px;
+  border-radius: 12px;
+  background: #ecefe7;
+}
+.cozy-mood-page .range-switch .button {
+  min-height: 30px;
+  padding: 4px 14px;
+  min-width: 54px;
+  font-size: 12px;
+  border: 0;
+  box-shadow: none;
+  border-radius: 9px;
+  background: transparent;
+}
+.cozy-mood-page .range-switch .button.active {
+  background: #fff;
+  box-shadow: 0 1px 4px #38574a0d;
+}
+.cozy-mood-page .mood-section-help {
+  margin: 8px 0 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.cozy-mood-page .mood-trend-list {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+.cozy-mood-page .mood-trend-list li {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  min-height: 112px;
+  padding: 10px 4px;
+  border: 1px solid #e5e8df;
+  border-radius: 14px;
+  background: #fff;
+}
+.cozy-mood-page .mood-trend-list time {
+  font-size: 11px;
+}
+.cozy-mood-page .mood-trend-list strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+.cozy-mood-page .mood-mini {
+  width: 54px;
+  height: 54px;
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+}
+.cozy-mood-page .cat-day-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 70px;
+  font-size: 11px;
+  color: #939b8e;
+}
+.cozy-mood-page .legacy-mood-mark {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  padding: 0;
+  background: transparent;
+  font-size: 28px;
+  color: #83937c;
+}
+.cozy-mood-page .legacy-mood-label {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 400;
+  background: none;
+}
+.cozy-mood-page .mood-entry-list {
+  display: block;
+  margin-top: 16px;
+  border: 1px solid #e5e8df;
+  border-radius: 20px;
+  background: #fff;
+  overflow: hidden;
+}
+.cozy-mood-page .mood-entry-list:empty {
+  display: none;
+}
+.cozy-mood-page .mood-entry {
+  border: 0;
+  border-bottom: 1px solid #edf0e9;
+  border-radius: 0;
+  padding: 18px 22px;
+  background: transparent;
+}
+.cozy-mood-page .mood-entry:last-child {
+  border-bottom: 0;
+}
+.cozy-mood-page .mood-entry-heading strong {
+  font-size: 14px;
+}
+.cozy-mood-page .mood-entry-heading time {
+  font-size: 12px;
+}
+.cozy-mood-page .mood-note {
+  margin: 2px 0 0;
+  padding-left: 64px;
+  font-size: 14px;
+  line-height: 1.9;
+}
+.cozy-mood-page .mood-entry > .mood-inline-actions {
+  margin: 8px 0 0 64px;
+  gap: 16px;
+}
+.cozy-mood-page .mood-entry > .mood-inline-actions .button {
+  min-height: 28px;
+  padding: 3px 0;
+  font-size: 12px;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+.cozy-mood-page .mood-page-footer {
+  color: var(--muted);
+  font-size: 12px;
+}
+.cozy-mood-page .mood-page-footer p {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.cozy-mood-page .mood-page-footer p::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.cozy-mood-page .mood-page-footer small {
+  display: block;
+  margin-top: 12px;
+  color: #909a89;
+  font-size: 11px;
+}
+.cozy-mood-page [data-cat='happy'] {
+  --mood-motion: mood-happy;
+  --mood-duration: 1.25s;
+}
+.cozy-mood-page [data-cat='sad'] {
+  --mood-motion: mood-sad;
+  --mood-duration: 1.6s;
+}
+.cozy-mood-page [data-cat='angry'] {
+  --mood-motion: mood-angry;
+  --mood-duration: 1.2s;
+}
+.cozy-mood-page [data-cat='surprised'] {
+  --mood-motion: mood-surprised;
+  --mood-duration: 1.2s;
+}
+.cozy-mood-page [data-cat='shy'] {
+  --mood-motion: mood-shy;
+  --mood-duration: 1.7s;
+}
+.cozy-mood-page [data-cat='sleepy'] {
+  --mood-motion: mood-sleepy;
+  --mood-duration: 2.8s;
+}
+.cozy-mood-page [data-cat='hopeful'] {
+  --mood-motion: mood-hopeful;
+  --mood-duration: 1.6s;
+}
+.cozy-mood-page [data-cat='relaxed'] {
+  --mood-motion: mood-relaxed;
+  --mood-duration: 2.4s;
+}
+.cozy-mood-page .cat-mood-option.is-playing input:not(:disabled) + .cat-mood-tile .cat-art,
+.cozy-mood-page .cat-mood-option input:focus-visible + .cat-mood-tile .cat-art {
+  animation: var(--mood-motion) var(--mood-duration) ease-in-out 1;
+}
+@media (hover: hover) and (pointer: fine) {
+  .cozy-mood-page .cat-mood-option:hover input:not(:disabled) + .cat-mood-tile {
+    border-color: #a0b8a0;
+    background: #f5f7ef;
+    box-shadow: 0 4px 14px #38574a0f;
+  }
+  .cozy-mood-page .cat-mood-option:hover input:not(:disabled) + .cat-mood-tile .cat-art {
+    animation: var(--mood-motion) var(--mood-duration) ease-in-out 1;
+  }
+}
+@keyframes mood-happy {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0);
+  }
+  25% {
+    transform: translateY(-9px) rotate(-4deg);
+  }
+  45% {
+    transform: translateY(0) rotate(1deg);
+  }
+  70% {
+    transform: translateY(-5px) rotate(4deg);
+  }
+}
+@keyframes mood-sad {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0);
+  }
+  30% {
+    transform: translateY(3px) rotate(-2deg);
+  }
+  50% {
+    transform: translateY(3px) rotate(2deg);
+  }
+  75% {
+    transform: translateY(2px) rotate(-1deg);
+  }
+}
+@keyframes mood-angry {
+  0%,
+  100% {
+    transform: translateX(0) scale(1);
+  }
+  20%,
+  50% {
+    transform: translateX(-2px) rotate(-2deg) scale(1.025);
+  }
+  35%,
+  65% {
+    transform: translateX(2px) rotate(2deg) scale(1.025);
+  }
+  80% {
+    transform: scale(1.02);
+  }
+}
+@keyframes mood-surprised {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  22% {
+    transform: translateY(-8px) scale(1.04);
+  }
+  45% {
+    transform: translateY(1px) scale(0.98);
+  }
+  65% {
+    transform: translateY(-3px) scale(1.01);
+  }
+}
+@keyframes mood-shy {
+  0%,
+  100% {
+    transform: rotate(0) translateY(0);
+  }
+  35% {
+    transform: rotate(-6deg) translateY(2px);
+  }
+  70% {
+    transform: rotate(3deg) translateY(1px);
+  }
+}
+@keyframes mood-sleepy {
+  0%,
+  100% {
+    transform: scale(1, 1);
+  }
+  50% {
+    transform: scale(1.025, 1.065);
+  }
+}
+@keyframes mood-hopeful {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0);
+  }
+  25% {
+    transform: translateY(-4px) rotate(-3deg);
+  }
+  50% {
+    transform: translateY(0) rotate(0);
+  }
+  75% {
+    transform: translateY(-4px) rotate(3deg);
+  }
+}
+@keyframes mood-relaxed {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  30% {
+    transform: rotate(-4deg);
+  }
+  70% {
+    transform: rotate(4deg);
+  }
+}
+@media (max-width: 800px) {
+  .cozy-mood-page .mood-trend-list {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@media (max-width: 560px) {
+  .cozy-mood-page {
+    padding: 22px 14px;
+  }
+  .cozy-mood-page .cat-mood-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .cozy-mood-page .cat-mood-tile {
+    min-height: 164px;
+    padding: 10px 6px;
+  }
+  .cozy-mood-page .cat-stage {
+    height: 118px;
+  }
+  .cozy-mood-page .cat-stage .cat-art {
+    width: 123px;
+    height: 109px;
+  }
+  .cozy-mood-page .mood-note {
+    padding-left: 0;
+  }
+  .cozy-mood-page .mood-entry {
+    padding: 14px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cozy-mood-page .cat-mood-option .cat-art {
+    animation: none !important;
+    transform: none !important;
+  }
+  .cozy-mood-page .cat-mood-tile {
+    transition: none;
+  }
+}

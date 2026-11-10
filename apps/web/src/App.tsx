@@ -1,13 +1,17 @@
-import { BrowserRouter } from 'react-router';
+import { createBrowserRouter, RouterProvider } from 'react-router';
 import { AppRoutes } from './app/app-routes';
 import { SessionProvider } from './app/session-provider';
 
-export function App() {
-  return (
-    <BrowserRouter>
+const router = createBrowserRouter([
+  {
+    path: '*',
+    element: (
       <SessionProvider>
         <AppRoutes />
       </SessionProvider>
-    </BrowserRouter>
-  );
+    ),
+  },
+]);
+export function App() {
+  return <RouterProvider router={router} />;
 }

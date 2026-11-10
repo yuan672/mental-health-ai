@@ -1,0 +1,18 @@
+{
+  "bundle": "local-reading-2026-09-14",
+  "scope": "development-test-only",
+  "files": [
+    "local-reading-stress-small-steps.v1.json",
+    "local-reading-sleep-gentle-evening.v1.json",
+    "local-reading-worry-put-on-paper.v1.json",
+    "local-reading-loneliness-small-connection.v1.json",
+    "local-reading-self-talk-kindness.v1.json",
+    "local-reading-present-one-minute.v1.json",
+    "local-reading-boundaries-and-rest.v1.json",
+    "local-reading-asking-for-help.v1.json",
+    "local-reading-story-cat-and-lamp.v1.json",
+    "local-reading-story-rainy-bookshop.v1.json",
+    "local-reading-story-unfinished-scarf.v1.json",
+    "local-reading-story-one-line-diary.v1.json"
+  ]
+}

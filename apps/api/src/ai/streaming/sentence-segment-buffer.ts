@@ -15,10 +15,12 @@ function takeCharacters(value: string, count: number): { segment: string; remain
 export class SentenceSegmentBuffer {
   private bufferedAt: number | null = null;
   private value = '';
+  private emitted = false;
 
   constructor(
     private readonly hardCharacterCap: number,
     private readonly maxWaitMilliseconds: number,
+    private readonly batch?: Readonly<{ firstMinimum: number; nextMinimum: number }>,
   ) {}
 
   append(delta: string, now = Date.now()): string[] {
@@ -32,17 +34,31 @@ export class SentenceSegmentBuffer {
 
     const ready: string[] = [];
     while (this.value.length > 0) {
-      const boundary = this.value.search(SENTENCE_BOUNDARY);
-      if (boundary >= 0) {
-        const end = boundary + 1;
-        ready.push(this.value.slice(0, end));
-        this.value = this.value.slice(end);
-        this.bufferedAt = this.value.length > 0 ? now : null;
-        continue;
+      const characters = Array.from(this.value);
+      const minimum = Math.min(
+        this.hardCharacterCap,
+        this.batch ? (this.emitted ? this.batch.nextMinimum : this.batch.firstMinimum) : 1,
+      );
+      let end = 0;
+      let lastBoundary = 0;
+      // Keep sentence boundaries, but combine tiny sentences/blank lines into
+      // one bounded safety candidate. Never let a late boundary exceed the cap.
+      for (let index = 0; index < Math.min(characters.length, this.hardCharacterCap); index += 1) {
+        if (SENTENCE_BOUNDARY.test(characters[index]!)) {
+          lastBoundary = index + 1;
+          if (lastBoundary >= minimum) {
+            end = lastBoundary;
+            break;
+          }
+        }
       }
-      if (characterLength(this.value) >= this.hardCharacterCap) {
-        const split = takeCharacters(this.value, this.hardCharacterCap);
+      if (!end && characterLength(this.value) >= this.hardCharacterCap) {
+        end = lastBoundary || this.hardCharacterCap;
+      }
+      if (end) {
+        const split = takeCharacters(this.value, end);
         ready.push(split.segment);
+        this.emitted = true;
         this.value = split.remainder;
         this.bufferedAt = this.value.length > 0 ? now : null;
         continue;
@@ -68,6 +84,7 @@ export class SentenceSegmentBuffer {
       return null;
     }
     const segment = this.value;
+    this.emitted = true;
     this.value = '';
     this.bufferedAt = null;
     return segment;

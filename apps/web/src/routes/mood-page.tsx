@@ -1,5 +1,8 @@
+import './mood-page.css';
+import { CatArt, cats } from '../shared/cat-art';
 import type {
   CreateMoodEntryRequest,
+  MoodCat,
   MoodEmotion,
   MoodEntry,
   MoodHistoryResponse,
@@ -35,6 +38,7 @@ const emotionLabels = Object.fromEntries(
 ) as Record<MoodEmotion, string>;
 
 const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai',
   month: 'long',
   day: 'numeric',
   hour: '2-digit',
@@ -47,14 +51,19 @@ const shortDateFormatter = new Intl.DateTimeFormat('zh-CN', {
   timeZone: 'UTC',
 });
 
-type MoodDraft = Readonly<{ moodScore: number; emotion: MoodEmotion | null; note: string }>;
+type MoodDraft = Readonly<{
+  catMood: MoodCat | null;
+  moodScore: number | null;
+  emotion: MoodEmotion | null;
+  note: string;
+}>;
 type PendingCreate = Readonly<{
   request: CreateMoodEntryRequest;
   checkedAbsent: boolean;
 }>;
 type DeleteTarget = Readonly<{ kind: 'single'; entry: MoodEntry }> | Readonly<{ kind: 'all' }>;
 
-const emptyDraft: MoodDraft = { moodScore: 3, emotion: null, note: '' };
+const emptyDraft: MoodDraft = { catMood: null, moodScore: null, emotion: null, note: '' };
 
 function codePointLength(value: string): number {
   return Array.from(value.trim()).length;
@@ -75,6 +84,7 @@ function isUnknownMutationResult(error: unknown): boolean {
 function normalizedPayload(draft: MoodDraft) {
   const note = draft.note.trim();
   return {
+    catMood: draft.catMood,
     moodScore: draft.moodScore,
     emotion: draft.emotion,
     note: note.length === 0 ? null : note,
@@ -94,6 +104,45 @@ function calendarDates(startDate: string, endDate: string): string[] {
   return dates;
 }
 
+const scoreLabels = ['很低落', '有些低落', '还好', '不错', '很好'];
+const catHints: Record<MoodCat, string> = {
+  happy: '有一点开心，也值得被记住。',
+  sad: '委屈的时候，也可以先照顾自己的感受。',
+  angry: '愿意的话，可以写下让你生气的事。',
+  surprised: '把这个意料之外的瞬间，记在这里。',
+  shy: '不急，按自己的节奏表达就好。',
+  sleepy: '有些累了，今天也可以慢一点。',
+  hopeful: '把心里的小期待，留在这里。',
+  relaxed: '这一刻的松弛，值得留一份记录。',
+};
+type MoodSelection = Pick<MoodEntry, 'catMood' | 'moodScore' | 'emotion'>;
+function moodLabel(entry: MoodSelection) {
+  return entry.catMood
+    ? cats[entry.catMood].label
+    : entry.moodScore
+      ? scoreLabels[entry.moodScore - 1]
+      : '已记录';
+}
+function MoodIdentity({ entry }: { entry: MoodSelection }) {
+  return (
+    <>
+      {entry.catMood ? (
+        <CatArt mood={entry.catMood} className="mood-mini" />
+      ) : (
+        <span className="legacy-mood-mark" aria-hidden="true">
+          ♡
+        </span>
+      )}
+      <strong>{moodLabel(entry)}</strong>
+    </>
+  );
+}
+const localDayFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
 function MoodFields({
   value,
   onChange,
@@ -106,60 +155,76 @@ function MoodFields({
   disabled?: boolean;
 }) {
   const count = codePointLength(value.note);
+  const [playing, setPlaying] = useState<MoodCat | null>(null);
   return (
     <div className="mood-fields">
-      <fieldset disabled={disabled} aria-describedby={`${prefix}-score-help`}>
-        <legend>此刻的心情分数</legend>
-        <p id={`${prefix}-score-help`} className="form-help">
-          1 表示很低落，5 表示很好。这是个人记录，不是医疗评分。
-        </p>
-        <div className="mood-score-options">
-          {[1, 2, 3, 4, 5].map((score) => (
-            <label key={score}>
+      <p id={`${prefix}-help`} className="mood-help">
+        哪只小猫像现在的你？选一个就好，也可以写下发生的小事。
+      </p>
+      <fieldset disabled={disabled} aria-describedby={`${prefix}-help`}>
+        <legend className="sr-only">选择此刻的心情</legend>
+        <div className="cat-mood-options">
+          {(Object.keys(cats) as MoodCat[]).map((cat) => (
+            <label
+              key={cat}
+              className={`cat-mood-option${playing === cat ? ' is-playing' : ''}`}
+              data-cat={cat}
+              onClick={() => {
+                if (!disabled) setPlaying(cat);
+              }}
+              onAnimationEnd={() => setPlaying(null)}
+            >
               <input
                 type="radio"
-                name={`${prefix}-score`}
-                value={score}
-                checked={value.moodScore === score}
-                onChange={() => onChange({ ...value, moodScore: score })}
+                aria-label={cats[cat].label}
+                name={`${prefix}-cat`}
+                value={cat}
+                checked={value.catMood === cat}
+                onChange={() =>
+                  onChange({ ...value, catMood: cat, moodScore: null, emotion: null })
+                }
               />
-              <span>{score}</span>
+              <span className="cat-mood-tile">
+                <span className="cat-selection" aria-hidden="true">
+                  已选择
+                </span>
+                <span className="cat-stage">
+                  <CatArt mood={cat} />
+                </span>
+                <span className="cat-name">{cats[cat].label}</span>
+              </span>
             </label>
           ))}
         </div>
       </fieldset>
-      <label htmlFor={`${prefix}-emotion`}>日常情绪（可选）</label>
-      <select
-        id={`${prefix}-emotion`}
-        value={value.emotion ?? ''}
-        disabled={disabled}
-        onChange={(event) =>
-          onChange({ ...value, emotion: (event.target.value || null) as MoodEmotion | null })
-        }
-      >
-        <option value="">不选择</option>
-        {emotionOptions.map((emotion) => (
-          <option key={emotion.value} value={emotion.value}>
-            {emotion.label}
-          </option>
-        ))}
-      </select>
-      <label htmlFor={`${prefix}-note`}>备注（可选）</label>
+      <p className="cat-mood-feedback" role="status">
+        {value.catMood
+          ? `${cats[value.catMood].label} · ${catHints[value.catMood]}`
+          : value.moodScore
+            ? '这是一份旧版记录。可以保留原来的感受，也可以重新选一只小猫。'
+            : '心情不需要打分，选一个最贴近此刻的感受就好。'}
+      </p>
+      <label htmlFor={`${prefix}-note`} className="cat-mood-note-label">
+        想说的话<span>选填</span>
+      </label>
       <textarea
         id={`${prefix}-note`}
-        rows={4}
+        rows={3}
         value={value.note}
         disabled={disabled}
-        aria-describedby={`${prefix}-note-help`}
+        placeholder="发生了什么？或者只留下一句话，也很好。"
+        aria-describedby={count ? `${prefix}-note-help` : undefined}
         aria-invalid={count > 500 || undefined}
         onChange={(event) => onChange({ ...value, note: event.target.value })}
       />
-      <p
-        id={`${prefix}-note-help`}
-        className={count > 500 ? 'inline-error character-count' : 'character-count'}
-      >
-        去除首尾空白后 {count}/500 个字符；emoji 按 Unicode 字符计数。
-      </p>
+      {count ? (
+        <p
+          id={`${prefix}-note-help`}
+          className={count > 500 ? 'inline-error character-count' : 'character-count'}
+        >
+          {count}/500{count > 500 ? '，稍微缩短一点再保存吧。' : ''}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -284,7 +349,7 @@ export function MoodPage() {
 
   const submitCreate = async (event: FormEvent) => {
     event.preventDefault();
-    if (mutationBusyRef.current || pendingCreate) return;
+    if (mutationBusyRef.current || pendingCreate || !draft.catMood) return;
     if (codePointLength(draft.note) > 500) {
       setError('心情备注不能超过 500 个 Unicode 字符。');
       return;
@@ -396,7 +461,13 @@ export function MoodPage() {
 
   const submitEdit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!editing || mutationBusyRef.current || stale) return;
+    if (
+      !editing ||
+      mutationBusyRef.current ||
+      stale ||
+      (!editing.draft.catMood && !editing.draft.moodScore)
+    )
+      return;
     if (codePointLength(editing.draft.note) > 500) {
       setError('心情备注不能超过 500 个 Unicode 字符。');
       return;
@@ -494,17 +565,24 @@ export function MoodPage() {
   const trendRows = useMemo(() => {
     if (!history) return [];
     const trend = new Map(history.dailyTrend.map((item) => [item.localDate, item]));
-    return calendarDates(history.period.startDate, history.period.endDate)
-      .reverse()
-      .map((date) => ({ date, value: trend.get(date) ?? null }));
+    return calendarDates(history.period.startDate, history.period.endDate).map((date) => {
+      const value = trend.get(date) ?? null;
+      const latest =
+        value?.latestEntry ??
+        history.entries.find(
+          (entry) => localDayFormatter.format(new Date(entry.createdAt)) === date,
+        ) ??
+        null;
+      return { date, value, latest };
+    });
   }, [history]);
 
   return (
-    <main className="mood-page" aria-labelledby="mood-title">
+    <main className="mood-page cozy-mood-page" aria-labelledby="mood-title">
       <header className="mood-header">
-        <p className="eyebrow">个人记录</p>
+        <p className="eyebrow">情绪日记</p>
         <h1 id="mood-title">心情记录</h1>
-        <p>记录当下感受，按自己的节奏回看。这里不是医疗诊断、持续监测或紧急响应渠道。</p>
+        <p>接纳自己当下的感受，无论是晴朗还是阴雨。</p>
       </header>
 
       {error ? (
@@ -552,8 +630,8 @@ export function MoodPage() {
         </p>
       ) : null}
 
-      <section className="mood-card" aria-labelledby="check-in-title">
-        <h2 id="check-in-title">记录此刻</h2>
+      <section className="mood-card mood-compose" aria-labelledby="check-in-title">
+        <h2 id="check-in-title">记录此刻的心情</h2>
         <form onSubmit={(event) => void submitCreate(event)}>
           <MoodFields
             value={draft}
@@ -561,27 +639,30 @@ export function MoodPage() {
             prefix="create-mood"
             disabled={mutationBusy || Boolean(pendingCreate)}
           />
-          <button
-            type="submit"
-            className="button"
-            disabled={mutationBusy || Boolean(pendingCreate) || codePointLength(draft.note) > 500}
-          >
-            {mutationBusy ? '正在提交…' : '保存心情记录'}
-          </button>
+          <div className="cat-mood-actions">
+            <button
+              type="submit"
+              className="button"
+              disabled={
+                mutationBusy ||
+                Boolean(pendingCreate) ||
+                !draft.catMood ||
+                codePointLength(draft.note) > 500
+              }
+            >
+              {mutationBusy ? '正在提交…' : '记下这份心情'}
+            </button>
+            <p>鼠标停留或轻点小猫，看看它的小动作。</p>
+          </div>
         </form>
       </section>
 
-      <section className="mood-card" aria-labelledby="trend-title">
+      <section className="mood-section" aria-labelledby="trend-title">
         <div className="mood-section-heading">
           <div>
-            <h2 id="trend-title">最近趋势</h2>
-            {history ? (
-              <p className="muted">
-                {history.period.startDate} 至 {history.period.endDate} · {history.timeZone}
-              </p>
-            ) : null}
+            <h2 id="trend-title">心情轨迹</h2>
           </div>
-          <div className="range-switch" aria-label="趋势范围">
+          <div className="range-switch" aria-label="心情轨迹范围">
             {([7, 30] as const).map((range) => (
               <button
                 key={range}
@@ -603,23 +684,22 @@ export function MoodPage() {
             ))}
           </div>
         </div>
+        <p className="mood-section-help">看看这些天的心情，每天展示最近一次记录。</p>
         {loading && !history ? <p aria-busy="true">正在加载心情记录…</p> : null}
         {!loading && history && history.entries.length === 0 ? (
           <p className="mood-empty">这段时间还没有心情记录。</p>
         ) : null}
         {history ? (
           <ul className="mood-trend-list" aria-label={`${days} 天每日趋势`}>
-            {trendRows.map(({ date, value }) => (
+            {trendRows.map(({ date, value, latest }) => (
               <li key={date}>
                 <time dateTime={date}>
                   {shortDateFormatter.format(new Date(`${date}T00:00:00Z`))}
                 </time>
-                {value ? (
-                  <span>
-                    平均 {value.averageMoodScore.toFixed(1)} 分 · {value.entryCount} 条
-                  </span>
+                {latest ? (
+                  <MoodIdentity entry={latest} />
                 ) : (
-                  <span className="muted">未记录</span>
+                  <span className="cat-day-empty">{value ? '已记录' : '未记录'}</span>
                 )}
               </li>
             ))}
@@ -627,16 +707,16 @@ export function MoodPage() {
         ) : null}
       </section>
 
-      <section className="mood-card" aria-labelledby="history-title">
+      <section className="mood-section" aria-labelledby="history-title">
         <div className="mood-section-heading">
-          <h2 id="history-title">记录明细</h2>
+          <h2 id="history-title">历史明细</h2>
           <button
             type="button"
             className="button button-quiet button-small mood-delete-all"
             disabled={mutationBusy || loading || stale || !history}
             onClick={() => setDeleteTarget({ kind: 'all' })}
           >
-            删除全部心情记录
+            清空记录
           </button>
         </div>
         {deleteCount !== null ? (
@@ -670,6 +750,7 @@ export function MoodPage() {
                         mutationBusy ||
                         loading ||
                         stale ||
+                        (!editing.draft.catMood && !editing.draft.moodScore) ||
                         codePointLength(editing.draft.note) > 500
                       }
                     >
@@ -681,11 +762,24 @@ export function MoodPage() {
                 <>
                   <div className="mood-entry-heading">
                     <div>
-                      <strong>{entry.moodScore} 分</strong>
-                      {entry.emotion ? <span>{emotionLabels[entry.emotion]}</span> : null}
+                      <MoodIdentity entry={entry} />
+                      {!entry.catMood ? (
+                        <span className="legacy-mood-label">
+                          旧记录{entry.emotion ? ` · ${emotionLabels[entry.emotion]}` : ''}
+                        </span>
+                      ) : null}
                     </div>
-                    <time dateTime={entry.createdAt}>
-                      {dateTimeFormatter.format(new Date(entry.createdAt))}
+                    <time
+                      dateTime={entry.createdAt}
+                      title={dateTimeFormatter.format(new Date(entry.createdAt))}
+                    >
+                      {localDayFormatter.format(new Date(entry.createdAt)) ===
+                      history?.period.endDate
+                        ? '今天'
+                        : localDayFormatter
+                            .format(new Date(entry.createdAt))
+                            .slice(5)
+                            .replace('-', '/')}
                     </time>
                   </div>
                   {entry.note ? <p className="mood-note">{entry.note}</p> : null}
@@ -698,6 +792,7 @@ export function MoodPage() {
                         setEditing({
                           entry,
                           draft: {
+                            catMood: entry.catMood ?? null,
                             moodScore: entry.moodScore,
                             emotion: entry.emotion,
                             note: entry.note ?? '',
@@ -732,6 +827,11 @@ export function MoodPage() {
           </button>
         ) : null}
       </section>
+
+      <footer className="mood-page-footer">
+        <p>♡ 每一种感受，都有被看见的位置。</p>
+        <small>这里不是医疗诊断、持续监测或紧急响应渠道。</small>
+      </footer>
 
       <ConfirmDialog
         open={deleteTarget !== null}

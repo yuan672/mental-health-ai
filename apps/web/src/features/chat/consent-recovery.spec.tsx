@@ -53,6 +53,8 @@ function workspace(
     active: false,
     reconciliationPending: false,
     setDraft: vi.fn(),
+    skipDiary: false,
+    setSkipDiary: vi.fn(),
     selectRoute: vi.fn().mockResolvedValue(undefined),
     reloadCurrent: vi.fn().mockResolvedValue(undefined),
     loadOlderMessages: vi.fn().mockResolvedValue(undefined),

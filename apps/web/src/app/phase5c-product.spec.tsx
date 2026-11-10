@@ -331,7 +331,7 @@ describe('Phase 5C Incognito and privacy product flows', () => {
     expect(await screen.findByText('退出后必须清除的正文')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: '退出' }));
-    expect(await screen.findByRole('heading', { name: '登录' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '欢迎回来' })).toBeInTheDocument();
     expect(screen.queryByText('退出后必须清除的正文')).not.toBeInTheDocument();
   });
 

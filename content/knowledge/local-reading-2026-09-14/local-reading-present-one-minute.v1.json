@@ -1,0 +1,68 @@
+{
+  "articleKey": "local-reading-present-one-minute",
+  "version": 1,
+  "title": "心里很吵时，先回到眼前这一刻",
+  "summary": "心理科普 · 用一个轻量的感官观察，给自己短暂的停顿，不追求清空大脑。",
+  "contentOrigin": "synthetic_fixture",
+  "reviewStatus": "unverified",
+  "reviewedBy": null,
+  "reviewedAt": null,
+  "contentBlocks": [
+    {
+      "type": "callout",
+      "tone": "information",
+      "text": "本地待核验科普稿：由 AI 参考公开健康资料整理，尚未完成人工来源核验，供本地内容审阅。文中的生活示例由本站编写。"
+    },
+    {
+      "type": "paragraph",
+      "text": "做着眼前的事，心却已经跑到明天。有时可以给自己留一个很短的空隙，看看现在身处哪里，而不是继续追着每个念头跑。"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "留意当下，不等于没有念头"
+    },
+    {
+      "type": "paragraph",
+      "text": "NIH 的情绪健康工具包把正念描述为对当下内外体验的觉察。散步时留意周围的声音和景物，发现走神后再回到当前体验，是其中一种练习方向。"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "本站设计的一次短暂停顿"
+    },
+    {
+      "type": "list",
+      "style": "unordered",
+      "items": [
+        "在安全、适合停留的地方坐下或站稳，保持自然呼吸。",
+        "看看周围，选一个物体，留意它的颜色或形状。",
+        "听听此刻有什么声音，再决定接下来要做的一件小事。"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "你可以睁着眼睛，也可以随时结束。这个例子没有倒计时要求，不需要屏住呼吸，更不需要把自己逼到完全安静。"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "练习也可以不适合今天"
+    },
+    {
+      "type": "paragraph",
+      "text": "如果关注身体或环境让你不舒服，就停止这次尝试，回到熟悉的活动，或找信任的人陪一会儿。这里的示例只用于一般自我观察，没有承诺治疗效果。"
+    }
+  ],
+  "sources": [
+    {
+      "publisherName": "美国国立卫生研究院（NIH）",
+      "sourceTitle": "Emotional Wellness Toolkit",
+      "sourceUrl": "https://www.nih.gov/health-information/your-healthiest-self-wellness-toolkits/emotional-wellness-toolkit",
+      "sourcePublishedAt": null,
+      "sourceVersionLabel": null,
+      "sourceLocator": "Be mindful",
+      "retrievedAt": "2026-09-14T06:47:43.000Z"
+    }
+  ]
+}

@@ -1,16 +1,20 @@
 import { Link } from 'react-router';
 import { copy } from '../locales';
+import { brandCat, homeCat } from '../shared/cat-art';
 
 export function LandingPage() {
   return (
     <main className="landing">
       <header className="landing-header">
-        <span className="brand-mark" aria-hidden="true">
-          安
-        </span>
+        <img className="brand-cat" src={brandCat} alt="" />
         <span>{copy.app.name}</span>
       </header>
       <section className="landing-hero" aria-labelledby="landing-title">
+        <img
+          className="landing-cat-art"
+          src={homeCat}
+          alt="小猫在温暖的房间里，留一个位置陪你坐坐"
+        />
         <p className="eyebrow">为情绪表达留一点空间</p>
         <h1 id="landing-title">在这里，慢慢说也可以。</h1>
         <p className="landing-lead">

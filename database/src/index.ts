@@ -24,6 +24,13 @@ export {
 export { migrate } from 'drizzle-orm/node-postgres/migrator';
 export {
   ageVerifications,
+  diaryNotebooks,
+  diaryAiPolicies,
+  diaryAiGrants,
+  diaryAiTurnReferences,
+  diaryPages,
+  diaryPhotos,
+  personalSettings,
   assistantMessageKnowledgeReferences,
   aiTurns,
   aiTurnStatus,

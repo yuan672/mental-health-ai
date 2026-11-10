@@ -1,0 +1,73 @@
+{
+  "articleKey": "local-reading-worry-put-on-paper",
+  "version": 1,
+  "title": "脑子停不下来时，把担忧放到纸上",
+  "summary": "心理科普 · 区分能行动的问题和暂时无法控制的担忧，给思绪一个落脚点。",
+  "contentOrigin": "synthetic_fixture",
+  "reviewStatus": "unverified",
+  "reviewedBy": null,
+  "reviewedAt": null,
+  "contentBlocks": [
+    {
+      "type": "callout",
+      "tone": "information",
+      "text": "本地待核验科普稿：由 AI 参考公开健康资料整理，尚未完成人工来源核验，供本地内容审阅。文中的生活示例由本站编写。"
+    },
+    {
+      "type": "paragraph",
+      "text": "“万一没做好呢？”“如果别人不喜欢我呢？”一个问题还没想完，下一个就来了。你可以先把其中一句写下来，不用一次整理全部。"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "分清眼前能做的事"
+    },
+    {
+      "type": "paragraph",
+      "text": "NHS 的自助资料建议记录担忧，区分可以解决的问题与无法控制的假设。对能处理的事，列出具体行动和时间；暂时无法处理的事，可以先记下，再把注意力带回眼前。"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "试一张三行小纸条"
+    },
+    {
+      "type": "list",
+      "style": "unordered",
+      "items": [
+        "我在担心什么？例如：明天的分享来不及准备。",
+        "我现在能做什么？例如：先选出要讲的三个重点。",
+        "什么时候再处理？例如：晚饭后留十分钟看提纲。"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "上面是本站编写的例子，不是标准答案。写下来以后，你仍可能会担心；不需要因为念头再次出现，就判断自己“连这个都做不好”。"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "给担忧留一个有限的时段"
+    },
+    {
+      "type": "paragraph",
+      "text": "也可以尝试每天安排十到十五分钟梳理担忧，避免整天反复处理同一件事。如果这种方式让你更难受，可以停下，换一种适合自己的方法。"
+    },
+    {
+      "type": "callout",
+      "tone": "information",
+      "text": "这是一种可选择的自助尝试，不是治疗方案，也不要求你强行清空所有念头。"
+    }
+  ],
+  "sources": [
+    {
+      "publisherName": "英国国民保健署（NHS）",
+      "sourceTitle": "Tackling your worries — Every Mind Matters",
+      "sourceUrl": "https://www.nhs.uk/every-mind-matters/mental-wellbeing-tips/self-help-cbt-techniques/tackling-your-worries/",
+      "sourcePublishedAt": null,
+      "sourceVersionLabel": null,
+      "sourceLocator": "Steps and strategies to tackle your worries",
+      "retrievedAt": "2026-09-14T06:47:43.000Z"
+    }
+  ]
+}

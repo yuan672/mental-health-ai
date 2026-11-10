@@ -14,6 +14,7 @@ import {
 import { useProductData } from '../../app/product-data-provider';
 import { createClientRequestId } from './client-request-id';
 import { useChatWorkspace } from './chat-workspace';
+import { useSmoothChatText } from '../../ai/use-smooth-chat-text';
 
 type EphemeralMessage = Readonly<{
   id: string;
@@ -50,6 +51,7 @@ export function IncognitoChatPage() {
   const [draft, setDraft] = useState('');
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null);
   const [stream, setStream] = useState<ChatStreamState>(initialChatStreamState);
+  const displayedReply = useSmoothChatText(stream);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const contextRef = useRef<ContextState>(context);
@@ -177,7 +179,13 @@ export function IncognitoChatPage() {
           ...current,
           { id: createClientRequestId(), role: 'user', content: message },
           ...(text
-            ? [{ id: createClientRequestId(), role: 'assistant' as const, content: text }]
+            ? [
+                {
+                  id: createClientRequestId(),
+                  role: 'assistant' as const,
+                  content: text,
+                },
+              ]
             : []),
         ]);
         setPendingUserMessage(null);
@@ -354,12 +362,19 @@ export function IncognitoChatPage() {
               </div>
             ) : null}
             <ol className="message-list">
-              {messages.map((message) => (
+              {messages.map((message, index) => (
                 <li className={`message message-${message.role}`} key={message.id}>
                   <span className="message-author">
                     {message.role === 'user' ? '你' : '支持助手'}
                   </span>
-                  <p>{message.content}</p>
+                  <p>
+                    {!active &&
+                    index === messages.length - 1 &&
+                    message.role === 'assistant' &&
+                    message.content === stream.text
+                      ? displayedReply.text
+                      : message.content}
+                  </p>
                 </li>
               ))}
               {pendingUserMessage && stream.status !== 'completed' ? (
@@ -371,12 +386,12 @@ export function IncognitoChatPage() {
               {showTransientAssistant ? (
                 <li className="message message-assistant message-transient">
                   <span className="message-author">支持助手</span>
-                  <p>{stream.text}</p>
+                  <p>{displayedReply.text}</p>
                 </li>
               ) : null}
             </ol>
             <div className="stream-status" aria-live="polite">
-              {stream.status === 'submitting' ? '正在建立安全连接…' : null}
+              {stream.status === 'submitting' ? '正在准备回复…' : null}
               {stream.status === 'streaming' ? '正在回复…' : null}
               {stream.status === 'cancelled' ? '已停止本轮回复。' : null}
               {stream.status === 'failed' ? (
